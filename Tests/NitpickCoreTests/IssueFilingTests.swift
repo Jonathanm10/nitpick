@@ -39,7 +39,8 @@ struct IssueFilingTests {
 
     static let existingTagJSON = #"[{"id":"6-4","name":"design-review","$type":"Tag"}]"#
     static let createdIssueJSON = #"{"id":"3-505","idReadable":"RM-421","$type":"Issue"}"#
-    static let attachmentsJSON = #"[{"id":"134-31","name":"capture.png","$type":"IssueAttachment"}]"#
+    static let attachmentsJSON = #"[{"id":"134-31","name":"annotated.png","$type":"IssueAttachment"},"#
+        + #"{"id":"134-32","name":"original.png","$type":"IssueAttachment"}]"#
     static let appliedTagJSON = #"{"id":"6-4","name":"design-review","$type":"Tag"}"#
 
     /// A core with a saved connection, as the designer has after settings:
@@ -55,7 +56,25 @@ struct IssueFilingTests {
         return core
     }
 
-    @Test("filing emits find-tag → create issue → attach screenshot → apply tag, with exact bodies")
+    /// The exact multipart body the attachments endpoint must receive: one
+    /// `upload` part per file, CRLF line breaks, one closing boundary.
+    static func multipartBody(boundary: Substring, files: [(fileName: String, data: Data)]) -> Data {
+        var body = Data()
+        for file in files {
+            body.append(Data((
+                "--\(boundary)\r\n"
+                    + "Content-Disposition: form-data; name=\"upload\"; filename=\"\(file.fileName)\"\r\n"
+                    + "Content-Type: image/png\r\n"
+                    + "\r\n"
+            ).utf8))
+            body.append(file.data)
+            body.append(Data("\r\n".utf8))
+        }
+        body.append(Data("--\(boundary)--\r\n".utf8))
+        return body
+    }
+
+    @Test("filing emits find-tag → create issue → attach both screenshots → apply tag, with exact bodies")
     func filesOneIssue() async throws {
         let transport = FakeHTTPTransport()
         let core = try await Self.connectedCore(transport: transport)
@@ -92,21 +111,18 @@ struct IssueFilingTests {
         #expect(creation.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(creation.httpBody.map { String(decoding: $0, as: UTF8.self) } == Self.expectedIssueJSON)
 
-        // 3. The screenshot rides as one multipart `upload` part.
+        // 3. Both screenshots ride in one multipart request: the annotated
+        //    variant first, the clean original second. Unannotated, the
+        //    annotated variant is the original bytes.
         let attach = requests[requests.startIndex + 2]
         #expect(attach.httpMethod == "POST")
         #expect(attach.url?.absoluteString == "\(base)/api/issues/3-505/attachments?fields=id,name")
         let contentType = try #require(attach.value(forHTTPHeaderField: "Content-Type"))
         let boundary = try #require(contentType.wholeMatch(of: /multipart\/form-data; boundary=(nitpick-[0-9A-F-]+)/)?.1)
-        var expectedBody = Data((
-            "--\(boundary)\r\n"
-                + "Content-Disposition: form-data; name=\"upload\"; filename=\"capture.png\"\r\n"
-                + "Content-Type: image/png\r\n"
-                + "\r\n"
-        ).utf8)
-        expectedBody.append(Self.pngBytes)
-        expectedBody.append(Data("\r\n--\(boundary)--\r\n".utf8))
-        #expect(attach.httpBody == expectedBody)
+        #expect(attach.httpBody == Self.multipartBody(boundary: boundary, files: [
+            (fileName: "annotated.png", data: Self.pngBytes),
+            (fileName: "original.png", data: Self.pngBytes),
+        ]))
 
         // 4. The fixed design-review tag is applied by ID.
         let tagging = requests[requests.startIndex + 3]
@@ -114,6 +130,51 @@ struct IssueFilingTests {
         #expect(tagging.url?.absoluteString == "\(base)/api/issues/3-505/tags?fields=id,name")
         #expect(tagging.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(tagging.httpBody.map { String(decoding: $0, as: UTF8.self) } == #"{"id":"6-4"}"#)
+    }
+
+    @Test("an annotated Finding attaches the flattened variant plus the untouched original")
+    func attachesAnnotatedAndOriginal() async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await Self.connectedCore(transport: transport)
+        transport.enqueue(json: Self.existingTagJSON)
+        transport.enqueue(json: Self.createdIssueJSON)
+        transport.enqueue(json: Self.attachmentsJSON)
+        transport.enqueue(json: Self.appliedTagJSON)
+
+        let original = try ImageFixtures.solidPNG(width: 480, height: 960)
+        var finding = Finding(
+            summary: "Button color is off",
+            description: "",
+            screenshotPNG: original,
+            deviceContext: DeviceContext(deviceModel: "iPhone 17 Pro", osName: "iOS 26.4")
+        )
+        finding.add(Annotation(.rectangle(CGRect(x: 60, y: 500, width: 240, height: 160))))
+
+        _ = try await core.file(finding, in: Self.session)
+
+        let attach = transport.sentRequests[4]
+        let contentType = try #require(attach.value(forHTTPHeaderField: "Content-Type"))
+        let boundary = try #require(contentType.wholeMatch(of: /multipart\/form-data; boundary=(nitpick-[0-9A-F-]+)/)?.1)
+        #expect(attach.httpBody == Self.multipartBody(boundary: boundary, files: [
+            (fileName: "annotated.png", data: try finding.annotatedScreenshotPNG()),
+            (fileName: "original.png", data: original),
+        ]))
+        #expect(try finding.annotatedScreenshotPNG() != original)
+    }
+
+    @Test("a flattening failure aborts before any issue exists — no orphans")
+    func flatteningFailureLeavesNoOrphan() async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await Self.connectedCore(transport: transport)
+
+        var finding = Self.finding()  // 9 fake bytes: not a decodable image
+        finding.add(Annotation(.rectangle(CGRect(x: 0, y: 0, width: 10, height: 10))))
+
+        await #expect(throws: AnnotationRenderingError.unreadableScreenshot) {
+            try await core.file(finding, in: Self.session)
+        }
+        // Nothing beyond the two connect requests reached the network.
+        #expect(transport.sentRequests.count == 2)
     }
 
     @Test("a missing design-review tag is created on first use, before the issue")

@@ -21,13 +21,19 @@ extension AppCore {
 
     /// Files one Finding as exactly one YouTrack issue, authored by the
     /// token's user: the designer's summary, the designer's description with
-    /// the metadata block appended, the screenshot attached, and the
-    /// design-review tag applied. The session supplies the project — chosen
-    /// once at session start, never re-asked.
+    /// the metadata block appended, two attachments — the annotated
+    /// screenshot and the clean original — and the design-review tag
+    /// applied. The session supplies the project — chosen once at session
+    /// start, never re-asked.
     public func file(_ finding: Finding, in session: ReviewSession) async throws -> FiledIssue {
         let summary = finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !summary.isEmpty else { throw YouTrackError.summaryRequired }
         guard let credentials = try savedYouTrackCredentials() else { throw YouTrackError.notConnected }
+
+        // Flatten before anything reaches the network: Annotations freeze
+        // into the attached image at this moment — the moment editability
+        // ends — and a rendering failure leaves no orphan issue behind.
+        let annotatedPNG = try finding.annotatedScreenshotPNG()
 
         // Resolve the tag before creating anything: tag creation needs its
         // own permission, and a refusal here must not leave an orphan issue.
@@ -46,12 +52,17 @@ extension AppCore {
 
         // Attach before tagging: if attaching fails, the issue stays
         // untagged — invisible to the v2 verify pass and the review-backlog
-        // query — rather than tagged but missing its screenshot.
+        // query — rather than tagged but missing its screenshots. Both
+        // variants ride one request: annotated first, clean original second
+        // (PRD story 29).
         let _: [AttachmentPayload] = try await requestYouTrack(
             instanceURL: credentials.instanceURL, token: credentials.token,
             method: "POST", path: "api/issues/\(issue.id)/attachments", query: "fields=id,name",
-            body: Self.screenshotAttachmentBody(finding.screenshotPNG),
-            deniedAction: "attach the screenshot"
+            body: Self.attachmentsBody([
+                (fileName: "annotated.png", data: annotatedPNG),
+                (fileName: "original.png", data: finding.screenshotPNG),
+            ]),
+            deniedAction: "attach the screenshots"
         )
 
         let _: TagPayload = try await requestYouTrack(
@@ -104,21 +115,26 @@ extension AppCore {
     }
 
     /// The multipart/form-data body YouTrack's attachments endpoint expects:
-    /// one `upload` part carrying the capture.
-    private static func screenshotAttachmentBody(_ png: Data) -> (contentType: String, data: Data) {
+    /// one `upload` part per attached file.
+    private static func attachmentsBody(
+        _ files: [(fileName: String, data: Data)]
+    ) -> (contentType: String, data: Data) {
         let boundary = "nitpick-\(UUID().uuidString)"
         var body = Data()
         // Explicit escapes: every line break in a multipart body is CRLF,
         // and the blank line separating headers from content is exactly
         // one \r\n — nothing implicit.
-        body.append(contentsOf: Data((
-            "--\(boundary)\r\n"
-                + "Content-Disposition: form-data; name=\"upload\"; filename=\"capture.png\"\r\n"
-                + "Content-Type: image/png\r\n"
-                + "\r\n"
-        ).utf8))
-        body.append(png)
-        body.append(contentsOf: Data("\r\n--\(boundary)--\r\n".utf8))
+        for file in files {
+            body.append(contentsOf: Data((
+                "--\(boundary)\r\n"
+                    + "Content-Disposition: form-data; name=\"upload\"; filename=\"\(file.fileName)\"\r\n"
+                    + "Content-Type: image/png\r\n"
+                    + "\r\n"
+            ).utf8))
+            body.append(file.data)
+            body.append(contentsOf: Data("\r\n".utf8))
+        }
+        body.append(contentsOf: Data("--\(boundary)--\r\n".utf8))
         return (contentType: "multipart/form-data; boundary=\(boundary)", data: body)
     }
 }

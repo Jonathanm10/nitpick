@@ -48,6 +48,9 @@ public struct DeviceContext: Equatable, Sendable {
 
 /// A single discrepancy captured during a Review Session: one screenshot
 /// plus the designer's description. Files as exactly one YouTrack issue.
+///
+/// Equality covers observable state only — what filing would carry — never
+/// the Annotation edit history.
 public struct Finding: Equatable, Sendable {
     /// The designer-typed issue summary.
     public var summary: String
@@ -58,6 +61,13 @@ public struct Finding: Equatable, Sendable {
     /// with issue 04).
     public var screenshotPNG: Data
     public var deviceContext: DeviceContext
+    /// The Annotations laid over the screenshot, in stacking order.
+    /// Editable through `add`/`replaceAnnotation`/`removeAnnotation` and
+    /// undo/redo until the Finding is filed.
+    public internal(set) var annotations: [Annotation] = []
+    /// The undo/redo stacks: past and undone `annotations` states.
+    var annotationUndoStack: [[Annotation]] = []
+    var annotationRedoStack: [[Annotation]] = []
     /// Optional Finding-level Design Reference (ADR-0003: a link, never a
     /// rendering).
     public var designReference: URL?
@@ -74,6 +84,17 @@ public struct Finding: Equatable, Sendable {
         self.screenshotPNG = screenshotPNG
         self.deviceContext = deviceContext
         self.designReference = designReference
+    }
+}
+
+extension Finding {
+    public static func == (lhs: Finding, rhs: Finding) -> Bool {
+        lhs.summary == rhs.summary
+            && lhs.description == rhs.description
+            && lhs.screenshotPNG == rhs.screenshotPNG
+            && lhs.deviceContext == rhs.deviceContext
+            && lhs.designReference == rhs.designReference
+            && lhs.annotations == rhs.annotations
     }
 }
 

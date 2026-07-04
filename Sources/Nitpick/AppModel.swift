@@ -15,11 +15,25 @@ final class AppModel {
     var selectedDeviceID: SimulatorDevice.ID?
     /// True once the Build has been launched on the selected device.
     private(set) var isReviewing = false
+    /// The core-rendered annotated capture — what the designer sees while
+    /// editing, and exactly what filing flattens.
     private(set) var capturedImage: NSImage?
-    private(set) var capturedPNG: Data?
-    /// The Device Context stamped at capture time — filing must describe
-    /// the capture, not whatever the device picker shows at filing time.
-    private(set) var captureContext: DeviceContext?
+    /// The capture's native pixel size, for view↔pixel coordinate mapping.
+    private(set) var capturePixelSize: CGSize?
+    /// The Finding in progress: created at capture (stamping the Device
+    /// Context of that moment), annotated while reviewing, filed at the end.
+    /// Summary and description ride the text fields until filing.
+    private(set) var finding: Finding?
+    /// Changes with every capture — the annotation surface keys its
+    /// in-flight draft reset off this, since two captures on the same
+    /// device share a pixel size.
+    private(set) var captureID = UUID()
+    var annotationTool: AnnotationTool = .pen
+    var annotationColor: AnnotationColor = .default
+    /// True while a placed text label awaits its text — set by the
+    /// annotation surface; filing is gated on it so a visible draft can
+    /// never be silently dropped from the filed image.
+    var hasPendingLabelDraft = false
     private(set) var isBusy = false
     var errorMessage: String?
 
@@ -131,24 +145,77 @@ final class AppModel {
         guard let device = selectedDevice else { return }
         await perform {
             let png = try await core.captureScreen(of: device)
-            capturedImage = NSImage(data: png)
-            capturedPNG = png
-            captureContext = DeviceContext(device: device)
+            finding = Finding(
+                summary: "",
+                description: "",
+                screenshotPNG: png,
+                deviceContext: DeviceContext(device: device)
+            )
             filedIssue = nil
+            captureID = UUID()
+            // The surface resets its live draft off captureID, but if it
+            // was unmounted first its onChange never fires — the model
+            // owns the gate, so the model resets it.
+            hasPendingLabelDraft = false
+            refreshAnnotatedImage()
+        }
+    }
+
+    // MARK: - Annotation editing (all state lives in the core's Finding)
+
+    var canUndoAnnotation: Bool { finding?.canUndo ?? false }
+    var canRedoAnnotation: Bool { finding?.canRedo ?? false }
+
+    var annotationMetrics: AnnotationMetrics? {
+        capturePixelSize.map(AnnotationMetrics.init(imageSize:))
+    }
+
+    /// Editing freezes while filing is in flight: the request carries a
+    /// copy of the Finding, so a late edit would show in the preview yet
+    /// be missing from the filed issue.
+    func addAnnotation(_ shape: Annotation.Shape) {
+        guard !isBusy else { return }
+        finding?.add(Annotation(shape, color: annotationColor))
+        refreshAnnotatedImage()
+    }
+
+    func undoAnnotation() {
+        guard !isBusy else { return }
+        finding?.undo()
+        refreshAnnotatedImage()
+    }
+
+    func redoAnnotation() {
+        guard !isBusy else { return }
+        finding?.redo()
+        refreshAnnotatedImage()
+    }
+
+    private func refreshAnnotatedImage() {
+        guard let finding else {
+            capturedImage = nil
+            capturePixelSize = nil
+            return
+        }
+        if let image = try? finding.annotatedScreenshotImage() {
+            capturedImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+            capturePixelSize = CGSize(width: image.width, height: image.height)
+        } else {
+            // An undecodable capture: show nothing rather than lie; filing
+            // will surface the real error.
+            capturedImage = NSImage(data: finding.screenshotPNG)
+            capturePixelSize = capturedImage.map { CGSize(width: $0.size.width, height: $0.size.height) }
         }
     }
 
     /// Files the composed Finding into the session's project and surfaces
     /// the resulting issue ID + link; the session tray arrives with issue 05.
+    /// This is the moment Annotations stop being editable.
     func fileFinding() async {
-        guard let session, let png = capturedPNG, let context = captureContext else { return }
+        guard let session, var finding, !hasPendingLabelDraft else { return }
         await perform {
-            let finding = Finding(
-                summary: summaryField,
-                description: descriptionField,
-                screenshotPNG: png,
-                deviceContext: context
-            )
+            finding.summary = summaryField
+            finding.description = descriptionField
             filedIssue = try await core.file(finding, in: session)
             summaryField = ""
             descriptionField = ""
@@ -158,8 +225,9 @@ final class AppModel {
 
     private func clearCapture() {
         capturedImage = nil
-        capturedPNG = nil
-        captureContext = nil
+        capturePixelSize = nil
+        finding = nil
+        hasPendingLabelDraft = false
     }
 
     private func perform(

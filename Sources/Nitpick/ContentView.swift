@@ -139,12 +139,8 @@ struct ContentView: View {
                 }
             }
 
-            if let image = model.capturedImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            if model.capturedImage != nil {
+                AnnotationSurface(model: model)
                 composeSection
             }
         }
@@ -161,6 +157,7 @@ struct ContentView: View {
         .disabled(
             model.summaryField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || model.isBusy
+                || model.hasPendingLabelDraft
         )
     }
 }

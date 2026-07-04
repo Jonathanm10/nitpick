@@ -69,7 +69,7 @@ struct ComposeAndFileScenarioTests {
         // …files as exactly one issue, and the ID + link come back.
         transport.enqueue(json: #"[{"id":"6-4","name":"design-review","$type":"Tag"}]"#)
         transport.enqueue(json: #"{"id":"3-505","idReadable":"RM-421","$type":"Issue"}"#)
-        transport.enqueue(json: #"[{"id":"134-31","name":"capture.png","$type":"IssueAttachment"}]"#)
+        transport.enqueue(json: IssueFilingTests.attachmentsJSON)
         transport.enqueue(json: #"{"id":"6-4","name":"design-review","$type":"Tag"}"#)
         let filed = try await core.file(finding, in: session)
         #expect(filed == FiledIssue(
@@ -99,24 +99,91 @@ struct ComposeAndFileScenarioTests {
             + #"Filed with nitpick — session 2026-07-04T09:15:32Z","project":{"id":"0-12"},"#
             + #""summary":"Toolbar icon is misaligned"}"#)
 
-        // The multipart attachment carries the captured PNG bytes.
+        // The multipart attachment carries both variants; unannotated, the
+        // annotated variant is the captured bytes unchanged.
         let attach = transport.sentRequests[4]
         let contentType = try #require(attach.value(forHTTPHeaderField: "Content-Type"))
         let boundary = try #require(contentType.wholeMatch(of: /multipart\/form-data; boundary=(nitpick-[0-9A-F-]+)/)?.1)
-        var expectedBody = Data((
-            "--\(boundary)\r\n"
-                + "Content-Disposition: form-data; name=\"upload\"; filename=\"capture.png\"\r\n"
-                + "Content-Type: image/png\r\n"
-                + "\r\n"
-        ).utf8)
-        expectedBody.append(pngBytes)
-        expectedBody.append(Data("\r\n--\(boundary)--\r\n".utf8))
-        #expect(attach.httpBody == expectedBody)
+        #expect(attach.httpBody == IssueFilingTests.multipartBody(boundary: boundary, files: [
+            (fileName: "annotated.png", data: pngBytes),
+            (fileName: "original.png", data: pngBytes),
+        ]))
 
         // The tag lands by ID.
         #expect(
             transport.sentRequests[5].httpBody.map { String(decoding: $0, as: UTF8.self) }
                 == #"{"id":"6-4"}"#
         )
+    }
+
+    @Test("Annotations stay editable until filing; the filed issue carries annotated and clean original")
+    func annotateEditUndoAndFile() async throws {
+        let transport = FakeHTTPTransport()
+        let core = AppCore(
+            environment: .fake(httpTransport: transport, credentialStore: FakeCredentialStore()),
+            workspaceDirectory: try Fixtures.makeTemporaryDirectory()
+        )
+        transport.enqueue(json: YouTrackConnectionTests.userJSON)
+        transport.enqueue(json: YouTrackConnectionTests.projectsJSON)
+        let connection = try await core.connectYouTrack(
+            instanceURL: "https://youtrack.example.com", token: "perm:designer-token"
+        )
+        let project = try #require(connection.projects.first { $0.shortName == "RM" })
+        let session = ReviewSession(
+            build: Build(
+                identity: BuildIdentity(bundleID: "ch.liip.reviewme", version: "2.1.0", buildNumber: "421"),
+                appBundleURL: URL(fileURLWithPath: "/tmp/ReviewMe.app", isDirectory: true)
+            ),
+            project: project
+        )
+
+        // A composed Finding on a real capture-sized image…
+        let cleanPNG = try ImageFixtures.solidPNG(width: 480, height: 960)
+        var finding = Finding(
+            summary: "Share icon is misaligned",
+            description: "It sits 2pt too low.",
+            screenshotPNG: cleanPNG,
+            deviceContext: DeviceContext(deviceModel: "iPhone 17 Pro", osName: "iOS 26.4")
+        )
+
+        // …marked up with all four tools…
+        finding.add(Annotation(.pen(points: [CGPoint(x: 40, y: 80), CGPoint(x: 120, y: 160)])))
+        finding.add(Annotation(.arrow(from: CGPoint(x: 300, y: 500), to: CGPoint(x: 200, y: 420)), color: .blue))
+        finding.add(Annotation(.rectangle(CGRect(x: 80, y: 300, width: 200, height: 120)), color: .yellow))
+        finding.add(Annotation(.label("2pt off", at: CGPoint(x: 90, y: 440)), color: .white))
+        #expect(finding.annotations.count == 4)
+
+        // …then refined while reviewing: the label moves, a stray pen
+        // stroke is undone and the label move survives it —
+        let movedLabel = Annotation(.label("2pt off", at: CGPoint(x: 90, y: 470)), color: .white)
+        finding.replaceAnnotation(at: 3, with: movedLabel)
+        finding.add(Annotation(.pen(points: [CGPoint(x: 10, y: 10), CGPoint(x: 12, y: 12)])))
+        finding.undo()
+        #expect(finding.annotations.count == 4)
+        #expect(finding.annotations[3] == movedLabel)
+
+        // — and one undo too many is taken back with redo.
+        finding.undo()
+        #expect(finding.annotations[3].shape == .label("2pt off", at: CGPoint(x: 90, y: 440)))
+        finding.redo()
+        #expect(finding.annotations[3] == movedLabel)
+
+        // Filing freezes exactly this state into the annotated attachment,
+        // next to the untouched original.
+        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.createdIssueJSON)
+        transport.enqueue(json: IssueFilingTests.attachmentsJSON)
+        transport.enqueue(json: IssueFilingTests.appliedTagJSON)
+        _ = try await core.file(finding, in: session)
+
+        let attach = transport.sentRequests[4]
+        let contentType = try #require(attach.value(forHTTPHeaderField: "Content-Type"))
+        let boundary = try #require(contentType.wholeMatch(of: /multipart\/form-data; boundary=(nitpick-[0-9A-F-]+)/)?.1)
+        let flattened = try finding.annotatedScreenshotPNG()
+        #expect(flattened != cleanPNG)
+        #expect(attach.httpBody == IssueFilingTests.multipartBody(boundary: boundary, files: [
+            (fileName: "annotated.png", data: flattened),
+            (fileName: "original.png", data: cleanPNG),
+        ]))
     }
 }

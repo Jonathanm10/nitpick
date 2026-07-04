@@ -74,10 +74,9 @@ struct YouTrackLiveTests {
         let connection = try await core.connectYouTrack(instanceURL: url, token: token)
         let project = try #require(connection.projects.first { $0.shortName == projectKey })
 
-        // A real 1x1 transparent PNG, so the tracker shows a valid image.
-        let png = try #require(Data(
-            base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-        ))
+        // A real capture-sized image, so the tracker shows both variants:
+        // the annotated screenshot and the clean original.
+        let png = try ImageFixtures.solidPNG(width: 480, height: 960)
         let session = ReviewSession(
             build: Build(
                 identity: BuildIdentity(bundleID: "ch.liip.nitpick.smoke", version: "0.0.0", buildNumber: "0"),
@@ -85,12 +84,14 @@ struct YouTrackLiveTests {
             ),
             project: project
         )
-        let finding = Finding(
+        var finding = Finding(
             summary: "nitpick live smoke — safe to delete",
             description: "Filed by YouTrackLiveTests.realFile.",
             screenshotPNG: png,
             deviceContext: DeviceContext(deviceModel: "iPhone 17 Pro", osName: "iOS 26.4")
         )
+        finding.add(Annotation(.rectangle(CGRect(x: 80, y: 300, width: 200, height: 120))))
+        finding.add(Annotation(.label("live smoke", at: CGPoint(x: 90, y: 440)), color: .blue))
 
         let filed = try await core.file(finding, in: session)
         #expect(!filed.idReadable.isEmpty)
