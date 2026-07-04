@@ -5,12 +5,19 @@ import SwiftUI
 struct NitpickApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
+    @State private var updater = UpdaterModel()
 
     var body: some Scene {
         WindowGroup("nitpick") {
             ContentView(model: model)
         }
         .defaultSize(width: 560, height: 760)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheckForUpdates)
+            }
+        }
     }
 }
 
