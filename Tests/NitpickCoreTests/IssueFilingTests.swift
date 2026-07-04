@@ -218,6 +218,40 @@ struct IssueFilingTests {
         #expect(creation.httpBody.map { String(decoding: $0, as: UTF8.self) } == expected)
     }
 
+    @Test("a session-level Design Reference lands in every filed issue; a Finding's own overrides it")
+    func sessionDesignReferencePrecedence() async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await Self.connectedCore(transport: transport)
+        var session = Self.session
+        session.designReference = URL(string: "https://www.figma.com/file/sess42/ReviewMe")!
+
+        // One ladder per filing: find tag → create → attach → tag.
+        for _ in 0..<2 {
+            transport.enqueue(json: Self.existingTagJSON)
+            transport.enqueue(json: Self.createdIssueJSON)
+            transport.enqueue(json: Self.attachmentsJSON)
+            transport.enqueue(json: Self.appliedTagJSON)
+        }
+
+        _ = try await core.file(Self.finding(), in: session)
+        var overriding = Self.finding()
+        overriding.designReference = URL(string: "https://www.figma.com/file/abc123/ReviewMe")!
+        _ = try await core.file(overriding, in: session)
+
+        let bodies = transport.sentRequests.dropFirst(2)
+            .filter { $0.url?.path().hasSuffix("api/issues") == true }
+            .compactMap { $0.httpBody.map { String(decoding: $0, as: UTF8.self) } }
+        try #require(bodies.count == 2)
+        let designLine = { (url: String) in
+            #"{"description":"The primary button is #FF0000, the design says #E64545.\n\n"#
+                + #"---\nApp: ch.liip.reviewme 2.1.0 (421)\nDevice: iPhone 17 Pro — iOS 26.4\n"#
+                + #"Design: \#(url)\n"#
+                + #"Filed with nitpick — session 2026-07-04T09:15:32Z","project":{"id":"0-12"},"summary":"Button color is off"}"#
+        }
+        #expect(bodies[0] == designLine("https://www.figma.com/file/sess42/ReviewMe"))
+        #expect(bodies[1] == designLine("https://www.figma.com/file/abc123/ReviewMe"))
+    }
+
     @Test("filing before connecting is an actionable error; nothing reaches the network")
     func notConnected() async throws {
         let transport = FakeHTTPTransport()

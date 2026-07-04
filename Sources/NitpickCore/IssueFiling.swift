@@ -137,6 +137,14 @@ extension AppCore {
                 )),
                 deniedAction: "create an issue in \(session.project.name)"
             )
+            // The description just rendered used the effective Design
+            // Reference (Finding override, else session-level). Freeze it
+            // onto the Finding now that the issue exists: the tray record —
+            // persisted, and later the history entry — must never diverge
+            // from what the issue says, even if the session-level reference
+            // changes before a retry files the remainder. On a throw the
+            // Finding stays untouched and editable.
+            item.finding.designReference = session.effectiveDesignReference(for: item.finding)
             item.filingProgress = .issueCreated(issueID: issue.id, idReadable: issue.idReadable)
 
         case .issueCreated(let issueID, let idReadable):

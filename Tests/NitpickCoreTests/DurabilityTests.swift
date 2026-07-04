@@ -127,6 +127,20 @@ struct DurabilityTests {
         #expect(resumed.tray.map(\.finding.summary) == ["Keep me"])
     }
 
+    @Test("the session-level Design Reference survives the relaunch")
+    func sessionDesignReferenceSurvives() throws {
+        let workspace = try Fixtures.makeTemporaryDirectory()
+        let core = Self.relaunchedCore(workspace: workspace)
+        var session = IssueFilingTests.session
+        session.designReference = URL(string: "https://www.figma.com/file/sess42/ReviewMe")!
+        session.addFinding(IssueFilingTests.finding())
+        try core.saveOpenSession(session)
+
+        let resumed = try #require(try Self.relaunchedCore(workspace: workspace).loadOpenSession())
+        #expect(resumed == session)
+        #expect(resumed.designReference == URL(string: "https://www.figma.com/file/sess42/ReviewMe")!)
+    }
+
     @Test("a corrupt open-session file is a thrown error, not a silently empty state")
     func corruptSessionFile() throws {
         let workspace = try Fixtures.makeTemporaryDirectory()
@@ -273,6 +287,56 @@ struct DurabilityTests {
 
         let relaunched = Self.relaunchedCore(workspace: workspace)
         #expect(try relaunched.sessionHistory().map(\.startedAt) == [later.startedAt, session.startedAt])
+    }
+
+    @Test("the Design line freezes with the issue: a session-level edit between a failed run and its retry never rewrites history")
+    func designReferenceFreezesAtCreation() async throws {
+        let workspace = try Fixtures.makeTemporaryDirectory()
+        let credentials = FakeCredentialStore()
+        let transport = FakeHTTPTransport()
+        let core = try await Self.connectedCore(
+            transport: transport, workspace: workspace, credentials: credentials
+        )
+        let referenceA = URL(string: "https://www.figma.com/file/revA/ReviewMe")!
+        let referenceB = URL(string: "https://www.figma.com/file/revB/ReviewMe")!
+        var session = IssueFilingTests.session
+        session.designReference = referenceA
+        session.addFinding(IssueFilingTests.finding(summary: "First"))
+        session.addFinding(IssueFilingTests.finding(summary: "Second"))
+        try core.saveOpenSession(session)
+
+        // First's issue is created under reference A, then the network dies
+        // at its attachments request.
+        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: SessionTrayScenarioTests.createdIssue421)
+        transport.enqueue(error: URLError(.networkConnectionLost))
+        var outcome = await core.fileAll(in: session)
+        #expect(outcome.failure != nil)
+        // The reference the issue was filed under is frozen on the item.
+        #expect(outcome.session.tray[0].finding.designReference == referenceA)
+
+        // The designer repoints the session before retrying: First's issue
+        // already says A on the instance, Second files under B.
+        outcome.session.designReference = referenceB
+        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.attachmentsJSON)
+        transport.enqueue(json: IssueFilingTests.appliedTagJSON)
+        SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue422)
+        let retry = await core.fileAll(in: outcome.session)
+        #expect(retry.failure == nil)
+
+        // First's creation body carried A; Second's carried B.
+        let creations = transport.sentRequests
+            .filter { $0.url?.path().hasSuffix("api/issues") == true }
+            .compactMap { $0.httpBody.map { String(decoding: $0, as: UTF8.self) } }
+        try #require(creations.count == 2)
+        #expect(creations[0].contains(#"Design: https://www.figma.com/file/revA/ReviewMe\n"#))
+        #expect(creations[1].contains(#"Design: https://www.figma.com/file/revB/ReviewMe\n"#))
+
+        // History records what each issue actually says — A, then B.
+        let history = try core.sessionHistory()
+        try #require(history.count == 1)
+        #expect(history[0].findings.map(\.designReference) == [referenceA, referenceB])
     }
 
     @Test("captures filed after a file-all extend the same session's history entry — never a duplicate")

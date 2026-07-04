@@ -76,6 +76,33 @@ final class AppModel {
         set { editSelectedFinding { $0.description = newValue } }
     }
 
+    /// The session-level Design Reference (issue 09), bound to the review
+    /// section's field — the Figma URL every Finding files under unless it
+    /// carries its own. Guarded like every Finding edit: filing works on a
+    /// copy of the session, so a mid-flight edit would be silently lost.
+    var sessionDesignReferenceField: String {
+        get { session?.designReference?.absoluteString ?? "" }
+        set {
+            guard !isBusy, session != nil else { return }
+            session?.designReference = Self.designReference(from: newValue)
+            persistOpenSession()
+        }
+    }
+
+    /// The selected Finding's own Design Reference — overrides the
+    /// session-level one for that Finding only.
+    var findingDesignReferenceField: String {
+        get { selectedItem?.finding.designReference?.absoluteString ?? "" }
+        set { editSelectedFinding { $0.designReference = Self.designReference(from: newValue) } }
+    }
+
+    /// A pasted Figma URL, or nil when the field is blank — absent is a
+    /// first-class state at both levels, never an error.
+    private static func designReference(from text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : URL(string: trimmed)
+    }
+
     init(core: AppCore = AppCore(environment: .live(), workspaceDirectory: AppModel.defaultWorkspaceDirectory())) {
         self.core = core
     }

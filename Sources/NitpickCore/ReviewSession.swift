@@ -13,16 +13,27 @@ public struct ReviewSession: Equatable, Sendable {
     /// (PRD story 33) — hence a timestamp, not a bare date: two sessions on
     /// the same day must stay distinguishable.
     public var startedAt: Date
+    /// Optional session-level Design Reference (ADR-0003: a link, never a
+    /// rendering): the Figma URL every Finding of this session files under
+    /// unless it carries its own (issue 09 precedence). Never required;
+    /// editable mid-session — it applies when a Finding's issue is created.
+    public var designReference: URL?
     /// The session tray: every captured Finding, in capture order, each
     /// with its filing progress. Captures land here with no filing dialog
     /// (PRD story 22); mutated only through the tray methods below and by
     /// filing itself.
     public internal(set) var tray: [TrayItem] = []
 
-    public init(build: Build, project: YouTrackProject, startedAt: Date = Date()) {
+    public init(
+        build: Build,
+        project: YouTrackProject,
+        startedAt: Date = Date(),
+        designReference: URL? = nil
+    ) {
         self.build = build
         self.project = project
         self.startedAt = startedAt
+        self.designReference = designReference
     }
 }
 
@@ -209,11 +220,18 @@ extension ReviewSession {
         if !finding.deviceContext.accessibilitySettings.isEmpty {
             lines.append("Accessibility: \(finding.deviceContext.accessibilitySettings.joined(separator: ", "))")
         }
-        if let designReference = finding.designReference {
+        if let designReference = effectiveDesignReference(for: finding) {
             lines.append("Design: \(designReference.absoluteString)")
         }
         lines.append("Filed with nitpick — session \(startedAt.formatted(.iso8601))")
         return lines.joined(separator: "\n")
+    }
+
+    /// The Design Reference a Finding files under: its own, else the
+    /// session-level one, else none — the single precedence rule behind
+    /// the metadata block's `Design:` line (issue 09).
+    public func effectiveDesignReference(for finding: Finding) -> URL? {
+        finding.designReference ?? designReference
     }
 
     /// The full description a filed issue carries: designer text, blank

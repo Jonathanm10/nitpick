@@ -91,6 +91,41 @@ struct MetadataBlockTests {
         )
     }
 
+    // MARK: - Session-level Design Reference (issue 09)
+
+    static var sessionWithReference: ReviewSession {
+        var session = Self.session
+        session.designReference = URL(string: "https://www.figma.com/file/sess42/ReviewMe")!
+        return session
+    }
+
+    @Test("a session-level Design Reference renders on every Finding without its own")
+    func sessionLevelDesignLine() {
+        #expect(
+            Self.sessionWithReference.metadataBlock(for: Self.finding()) == """
+            ---
+            App: ch.liip.reviewme 2.1.0 (421)
+            Device: iPhone 17 Pro — iOS 26.4
+            Design: https://www.figma.com/file/sess42/ReviewMe
+            Filed with nitpick — session 2026-07-04T09:15:32Z
+            """
+        )
+    }
+
+    @Test("a Finding-level Design Reference overrides the session-level one")
+    func findingOverridesSession() {
+        let finding = Self.finding(designReference: URL(string: "https://www.figma.com/file/abc123/ReviewMe")!)
+        #expect(
+            Self.sessionWithReference.metadataBlock(for: finding) == """
+            ---
+            App: ch.liip.reviewme 2.1.0 (421)
+            Device: iPhone 17 Pro — iOS 26.4
+            Design: https://www.figma.com/file/abc123/ReviewMe
+            Filed with nitpick — session 2026-07-04T09:15:32Z
+            """
+        )
+    }
+
     // MARK: - The Accessibility line fed by real Device Settings (issue 06)
 
     static let device = SimulatorDevice(udid: "AAAA-1111", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: true)

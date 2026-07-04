@@ -190,6 +190,12 @@ struct ContentView: View {
     /// restored after a relaunch, before its Build is launched again.
     private var reviewSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // Session-level Design Reference: one Figma URL for every
+            // Finding of this session (a per-Finding override lives in the
+            // compose fields). A link, never a rendering (ADR-0003).
+            TextField("Design Reference (Figma URL, all Findings)", text: $model.sessionDesignReferenceField)
+                .disabled(model.isBusy)
+
             if model.isReviewing {
                 Button("Capture") {
                     Task { await model.captureScreen() }
@@ -277,6 +283,8 @@ struct ContentView: View {
             .disabled(model.isBusy)
         TextField("Description", text: $model.descriptionField, axis: .vertical)
             .lineLimit(3...6)
+            .disabled(model.isBusy)
+        TextField("Design Reference (Figma URL, this Finding only)", text: $model.findingDesignReferenceField)
             .disabled(model.isBusy)
     }
 

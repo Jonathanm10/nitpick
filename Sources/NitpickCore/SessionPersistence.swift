@@ -12,6 +12,10 @@ public struct HistoryEntry: Equatable, Sendable, Identifiable {
         public var summary: String
         public var description: String
         public var deviceContext: DeviceContext
+        /// The effective Design Reference the issue was filed under —
+        /// frozen onto the Finding at issue creation, so this always
+        /// matches the issue's `Design:` line regardless of later
+        /// session-level edits.
         public var designReference: URL?
         public var issue: FiledIssue
 
@@ -100,7 +104,12 @@ extension AppCore {
         guard stored.schemaVersion == Self.storageSchemaVersion else {
             throw UnsupportedStoredSchema(version: stored.schemaVersion)
         }
-        var session = ReviewSession(build: stored.build, project: stored.project, startedAt: stored.startedAt)
+        var session = ReviewSession(
+            build: stored.build,
+            project: stored.project,
+            startedAt: stored.startedAt,
+            designReference: stored.designReference
+        )
         session.tray = try stored.tray.map { item in
             var finding = Finding(
                 summary: item.summary,
@@ -258,6 +267,10 @@ private struct StoredSession: Codable {
     var build: Build
     var project: YouTrackProject
     var startedAt: Date
+    /// Absent in manifests written before issue 09 — decodes as nil, which
+    /// is exactly what those sessions meant. Additive, so schema version 1
+    /// stands.
+    var designReference: URL?
     var tray: [StoredTrayItem]
 
     init(_ session: ReviewSession) {
@@ -265,6 +278,7 @@ private struct StoredSession: Codable {
         build = session.build
         project = session.project
         startedAt = session.startedAt
+        designReference = session.designReference
         tray = session.tray.map(StoredTrayItem.init)
     }
 }
