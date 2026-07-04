@@ -1,0 +1,3 @@
+# The issue metadata block is a machine contract
+
+v1 is write-only: nitpick files issues and the back-and-forth lives in YouTrack. The planned v2 verify pass (walk previously filed findings against a new Build, close or reopen from nitpick) will locate its issues by querying the stable `design-review` tag and parsing the metadata block appended to every issue description (`App:` bundle ID + version, `Device:`, session line). That block is therefore a forward-compatibility contract, not cosmetic text — issues already filed keep their format forever, so changing it later means supporting every historical variant. Treat any change to the block as a versioned schema change.

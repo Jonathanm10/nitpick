@@ -1,0 +1,3 @@
+# iOS-only v1, declared
+
+Build lifecycle automation (boot, install, launch, identity, accessibility switching) is implemented against `simctl` only. Android is a parallel lifecycle implementation (`adb`, `aapt`, emulator console), not a tweak, and stays out until the iOS loop has proven itself with real review sessions. The domain model stays platform-neutral (Capture Source, Device Context carry no iOS assumptions), and the lifecycle sits behind its own seam so Android is additive later. Android reviews stay outside nitpick until that lifecycle ships — the simulator-grade metadata and accessibility matrix are the product, and a degraded import path would deliver neither.
