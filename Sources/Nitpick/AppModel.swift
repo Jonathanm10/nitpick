@@ -20,13 +20,12 @@ final class AppModel {
     private(set) var capturedImage: NSImage?
     /// The capture's native pixel size, for view↔pixel coordinate mapping.
     private(set) var capturePixelSize: CGSize?
-    /// The Finding in progress: created at capture (stamping the Device
-    /// Context of that moment), annotated while reviewing, filed at the end.
-    /// Summary and description ride the text fields until filing.
-    private(set) var finding: Finding?
-    /// Changes with every capture — the annotation surface keys its
-    /// in-flight draft reset off this, since two captures on the same
-    /// device share a pixel size.
+    /// The tray item under edit: the capture that just landed, or whatever
+    /// tray row the designer selected. Nil hides the editor.
+    private(set) var selectedItemID: TrayItem.ID?
+    /// Changes whenever the editor's target changes — a new capture or a
+    /// different tray selection — so the annotation surface resets its
+    /// in-flight draft even when two targets share a pixel size.
     private(set) var captureID = UUID()
     var annotationTool: AnnotationTool = .pen
     var annotationColor: AnnotationColor = .default
@@ -44,12 +43,26 @@ final class AppModel {
     var selectedProjectID: YouTrackProject.ID?
     var youTrackErrorMessage: String?
 
-    /// The active Review Session: Build + project, pinned at Start review.
+    /// The active Review Session: Build + project pinned at Start review,
+    /// and the session tray its captures accumulate in.
     private(set) var session: ReviewSession?
-    var summaryField = ""
-    var descriptionField = ""
-    /// The last filed issue — ID + link, shown until the next capture.
-    private(set) var filedIssue: FiledIssue?
+
+    var selectedItem: TrayItem? {
+        guard let selectedItemID else { return nil }
+        return session?.tray.first { $0.id == selectedItemID }
+    }
+
+    /// The selected Finding's summary and description, bound to the editor
+    /// fields — every edit writes straight into the tray item.
+    var summaryField: String {
+        get { selectedItem?.finding.summary ?? "" }
+        set { editSelectedFinding { $0.summary = newValue } }
+    }
+
+    var descriptionField: String {
+        get { selectedItem?.finding.description ?? "" }
+        set { editSelectedFinding { $0.description = newValue } }
+    }
 
     init(core: AppCore = AppCore(environment: .live(), workspaceDirectory: AppModel.defaultWorkspaceDirectory())) {
         self.core = core
@@ -104,6 +117,7 @@ final class AppModel {
         // must never pair an old project with new credentials.
         session = nil
         isReviewing = false
+        clearSelection()
         // Keep the picker's choice only when the identical project (id,
         // key, and name) exists on this connection — an entity-id collision
         // across instances must not silently select a different project.
@@ -119,8 +133,7 @@ final class AppModel {
             build = try await core.ingestBuild(at: url)
             isReviewing = false
             session = nil
-            filedIssue = nil
-            clearCapture()
+            clearSelection()
             devices = try await core.simulatorDevices()
             if selectedDevice == nil {
                 selectedDeviceID = devices.first?.id
@@ -137,21 +150,25 @@ final class AppModel {
             try await core.launch(build, on: device)
             isReviewing = true
             session = ReviewSession(build: build, project: project)
-            filedIssue = nil
+            clearSelection()
         }
     }
 
     func captureScreen() async {
-        guard let device = selectedDevice else { return }
+        // A pending label draft pins the editor: retargeting before the
+        // surface resolves it would drop the visible note or commit it to
+        // the wrong Finding — same invariant as the filing gate.
+        guard let device = selectedDevice, session != nil, !hasPendingLabelDraft else { return }
         await perform {
             let png = try await core.captureScreen(of: device)
-            finding = Finding(
+            // The capture drops straight into the tray as a Finding — no
+            // filing dialog (PRD story 22) — and opens in the editor.
+            selectedItemID = session?.addFinding(Finding(
                 summary: "",
                 description: "",
                 screenshotPNG: png,
                 deviceContext: DeviceContext(device: device)
-            )
-            filedIssue = nil
+            ))
             captureID = UUID()
             // The surface resets its live draft off captureID, but if it
             // was unmounted first its onChange never fires — the model
@@ -161,38 +178,63 @@ final class AppModel {
         }
     }
 
-    // MARK: - Annotation editing (all state lives in the core's Finding)
+    // MARK: - Tray selection and Annotation editing (state lives in the core's session)
 
-    var canUndoAnnotation: Bool { finding?.canUndo ?? false }
-    var canRedoAnnotation: Bool { finding?.canRedo ?? false }
+    var canUndoAnnotation: Bool { selectedItem?.finding.canUndo ?? false }
+    var canRedoAnnotation: Bool { selectedItem?.finding.canRedo ?? false }
 
     var annotationMetrics: AnnotationMetrics? {
         capturePixelSize.map(AnnotationMetrics.init(imageSize:))
     }
 
-    /// Editing freezes while filing is in flight: the request carries a
-    /// copy of the Finding, so a late edit would show in the preview yet
-    /// be missing from the filed issue.
+    /// Opens a tray item in the editor. Refused while a label draft is
+    /// pending: the surface still owns the typed text, and retargeting
+    /// first would land its commit on the wrong Finding.
+    func selectItem(_ id: TrayItem.ID) {
+        guard selectedItemID != id, !hasPendingLabelDraft else { return }
+        selectedItemID = id
+        captureID = UUID()
+        hasPendingLabelDraft = false
+        refreshAnnotatedImage()
+    }
+
+    /// Removes a Finding from the tray; the core refuses to discard
+    /// anything filing has already touched. Refused while a label draft
+    /// is pending, like every other editor-retargeting mutation.
+    func discardFinding(id: TrayItem.ID) {
+        guard !isBusy, !hasPendingLabelDraft else { return }
+        session?.discardFinding(id: id)
+        if selectedItemID == id, selectedItem == nil {
+            clearSelection()
+        }
+    }
+
     func addAnnotation(_ shape: Annotation.Shape) {
-        guard !isBusy else { return }
-        finding?.add(Annotation(shape, color: annotationColor))
+        editSelectedFinding { $0.add(Annotation(shape, color: annotationColor)) }
         refreshAnnotatedImage()
     }
 
     func undoAnnotation() {
-        guard !isBusy else { return }
-        finding?.undo()
+        editSelectedFinding { $0.undo() }
         refreshAnnotatedImage()
     }
 
     func redoAnnotation() {
-        guard !isBusy else { return }
-        finding?.redo()
+        editSelectedFinding { $0.redo() }
         refreshAnnotatedImage()
     }
 
+    /// Every edit funnels through the core's session, which refuses edits
+    /// to items filing has already touched. Edits also freeze while filing
+    /// is in flight: the run works on a copy of the session, so a late
+    /// edit would show in the preview yet be missing from the filed issue.
+    private func editSelectedFinding(_ edit: (inout Finding) -> Void) {
+        guard !isBusy, let selectedItemID else { return }
+        session?.updateFinding(id: selectedItemID, edit)
+    }
+
     private func refreshAnnotatedImage() {
-        guard let finding else {
+        guard let finding = selectedItem?.finding else {
             capturedImage = nil
             capturePixelSize = nil
             return
@@ -208,25 +250,38 @@ final class AppModel {
         }
     }
 
-    /// Files the composed Finding into the session's project and surfaces
-    /// the resulting issue ID + link; the session tray arrives with issue 05.
-    /// This is the moment Annotations stop being editable.
-    func fileFinding() async {
-        guard let session, var finding, !hasPendingLabelDraft else { return }
+    /// Files every remaining Finding in the tray and lists the resulting
+    /// issue links on the tray rows (PRD stories 24–25). This is the
+    /// moment their Annotations stop being editable. Failure-safe: the
+    /// core records every server-acknowledged step, so whatever filed
+    /// stays marked and a retry files only the remainder.
+    func fileAllFindings() async {
+        guard let session, !hasPendingLabelDraft else { return }
         await perform {
-            finding.summary = summaryField
-            finding.description = descriptionField
-            filedIssue = try await core.file(finding, in: session)
-            summaryField = ""
-            descriptionField = ""
-            clearCapture()
+            let outcome = await core.fileAll(in: session)
+            self.session = outcome.session
+            if let failure = outcome.failure { throw failure }
         }
     }
 
-    private func clearCapture() {
+    /// True when file-all can run: something is left to file and every
+    /// still-editable Finding has the summary filing requires.
+    var canFileAll: Bool {
+        guard let session, !isBusy, !hasPendingLabelDraft else { return false }
+        let remaining = session.tray.filter { $0.filedIssue == nil }
+        return !remaining.isEmpty && remaining.allSatisfy {
+            !$0.isEditable || !$0.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    var remainingFindingCount: Int {
+        session?.tray.count { $0.filedIssue == nil } ?? 0
+    }
+
+    private func clearSelection() {
         capturedImage = nil
         capturePixelSize = nil
-        finding = nil
+        selectedItemID = nil
         hasPendingLabelDraft = false
     }
 

@@ -13,6 +13,17 @@ public struct FiledIssue: Equatable, Sendable {
     }
 }
 
+/// What a file-all run left behind. Progress is never thrown away: the
+/// returned session carries every mark the run made, finished or not.
+public struct FileAllOutcome: Sendable {
+    /// The session with every step the run completed recorded on its tray.
+    public var session: ReviewSession
+    /// nil when every remaining tray item filed; otherwise the error that
+    /// stopped the run. Retrying `fileAll` with the returned session files
+    /// only what is still missing.
+    public var failure: (any Error)?
+}
+
 extension AppCore {
     /// The fixed tag every nitpick-filed issue carries — the query key for
     /// the review backlog (PRD story 32) and for the v2 verify pass
@@ -26,8 +37,9 @@ extension AppCore {
     /// applied. The session supplies the project — chosen once at session
     /// start, never re-asked.
     public func file(_ finding: Finding, in session: ReviewSession) async throws -> FiledIssue {
-        let summary = finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !summary.isEmpty else { throw YouTrackError.summaryRequired }
+        guard !finding.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw YouTrackError.summaryRequired
+        }
         guard let credentials = try savedYouTrackCredentials() else { throw YouTrackError.notConnected }
 
         // Flatten before anything reaches the network: Annotations freeze
@@ -39,45 +51,116 @@ extension AppCore {
         // own permission, and a refusal here must not leave an orphan issue.
         let tagID = try await designReviewTagID(with: credentials)
 
-        let issue: CreatedIssuePayload = try await requestYouTrack(
-            instanceURL: credentials.instanceURL, token: credentials.token,
-            method: "POST", path: "api/issues", query: "fields=id,idReadable",
-            body: try Self.jsonBody(IssueCreationPayload(
-                project: .init(id: session.project.id),
-                summary: summary,
-                description: session.issueDescription(for: finding)
-            )),
-            deniedAction: "create an issue in \(session.project.name)"
+        var item = TrayItem(finding: finding)
+        return try await advanceFiling(
+            of: &item, in: session,
+            annotatedPNG: annotatedPNG, credentials: credentials, tagID: tagID
         )
+    }
 
-        // Attach before tagging: if attaching fails, the issue stays
-        // untagged — invisible to the v2 verify pass and the review-backlog
-        // query — rather than tagged but missing its screenshots. Both
-        // variants ride one request: annotated first, clean original second
-        // (PRD story 29).
-        let _: [AttachmentPayload] = try await requestYouTrack(
-            instanceURL: credentials.instanceURL, token: credentials.token,
-            method: "POST", path: "api/issues/\(issue.id)/attachments", query: "fields=id,name",
-            body: Self.attachmentsBody([
-                (fileName: "annotated.png", data: annotatedPNG),
-                (fileName: "original.png", data: finding.screenshotPNG),
-            ]),
-            deniedAction: "attach the screenshots"
-        )
+    /// Files every not-yet-filed tray item in capture order — one issue per
+    /// Finding (PRD story 24). Failure-safe: each item's ladder records
+    /// every server-acknowledged step before the next request fires, so a
+    /// transport failure mid-run loses nothing — filed items stay marked,
+    /// untouched Findings stay editable, and retrying resumes exactly where
+    /// the run stopped instead of re-filing.
+    public func fileAll(in session: ReviewSession) async -> FileAllOutcome {
+        var updated = session
+        let remaining = updated.tray.indices.filter { updated.tray[$0].filedIssue == nil }
+        guard !remaining.isEmpty else { return FileAllOutcome(session: updated, failure: nil) }
+        do {
+            guard let credentials = try savedYouTrackCredentials() else { throw YouTrackError.notConnected }
+            // Validate and flatten every remaining Finding before the first
+            // request: a missing summary or an undecodable capture on the
+            // last item must stop the run before it half-files the tray.
+            var pending: [(index: Int, annotatedPNG: Data)] = []
+            for index in remaining {
+                let item = updated.tray[index]
+                if item.isEditable,
+                    item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    throw YouTrackError.summaryRequired
+                }
+                pending.append((index, try item.finding.annotatedScreenshotPNG()))
+            }
+            // One tag resolution per run, before any issue exists — the
+            // same orphan-avoidance as single filing, shared by every item.
+            let tagID = try await designReviewTagID(with: credentials)
+            for (index, annotatedPNG) in pending {
+                try await advanceFiling(
+                    of: &updated.tray[index], in: session,
+                    annotatedPNG: annotatedPNG, credentials: credentials, tagID: tagID
+                )
+            }
+            return FileAllOutcome(session: updated, failure: nil)
+        } catch {
+            return FileAllOutcome(session: updated, failure: error)
+        }
+    }
 
-        let _: TagPayload = try await requestYouTrack(
-            instanceURL: credentials.instanceURL, token: credentials.token,
-            method: "POST", path: "api/issues/\(issue.id)/tags", query: "fields=id,name",
-            body: try Self.jsonBody(TagReference(id: tagID)),
-            deniedAction: "apply the “\(Self.designReviewTagName)” tag"
-        )
+    /// Advances one tray item's filing ladder from wherever it stands —
+    /// create the issue, attach both screenshot variants, apply the
+    /// design-review tag — recording each server-acknowledged step on the
+    /// item before the next request fires. On a throw the item keeps the
+    /// last recorded step, which is what makes filing resumable: a retry
+    /// repeats nothing the instance already acknowledged.
+    @discardableResult
+    private func advanceFiling(
+        of item: inout TrayItem,
+        in session: ReviewSession,
+        annotatedPNG: Data,
+        credentials: (instanceURL: URL, token: String),
+        tagID: String
+    ) async throws -> FiledIssue {
+        while true {
+            switch item.filingProgress {
+            case .notStarted:
+                let issue: CreatedIssuePayload = try await requestYouTrack(
+                    instanceURL: credentials.instanceURL, token: credentials.token,
+                    method: "POST", path: "api/issues", query: "fields=id,idReadable",
+                    body: try Self.jsonBody(IssueCreationPayload(
+                        project: .init(id: session.project.id),
+                        summary: item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines),
+                        description: session.issueDescription(for: item.finding)
+                    )),
+                    deniedAction: "create an issue in \(session.project.name)"
+                )
+                item.filingProgress = .issueCreated(issueID: issue.id, idReadable: issue.idReadable)
 
-        return FiledIssue(
-            idReadable: issue.idReadable,
-            url: credentials.instanceURL
-                .appendingPathComponent("issue")
-                .appendingPathComponent(issue.idReadable)
-        )
+            case .issueCreated(let issueID, let idReadable):
+                // Attach before tagging: if attaching fails, the issue stays
+                // untagged — invisible to the v2 verify pass and the
+                // review-backlog query — rather than tagged but missing its
+                // screenshots. Both variants ride one request: annotated
+                // first, clean original second (PRD story 29).
+                let _: [AttachmentPayload] = try await requestYouTrack(
+                    instanceURL: credentials.instanceURL, token: credentials.token,
+                    method: "POST", path: "api/issues/\(issueID)/attachments", query: "fields=id,name",
+                    body: Self.attachmentsBody([
+                        (fileName: "annotated.png", data: annotatedPNG),
+                        (fileName: "original.png", data: item.finding.screenshotPNG),
+                    ]),
+                    deniedAction: "attach the screenshots"
+                )
+                item.filingProgress = .attachmentsUploaded(issueID: issueID, idReadable: idReadable)
+
+            case .attachmentsUploaded(let issueID, let idReadable):
+                let _: TagPayload = try await requestYouTrack(
+                    instanceURL: credentials.instanceURL, token: credentials.token,
+                    method: "POST", path: "api/issues/\(issueID)/tags", query: "fields=id,name",
+                    body: try Self.jsonBody(TagReference(id: tagID)),
+                    deniedAction: "apply the “\(Self.designReviewTagName)” tag"
+                )
+                item.filingProgress = .filed(FiledIssue(
+                    idReadable: idReadable,
+                    url: credentials.instanceURL
+                        .appendingPathComponent("issue")
+                        .appendingPathComponent(idReadable)
+                ))
+
+            case .filed(let issue):
+                return issue
+            }
+        }
     }
 
     /// The instance-side ID of the design-review tag: found among the tags

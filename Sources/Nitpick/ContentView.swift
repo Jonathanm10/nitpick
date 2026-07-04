@@ -129,35 +129,87 @@ struct ContentView: View {
                 Task { await model.captureScreen() }
             }
             .keyboardShortcut("s", modifiers: [.command])
-            .disabled(model.isBusy)
+            .disabled(model.isBusy || model.hasPendingLabelDraft)
 
-            if let filed = model.filedIssue {
-                HStack(spacing: 8) {
-                    Text("Filed \(filed.idReadable)")
-                        .textSelection(.enabled)
-                    Link("Open in YouTrack", destination: filed.url)
-                }
+            if model.session?.tray.isEmpty == false {
+                traySection
             }
 
-            if model.capturedImage != nil {
-                AnnotationSurface(model: model)
-                composeSection
+            if let item = model.selectedItem {
+                editorSection(for: item)
             }
+        }
+    }
+
+    /// The session tray: every capture in order, selectable for editing,
+    /// discardable until filing touches it, carrying its issue link once
+    /// filed. File-all lives here — the one end-of-session action.
+    @ViewBuilder
+    private var traySection: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(model.session?.tray ?? []) { item in
+                trayRow(item)
+            }
+        }
+        Button("File all (\(model.remainingFindingCount))") {
+            Task { await model.fileAllFindings() }
+        }
+        .disabled(!model.canFileAll)
+    }
+
+    private func trayRow(_ item: TrayItem) -> some View {
+        HStack(spacing: 8) {
+            let summary = item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            Text(summary.isEmpty ? "Untitled Finding" : summary)
+                .lineLimit(1)
+            Text(item.finding.deviceContext.deviceModel)
+                .foregroundStyle(.secondary)
+            Spacer()
+            if let filed = item.filedIssue {
+                Link(filed.idReadable, destination: filed.url)
+            } else if item.isEditable {
+                Button("Discard") { model.discardFinding(id: item.id) }
+                    .buttonStyle(.borderless)
+                    .disabled(model.isBusy || model.hasPendingLabelDraft)
+            } else {
+                // Mid-ladder: its issue exists but is incomplete — a File
+                // all retry finishes it without re-creating anything.
+                Text(model.isBusy ? "Filing…" : "Filing interrupted — retry")
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .onTapGesture { model.selectItem(item.id) }
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(model.selectedItemID == item.id ? Color.accentColor.opacity(0.15) : .clear)
+        )
+    }
+
+    @ViewBuilder
+    private func editorSection(for item: TrayItem) -> some View {
+        if item.isEditable {
+            AnnotationSurface(model: model)
+            composeSection
+        } else if let image = model.capturedImage {
+            // Frozen: the issue already exists — show the capture, no edits.
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
     @ViewBuilder
     private var composeSection: some View {
         TextField("Summary", text: $model.summaryField)
+            .disabled(model.isBusy)
         TextField("Description", text: $model.descriptionField, axis: .vertical)
             .lineLimit(3...6)
-        Button("File to YouTrack") {
-            Task { await model.fileFinding() }
-        }
-        .disabled(
-            model.summaryField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || model.isBusy
-                || model.hasPendingLabelDraft
-        )
+            .disabled(model.isBusy)
     }
 }
