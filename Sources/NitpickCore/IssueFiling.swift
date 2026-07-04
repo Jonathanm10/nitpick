@@ -1,7 +1,7 @@
 import Foundation
 
 /// The YouTrack issue a Finding became — what the designer sees after filing.
-public struct FiledIssue: Equatable, Sendable {
+public struct FiledIssue: Equatable, Sendable, Codable {
     /// The human-readable issue ID, e.g. "RM-421".
     public var idReadable: String
     /// The issue's page on the instance.
@@ -52,18 +52,24 @@ extension AppCore {
         let tagID = try await designReviewTagID(with: credentials)
 
         var item = TrayItem(finding: finding)
-        return try await advanceFiling(
-            of: &item, in: session,
-            annotatedPNG: annotatedPNG, credentials: credentials, tagID: tagID
-        )
+        while true {
+            if case .filed(let issue) = item.filingProgress { return issue }
+            try await advanceFilingOneStep(
+                of: &item, in: session,
+                annotatedPNG: annotatedPNG, credentials: credentials, tagID: tagID
+            )
+        }
     }
 
     /// Files every not-yet-filed tray item in capture order — one issue per
-    /// Finding (PRD story 24). Failure-safe: each item's ladder records
-    /// every server-acknowledged step before the next request fires, so a
-    /// transport failure mid-run loses nothing — filed items stay marked,
-    /// untouched Findings stay editable, and retrying resumes exactly where
-    /// the run stopped instead of re-filing.
+    /// Finding (PRD story 24). Failure-safe and crash-safe: each item's
+    /// ladder records every server-acknowledged step on the tray AND on
+    /// disk before the next request fires, so a transport failure — or the
+    /// app dying mid-run — loses nothing. Filed items stay marked,
+    /// untouched Findings stay editable, and retrying (even after a
+    /// relaunch) resumes exactly where the run stopped instead of
+    /// re-filing. When the whole tray has filed, the session leaves the
+    /// open slot and becomes a read-only history entry.
     public func fileAll(in session: ReviewSession) async -> FileAllOutcome {
         var updated = session
         let remaining = updated.tray.indices.filter { updated.tray[$0].filedIssue == nil }
@@ -86,80 +92,86 @@ extension AppCore {
             // same orphan-avoidance as single filing, shared by every item.
             let tagID = try await designReviewTagID(with: credentials)
             for (index, annotatedPNG) in pending {
-                try await advanceFiling(
-                    of: &updated.tray[index], in: session,
-                    annotatedPNG: annotatedPNG, credentials: credentials, tagID: tagID
-                )
+                while updated.tray[index].filedIssue == nil {
+                    try await advanceFilingOneStep(
+                        of: &updated.tray[index], in: session,
+                        annotatedPNG: annotatedPNG, credentials: credentials, tagID: tagID
+                    )
+                    // Durability (issue 07): the mark hits disk before the
+                    // next request fires — a crash mid-run resumes on
+                    // relaunch, never re-files.
+                    try saveOpenSession(updated)
+                }
             }
+            // Every tray item is filed: freeze the session into history
+            // and clear the open slot.
+            try recordInHistory(updated)
             return FileAllOutcome(session: updated, failure: nil)
         } catch {
             return FileAllOutcome(session: updated, failure: error)
         }
     }
 
-    /// Advances one tray item's filing ladder from wherever it stands —
-    /// create the issue, attach both screenshot variants, apply the
-    /// design-review tag — recording each server-acknowledged step on the
-    /// item before the next request fires. On a throw the item keeps the
-    /// last recorded step, which is what makes filing resumable: a retry
-    /// repeats nothing the instance already acknowledged.
-    @discardableResult
-    private func advanceFiling(
+    /// Advances one tray item's filing ladder by exactly one rung — create
+    /// the issue, attach both screenshot variants, or apply the
+    /// design-review tag — recording the server-acknowledged step on the
+    /// item. On a throw the item keeps the last recorded step, which is
+    /// what makes filing resumable: a retry repeats nothing the instance
+    /// already acknowledged. A no-op on an already-filed item.
+    private func advanceFilingOneStep(
         of item: inout TrayItem,
         in session: ReviewSession,
         annotatedPNG: Data,
         credentials: (instanceURL: URL, token: String),
         tagID: String
-    ) async throws -> FiledIssue {
-        while true {
-            switch item.filingProgress {
-            case .notStarted:
-                let issue: CreatedIssuePayload = try await requestYouTrack(
-                    instanceURL: credentials.instanceURL, token: credentials.token,
-                    method: "POST", path: "api/issues", query: "fields=id,idReadable",
-                    body: try Self.jsonBody(IssueCreationPayload(
-                        project: .init(id: session.project.id),
-                        summary: item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines),
-                        description: session.issueDescription(for: item.finding)
-                    )),
-                    deniedAction: "create an issue in \(session.project.name)"
-                )
-                item.filingProgress = .issueCreated(issueID: issue.id, idReadable: issue.idReadable)
+    ) async throws {
+        switch item.filingProgress {
+        case .notStarted:
+            let issue: CreatedIssuePayload = try await requestYouTrack(
+                instanceURL: credentials.instanceURL, token: credentials.token,
+                method: "POST", path: "api/issues", query: "fields=id,idReadable",
+                body: try Self.jsonBody(IssueCreationPayload(
+                    project: .init(id: session.project.id),
+                    summary: item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines),
+                    description: session.issueDescription(for: item.finding)
+                )),
+                deniedAction: "create an issue in \(session.project.name)"
+            )
+            item.filingProgress = .issueCreated(issueID: issue.id, idReadable: issue.idReadable)
 
-            case .issueCreated(let issueID, let idReadable):
-                // Attach before tagging: if attaching fails, the issue stays
-                // untagged — invisible to the v2 verify pass and the
-                // review-backlog query — rather than tagged but missing its
-                // screenshots. Both variants ride one request: annotated
-                // first, clean original second (PRD story 29).
-                let _: [AttachmentPayload] = try await requestYouTrack(
-                    instanceURL: credentials.instanceURL, token: credentials.token,
-                    method: "POST", path: "api/issues/\(issueID)/attachments", query: "fields=id,name",
-                    body: Self.attachmentsBody([
-                        (fileName: "annotated.png", data: annotatedPNG),
-                        (fileName: "original.png", data: item.finding.screenshotPNG),
-                    ]),
-                    deniedAction: "attach the screenshots"
-                )
-                item.filingProgress = .attachmentsUploaded(issueID: issueID, idReadable: idReadable)
+        case .issueCreated(let issueID, let idReadable):
+            // Attach before tagging: if attaching fails, the issue stays
+            // untagged — invisible to the v2 verify pass and the
+            // review-backlog query — rather than tagged but missing its
+            // screenshots. Both variants ride one request: annotated
+            // first, clean original second (PRD story 29).
+            let _: [AttachmentPayload] = try await requestYouTrack(
+                instanceURL: credentials.instanceURL, token: credentials.token,
+                method: "POST", path: "api/issues/\(issueID)/attachments", query: "fields=id,name",
+                body: Self.attachmentsBody([
+                    (fileName: "annotated.png", data: annotatedPNG),
+                    (fileName: "original.png", data: item.finding.screenshotPNG),
+                ]),
+                deniedAction: "attach the screenshots"
+            )
+            item.filingProgress = .attachmentsUploaded(issueID: issueID, idReadable: idReadable)
 
-            case .attachmentsUploaded(let issueID, let idReadable):
-                let _: TagPayload = try await requestYouTrack(
-                    instanceURL: credentials.instanceURL, token: credentials.token,
-                    method: "POST", path: "api/issues/\(issueID)/tags", query: "fields=id,name",
-                    body: try Self.jsonBody(TagReference(id: tagID)),
-                    deniedAction: "apply the “\(Self.designReviewTagName)” tag"
-                )
-                item.filingProgress = .filed(FiledIssue(
-                    idReadable: idReadable,
-                    url: credentials.instanceURL
-                        .appendingPathComponent("issue")
-                        .appendingPathComponent(idReadable)
-                ))
+        case .attachmentsUploaded(let issueID, let idReadable):
+            let _: TagPayload = try await requestYouTrack(
+                instanceURL: credentials.instanceURL, token: credentials.token,
+                method: "POST", path: "api/issues/\(issueID)/tags", query: "fields=id,name",
+                body: try Self.jsonBody(TagReference(id: tagID)),
+                deniedAction: "apply the “\(Self.designReviewTagName)” tag"
+            )
+            item.filingProgress = .filed(FiledIssue(
+                idReadable: idReadable,
+                url: credentials.instanceURL
+                    .appendingPathComponent("issue")
+                    .appendingPathComponent(idReadable)
+            ))
 
-            case .filed(let issue):
-                return issue
-            }
+        case .filed:
+            break
         }
     }
 

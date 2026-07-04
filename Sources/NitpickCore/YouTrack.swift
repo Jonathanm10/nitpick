@@ -13,7 +13,7 @@ public struct YouTrackUser: Equatable, Sendable {
 }
 
 /// A YouTrack project a Review Session can file Findings into.
-public struct YouTrackProject: Equatable, Sendable, Identifiable {
+public struct YouTrackProject: Equatable, Sendable, Identifiable, Codable {
     /// YouTrack's entity id, e.g. "0-12" — what the issues API references.
     public var id: String
     /// The key issue IDs derive from, e.g. "RM" in RM-421.

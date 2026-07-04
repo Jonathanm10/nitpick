@@ -4,7 +4,7 @@ import Foundation
 /// The small fixed palette for Annotations (PRD story 16). Red is the
 /// default; the rest keep marks visible on any screenshot. Colors are pinned
 /// as exact sRGB components so flattened output stays snapshot-stable.
-public enum AnnotationColor: String, CaseIterable, Equatable, Sendable {
+public enum AnnotationColor: String, CaseIterable, Equatable, Sendable, Codable {
     case red, yellow, green, blue, black, white
 
     public static let `default` = AnnotationColor.red
@@ -27,8 +27,8 @@ public enum AnnotationColor: String, CaseIterable, Equatable, Sendable {
 /// rectangle, or text label. Coordinates live in the screenshot's native
 /// pixel space, origin top-left — annotations are resolution-anchored to
 /// the capture, not to any view that displays it.
-public struct Annotation: Equatable, Sendable {
-    public enum Shape: Equatable, Sendable {
+public struct Annotation: Equatable, Sendable, Codable {
+    public enum Shape: Equatable, Sendable, Codable {
         /// A freehand polyline through the given points.
         case pen(points: [CGPoint])
         /// A straight arrow; the head sits at `to`.

@@ -43,6 +43,14 @@ public struct TrayItem: Equatable, Sendable, Identifiable {
         self.filingProgress = .notStarted
     }
 
+    /// Rebuilds a persisted item with its original identity and filing
+    /// marks — the resume path. New captures go through `init(finding:)`.
+    init(id: UUID, finding: Finding, filingProgress: FilingProgress) {
+        self.id = id
+        self.finding = finding
+        self.filingProgress = filingProgress
+    }
+
     /// The issue this Finding became, once the whole filing ladder ran.
     public var filedIssue: FiledIssue? {
         if case .filed(let issue) = filingProgress { return issue }
@@ -61,7 +69,7 @@ public struct TrayItem: Equatable, Sendable, Identifiable {
 /// resumes instead of repeating — no Finding is ever double-filed. (A
 /// response lost in transit is the one irreducible ambiguity; nothing the
 /// instance acknowledged is ever re-sent.)
-public enum FilingProgress: Equatable, Sendable {
+public enum FilingProgress: Equatable, Sendable, Codable {
     /// Nothing about this item exists on the instance yet.
     case notStarted
     /// `POST api/issues` succeeded: the issue exists but carries neither
@@ -107,7 +115,7 @@ extension ReviewSession {
 /// The device and settings in effect when a Finding is captured: device
 /// model, OS version, and accessibility settings. Stamped per Finding at
 /// capture time, not on the Review Session.
-public struct DeviceContext: Equatable, Sendable {
+public struct DeviceContext: Equatable, Sendable, Codable {
     /// e.g. "iPhone 17 Pro".
     public var deviceModel: String
     /// e.g. "iOS 26.4".

@@ -55,6 +55,9 @@ final class AppModel {
     /// The active Review Session: Build + project pinned at Start review,
     /// and the session tray its captures accumulate in.
     private(set) var session: ReviewSession?
+    /// The local history log: filed sessions with their issue links,
+    /// newest first. Read-only, read from disk — never from YouTrack.
+    private(set) var history: [HistoryEntry] = []
 
     var selectedItem: TrayItem? {
         guard let selectedItemID else { return nil }
@@ -90,6 +93,39 @@ final class AppModel {
         youTrack?.projects.first { $0.id == selectedProjectID }
     }
 
+    /// Everything a relaunch brings back, in order: the saved YouTrack
+    /// connection, then the open session a quit or crash left behind (its
+    /// project checked against that connection), then the history log.
+    func onLaunch() async {
+        await loadYouTrack()
+        await restoreOpenSession()
+        refreshHistory()
+    }
+
+    /// The resume path (issue 07): the open session comes back with its
+    /// tray, descriptions, and still-editable Annotations. The simulator
+    /// is not relaunched — Resume review does that on demand; filing works
+    /// straight away.
+    private func restoreOpenSession() async {
+        await perform {
+            guard let restored = try core.loadOpenSession() else { return }
+            // Filing must never pair the session's pinned project with a
+            // connection that lacks it (an entity-id collision across
+            // instances could file into a stranger's project). The session
+            // stays on disk; reconnecting to the right instance revives it
+            // on the next launch. Not connected yet is fine — `connected`
+            // applies the same check later.
+            if let youTrack, !youTrack.projects.contains(restored.project) { return }
+            session = restored
+            build = restored.build
+            selectedProjectID = restored.project.id
+            devices = try await core.simulatorDevices()
+            if selectedDevice == nil {
+                selectedDeviceID = devices.first?.id
+            }
+        }
+    }
+
     /// The relaunch path: resume a saved connection, prefilling the
     /// instance URL either way.
     func loadYouTrack() async {
@@ -121,19 +157,28 @@ final class AppModel {
     }
 
     private func connected(_ connection: YouTrackConnection) {
-        // A new connection ends the active Review Session: its pinned
-        // project belongs to the connection it was chosen from, and filing
-        // must never pair an old project with new credentials.
-        session = nil
-        isReviewing = false
-        reviewDevice = nil
-        clearSelection()
-        // Keep the picker's choice only when the identical project (id,
-        // key, and name) exists on this connection — an entity-id collision
-        // across instances must not silently select a different project.
+        // A connection change ends the active Review Session unless this
+        // connection offers the session's exact project (id, key, and
+        // name) — filing must never pair the pinned project with
+        // credentials it wasn't chosen under. Reconnecting to the same
+        // instance keeps the session; its open-session file stays on disk
+        // either way, so ending it here never destroys review work.
+        if let session, !connection.projects.contains(session.project) {
+            self.session = nil
+            isReviewing = false
+            reviewDevice = nil
+            clearSelection()
+        }
+        // A surviving session's pinned project drives the (disabled)
+        // picker. Otherwise keep the picker's choice only when the
+        // identical project (id, key, and name) exists on this
+        // connection — an entity-id collision across instances must not
+        // silently select a different project.
         let previous = selectedProject
         youTrack = connection
-        if previous == nil || !connection.projects.contains(where: { $0 == previous }) {
+        if let session {
+            selectedProjectID = session.project.id
+        } else if previous == nil || !connection.projects.contains(where: { $0 == previous }) {
             selectedProjectID = connection.projects.first?.id
         }
     }
@@ -143,7 +188,14 @@ final class AppModel {
             build = try await core.ingestBuild(at: url)
             isReviewing = false
             reviewDevice = nil
-            session = nil
+            // A successful drag of a new Build ends any open session (a
+            // Review Session reviews exactly one Build) — on disk too, or
+            // a relaunch would resurrect what the designer deliberately
+            // left. An invalid drop throws above and costs nothing.
+            if session != nil {
+                session = nil
+                try core.clearOpenSession()
+            }
             clearSelection()
             devices = try await core.simulatorDevices()
             if selectedDevice == nil {
@@ -154,9 +206,12 @@ final class AppModel {
 
     /// Starts the Review Session: launches the Build and pins the chosen
     /// project exactly once — filing never re-asks (PRD session boundary:
-    /// a Review Session always pairs Build + project).
+    /// a Review Session always pairs Build + project). A restored session
+    /// resumes instead: its pinned project and tray stay; only the
+    /// simulator is relaunched.
     func startReview() async {
-        guard let build, let device = selectedDevice, let project = selectedProject else { return }
+        guard let build, let device = selectedDevice,
+              let project = session?.project ?? selectedProject else { return }
         await perform {
             // Every session starts from default Device Settings; launch
             // applies them, so the stamp matches the simulator from the
@@ -166,8 +221,11 @@ final class AppModel {
             deviceSettings = settings
             reviewDevice = device
             isReviewing = true
-            session = ReviewSession(build: build, project: project)
-            clearSelection()
+            if session == nil {
+                session = ReviewSession(build: build, project: project)
+                clearSelection()
+                persistOpenSession()
+            }
         }
     }
 
@@ -226,6 +284,7 @@ final class AppModel {
                 screenshotPNG: png,
                 deviceContext: DeviceContext(device: device, settings: deviceSettings)
             ))
+            persistOpenSession()
             captureID = UUID()
             // The surface resets its live draft off captureID, but if it
             // was unmounted first its onChange never fires — the model
@@ -261,6 +320,7 @@ final class AppModel {
     func discardFinding(id: TrayItem.ID) {
         guard !isBusy, !hasPendingLabelDraft else { return }
         session?.discardFinding(id: id)
+        persistOpenSession()
         if selectedItemID == id, selectedItem == nil {
             clearSelection()
         }
@@ -288,6 +348,7 @@ final class AppModel {
     private func editSelectedFinding(_ edit: (inout Finding) -> Void) {
         guard !isBusy, let selectedItemID else { return }
         session?.updateFinding(id: selectedItemID, edit)
+        persistOpenSession()
     }
 
     private func refreshAnnotatedImage() {
@@ -307,16 +368,27 @@ final class AppModel {
         }
     }
 
-    /// Files every remaining Finding in the tray and lists the resulting
-    /// issue links on the tray rows (PRD stories 24–25). This is the
-    /// moment their Annotations stop being editable. Failure-safe: the
-    /// core records every server-acknowledged step, so whatever filed
-    /// stays marked and a retry files only the remainder.
+    /// Files every remaining Finding in the tray — the moment their
+    /// Annotations stop being editable (PRD story 24). Failure-safe and
+    /// crash-safe: the core records every server-acknowledged step on
+    /// disk, so whatever filed stays marked — even across a relaunch —
+    /// and a retry files only the remainder. When the whole tray files,
+    /// the Review Session is over: it becomes a read-only history entry
+    /// where its issue links stay visible (PRD story 25), and the next
+    /// review starts fresh.
     func fileAllFindings() async {
         guard let session, !hasPendingLabelDraft else { return }
         await perform {
             let outcome = await core.fileAll(in: session)
-            self.session = outcome.session
+            if outcome.failure == nil {
+                self.session = nil
+                isReviewing = false
+                reviewDevice = nil
+                clearSelection()
+            } else {
+                self.session = outcome.session
+            }
+            refreshHistory()
             if let failure = outcome.failure { throw failure }
         }
     }
@@ -333,6 +405,26 @@ final class AppModel {
 
     var remainingFindingCount: Int {
         session?.tray.count { $0.filedIssue == nil } ?? 0
+    }
+
+    /// Sessions persist as they are created (issue 07): every mutation
+    /// lands on disk before the designer's next action, so a quit or crash
+    /// costs nothing.
+    private func persistOpenSession() {
+        guard let session else { return }
+        do {
+            try core.saveOpenSession(session)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshHistory() {
+        do {
+            history = try core.sessionHistory()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func clearSelection() {

@@ -2,7 +2,7 @@ import Foundation
 
 /// What identifies a Build: bundle ID, version, and build number, read from
 /// the bundle's Info.plist — never typed by the designer (ADR-0002).
-public struct BuildIdentity: Equatable, Sendable {
+public struct BuildIdentity: Equatable, Sendable, Codable {
     public var bundleID: String
     public var version: String
     public var buildNumber: String
@@ -16,7 +16,7 @@ public struct BuildIdentity: Equatable, Sendable {
 
 /// A specific compiled instance of the app under review, ingested from a
 /// dragged .app bundle or zip archive.
-public struct Build: Equatable, Sendable {
+public struct Build: Equatable, Sendable, Codable {
     public var identity: BuildIdentity
     /// The .app bundle on disk — for a zipped Build, inside the workspace's
     /// extraction directory.

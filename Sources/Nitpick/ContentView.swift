@@ -12,8 +12,8 @@ struct ContentView: View {
             if model.build != nil {
                 deviceRow
             }
-            if model.isReviewing {
-                captureSection
+            if model.session != nil {
+                reviewSection
             }
             if let message = model.errorMessage {
                 Text(message)
@@ -21,6 +21,7 @@ struct ContentView: View {
                     .textSelection(.enabled)
             }
             Spacer(minLength: 0)
+            historySection
         }
         .padding(20)
         .frame(minWidth: 520, minHeight: 640)
@@ -29,7 +30,7 @@ struct ContentView: View {
             Task { await model.ingest(url) }
             return true
         }
-        .task { await model.loadYouTrack() }
+        .task { await model.onLaunch() }
         .overlay(alignment: .topTrailing) {
             if model.isBusy {
                 ProgressView()
@@ -139,11 +140,17 @@ struct ContentView: View {
                 .disabled(model.isBusy)
                 .help("The simulator's appearance — stamped onto every capture.")
             } else {
-                Button("Start review") {
+                // A restored session resumes with its pinned project;
+                // a fresh start needs the picker's choice.
+                Button(model.session == nil ? "Start review" : "Resume review") {
                     Task { await model.startReview() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(model.selectedDevice == nil || model.selectedProject == nil || model.isBusy)
+                .disabled(
+                    model.selectedDevice == nil
+                        || (model.selectedProject == nil && model.session == nil)
+                        || model.isBusy
+                )
                 .help("Reviewing needs a device and a YouTrack project — the session files into it.")
             }
         }
@@ -178,13 +185,18 @@ struct ContentView: View {
         )
     }
 
-    private var captureSection: some View {
+    /// The open session: capture (once the Build is running), the tray,
+    /// and the editor. Shown whenever a session exists — including one
+    /// restored after a relaunch, before its Build is launched again.
+    private var reviewSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button("Capture") {
-                Task { await model.captureScreen() }
+            if model.isReviewing {
+                Button("Capture") {
+                    Task { await model.captureScreen() }
+                }
+                .keyboardShortcut("s", modifiers: [.command])
+                .disabled(model.isBusy || model.hasPendingLabelDraft)
             }
-            .keyboardShortcut("s", modifiers: [.command])
-            .disabled(model.isBusy || model.hasPendingLabelDraft)
 
             if model.session?.tray.isEmpty == false {
                 traySection
@@ -266,5 +278,49 @@ struct ContentView: View {
         TextField("Description", text: $model.descriptionField, axis: .vertical)
             .lineLimit(3...6)
             .disabled(model.isBusy)
+    }
+
+    /// The local history log: filed sessions with their issue links,
+    /// newest first — the "did I already file this?" answer. Read-only
+    /// rows, read from disk; no YouTrack state is ever fetched for it.
+    @ViewBuilder
+    private var historySection: some View {
+        if !model.history.isEmpty {
+            Divider()
+            Text("History")
+                .font(.headline)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(model.history) { entry in
+                        historyRow(entry)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 180)
+        }
+    }
+
+    private func historyRow(_ entry: HistoryEntry) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text(entry.project.name)
+                    .font(.callout.weight(.semibold))
+                Text("\(entry.build.bundleID) \(entry.build.version) (\(entry.build.buildNumber))")
+                    .font(.callout.monospaced())
+                    .foregroundStyle(.secondary)
+                Text(entry.startedAt.formatted(date: .abbreviated, time: .shortened))
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(entry.findings, id: \.issue.idReadable) { finding in
+                HStack(spacing: 8) {
+                    Link(finding.issue.idReadable, destination: finding.issue.url)
+                    let summary = finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+                    Text(summary.isEmpty ? "Untitled Finding" : summary)
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 }
