@@ -12,6 +12,11 @@ final class AppModel {
 
     private(set) var build: Build?
     private(set) var devices: [SimulatorDevice] = []
+    /// What this Mac is missing before a review can run (issue 10):
+    /// non-nil shows the guided-setup panel instead of the device picker.
+    /// Refreshed at launch, on every Build drop, at session start, and by
+    /// the panel's own "Check again".
+    private(set) var setupGuidance: SetupGuidance?
     var selectedDeviceID: SimulatorDevice.ID?
     /// True once the Build has been launched on the selected device.
     private(set) var isReviewing = false
@@ -121,12 +126,43 @@ final class AppModel {
     }
 
     /// Everything a relaunch brings back, in order: the saved YouTrack
-    /// connection, then the open session a quit or crash left behind (its
-    /// project checked against that connection), then the history log.
+    /// connection, the prerequisite check (a missing Xcode surfaces as
+    /// guidance before the designer invests anything), then the open
+    /// session a quit or crash left behind (its project checked against
+    /// that connection), then the history log.
     func onLaunch() async {
         await loadYouTrack()
+        await perform { try await refreshSetup() }
         await restoreOpenSession()
         refreshHistory()
+    }
+
+    /// Runs the core's prerequisite probe and publishes its outcome: the
+    /// guidance panel when something is missing, the pickable devices when
+    /// ready. Returns whether the Mac is ready to review.
+    @discardableResult
+    private func refreshSetup() async throws -> Bool {
+        switch try await core.checkSetup() {
+        case .ready(let devices):
+            setupGuidance = nil
+            self.devices = devices
+            // A selection whose runtime vanished would leave Start review
+            // dead with no explanation — move to the first usable device.
+            if selectedDevice?.isRuntimeAvailable != true {
+                selectedDeviceID = devices.first { $0.isRuntimeAvailable }?.id
+            }
+            return true
+        case .needsSetup(let guidance):
+            setupGuidance = guidance
+            devices = []
+            return false
+        }
+    }
+
+    /// The guidance panel's "Check again" — re-probes after the designer
+    /// installs the missing piece.
+    func recheckSetup() async {
+        await perform { try await refreshSetup() }
     }
 
     /// The resume path (issue 07): the open session comes back with its
@@ -146,10 +182,6 @@ final class AppModel {
             session = restored
             build = restored.build
             selectedProjectID = restored.project.id
-            devices = try await core.simulatorDevices()
-            if selectedDevice == nil {
-                selectedDeviceID = devices.first?.id
-            }
         }
     }
 
@@ -224,10 +256,7 @@ final class AppModel {
                 try core.clearOpenSession()
             }
             clearSelection()
-            devices = try await core.simulatorDevices()
-            if selectedDevice == nil {
-                selectedDeviceID = devices.first?.id
-            }
+            try await refreshSetup()
         }
     }
 
@@ -237,9 +266,12 @@ final class AppModel {
     /// resumes instead: its pinned project and tray stay; only the
     /// simulator is relaunched.
     func startReview() async {
-        guard let build, let device = selectedDevice,
-              let project = session?.project ?? selectedProject else { return }
+        guard let build, let project = session?.project ?? selectedProject else { return }
         await perform {
+            // Session-start prerequisite check (issue 10): a missing Xcode
+            // or runtime surfaces as guidance before any boot is attempted.
+            guard try await refreshSetup() else { return }
+            guard let device = selectedDevice, device.isRuntimeAvailable else { return }
             // Every session starts from default Device Settings; launch
             // applies them, so the stamp matches the simulator from the
             // first capture on.
@@ -263,7 +295,8 @@ final class AppModel {
     func switchDevice(to id: SimulatorDevice.ID?) async {
         guard isReviewing, !isBusy, let build,
               let id, id != reviewDevice?.id,
-              let device = devices.first(where: { $0.id == id })
+              let device = devices.first(where: { $0.id == id }),
+              device.isRuntimeAvailable
         else { return }
         selectedDeviceID = id
         await perform {

@@ -19,7 +19,7 @@ struct LiveSmokeTests {
         #expect(build.identity.version == "1.0.0")
         #expect(build.identity.buildNumber == "7")
 
-        let devices = try await core.simulatorDevices()
+        let devices = try await core.simulatorDevices().filter(\.isRuntimeAvailable)
         try #require(!devices.isEmpty)
         // Prefer an already-booted device to keep the smoke fast.
         let device = devices.first { $0.isBooted } ?? devices[0]

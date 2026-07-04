@@ -9,7 +9,9 @@ struct ContentView: View {
             youTrackSection
             Divider()
             dropZone
-            if model.build != nil {
+            if let guidance = model.setupGuidance {
+                setupGuidanceSection(guidance)
+            } else if model.build != nil {
                 deviceRow
             }
             if model.session != nil {
@@ -113,8 +115,15 @@ struct ContentView: View {
         HStack(spacing: 12) {
             Picker("Device", selection: deviceSelection) {
                 ForEach(model.devices) { device in
-                    Text("\(device.name) — \(device.osName)")
-                        .tag(Optional(device.id))
+                    // A device whose runtime is missing is flagged at pick
+                    // time — visible but not selectable (issue 10).
+                    Text(
+                        device.isRuntimeAvailable
+                            ? "\(device.name) — \(device.osName)"
+                            : "\(device.name) — \(device.osName) (runtime missing)"
+                    )
+                    .tag(Optional(device.id))
+                    .selectionDisabled(!device.isRuntimeAvailable)
                 }
             }
             .labelsHidden()
@@ -147,12 +156,34 @@ struct ContentView: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(
-                    model.selectedDevice == nil
+                    model.selectedDevice?.isRuntimeAvailable != true
                         || (model.selectedProject == nil && model.session == nil)
                         || model.isBusy
                 )
                 .help("Reviewing needs a device and a YouTrack project — the session files into it.")
             }
+        }
+    }
+
+    /// The guided-setup panel (issue 10): what's missing on this Mac and
+    /// the install path, in the designer's language — shown in place of
+    /// the device picker until "Check again" comes back clean.
+    private func setupGuidanceSection(_ guidance: SetupGuidance) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(guidance.title, systemImage: "wrench.and.screwdriver")
+                    .font(.headline)
+                ForEach(Array(guidance.steps.enumerated()), id: \.offset) { index, step in
+                    Text("\(index + 1). \(step)")
+                        .foregroundStyle(.secondary)
+                }
+                Button("Check again") {
+                    Task { await model.recheckSetup() }
+                }
+                .disabled(model.isBusy)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
         }
     }
 

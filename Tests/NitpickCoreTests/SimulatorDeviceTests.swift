@@ -61,7 +61,7 @@ struct SimulatorDeviceTests {
         }
         """
 
-    @Test("available iOS devices are listed newest OS first, watchOS and unavailable devices dropped")
+    @Test("iOS devices are listed newest OS first, runtime-missing devices flagged, watchOS dropped")
     func listsDevices() async throws {
         runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data(Self.deviceListJSON.utf8)))
 
@@ -70,12 +70,16 @@ struct SimulatorDeviceTests {
         #expect(runner.executedCommands == [
             SubprocessCommand(
                 executablePath: "/usr/bin/xcrun",
-                arguments: ["simctl", "list", "devices", "available", "--json"]
+                arguments: ["simctl", "list", "devices", "--json"]
             )
         ])
         #expect(devices == [
             SimulatorDevice(udid: "DDDD-4444", name: "iPad (A16)", osName: "iOS 26.5", isBooted: false),
             SimulatorDevice(udid: "CCCC-3333", name: "iPhone Air", osName: "iOS 26.5", isBooted: true),
+            SimulatorDevice(
+                udid: "BBBB-2222", name: "Broken iPhone", osName: "iOS 26.4", isBooted: false,
+                isRuntimeAvailable: false
+            ),
             SimulatorDevice(udid: "AAAA-1111", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: false),
         ])
     }

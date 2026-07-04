@@ -54,7 +54,7 @@ struct WalkingSkeletonScenarioTests {
                 executablePath: "/usr/bin/tar",
                 arguments: ["-x", "-f", zipURL.path, "-C", extractionDirectory.path]
             ),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "list", "devices", "available", "--json"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "list", "devices", "--json"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "boot", "AAAA-1111"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "bootstatus", "AAAA-1111", "-b"]),
             SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", "Simulator"]),

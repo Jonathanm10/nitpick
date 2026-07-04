@@ -8,14 +8,19 @@ public struct SimulatorDevice: Equatable, Sendable, Identifiable {
     /// Human-readable OS, e.g. "iOS 26.4".
     public var osName: String
     public var isBooted: Bool
+    /// False when CoreSimulator can't run this device — typically its OS
+    /// runtime was deleted or never downloaded. Such a device is flagged
+    /// at pick time and refused at launch, before any boot is attempted.
+    public var isRuntimeAvailable: Bool
 
     public var id: String { udid }
 
-    public init(udid: String, name: String, osName: String, isBooted: Bool) {
+    public init(udid: String, name: String, osName: String, isBooted: Bool, isRuntimeAvailable: Bool = true) {
         self.udid = udid
         self.name = name
         self.osName = osName
         self.isBooted = isBooted
+        self.isRuntimeAvailable = isRuntimeAvailable
     }
 }
 
@@ -25,6 +30,8 @@ public enum SimulatorError: Error, Equatable, LocalizedError {
     case malformedDeviceList
     /// `simctl io screenshot` reported success but left no readable PNG.
     case captureUnreadable(path: String)
+    /// `launch` was asked to boot a device whose OS runtime is missing.
+    case runtimeUnavailable(deviceName: String, osName: String)
 
     public var errorDescription: String? {
         switch self {
@@ -32,17 +39,21 @@ public enum SimulatorError: Error, Equatable, LocalizedError {
             return "The simulator device list could not be read. Is Xcode installed correctly?"
         case .captureUnreadable(let path):
             return "The capture succeeded but no image could be read at \(path)."
+        case .runtimeUnavailable(let deviceName, let osName):
+            return "\(deviceName) can't be booted: its \(osName) simulator runtime isn't installed."
         }
     }
 }
 
 extension AppCore {
-    /// The available iOS simulator devices, newest OS first, then by name.
-    /// Non-iOS runtimes are dropped (ADR-0005).
+    /// The iOS simulator devices simctl knows, newest OS first, then by
+    /// name. Non-iOS runtimes are dropped (ADR-0005); devices whose own
+    /// runtime is missing stay in the list, flagged, so the picker can
+    /// say why they can't be chosen.
     public func simulatorDevices() async throws -> [SimulatorDevice] {
         let list = SubprocessCommand(
             executablePath: "/usr/bin/xcrun",
-            arguments: ["simctl", "list", "devices", "available", "--json"]
+            arguments: ["simctl", "list", "devices", "--json"]
         )
         let result = try await environment.subprocess.run(list)
         guard result.exitCode == 0 else {
@@ -69,14 +80,14 @@ extension AppCore {
             .reversed() // …then flipped: newest OS first
             .flatMap { runtime, devices in
                 devices
-                    .filter { $0.isAvailable ?? true }
                     .sorted { $0.name < $1.name }
                     .map { device in
                         SimulatorDevice(
                             udid: device.udid,
                             name: device.name,
                             osName: runtime.osName,
-                            isBooted: device.state == "Booted"
+                            isBooted: device.state == "Booted",
+                            isRuntimeAvailable: device.isAvailable ?? true
                         )
                     }
             }
@@ -92,6 +103,12 @@ extension AppCore {
         on device: SimulatorDevice,
         settings: DeviceSettings = DeviceSettings()
     ) async throws {
+        // The picker already flags such a device; refusing here keeps the
+        // invariant even if a stale selection slips through — and fails
+        // with the runtime story instead of an obscure boot error.
+        guard device.isRuntimeAvailable else {
+            throw SimulatorError.runtimeUnavailable(deviceName: device.name, osName: device.osName)
+        }
         // Exit 149: "Unable to boot device in current state: Booted" — the
         // designer re-launching onto a booted device is normal, not a failure.
         try await runRequiringSuccess(
