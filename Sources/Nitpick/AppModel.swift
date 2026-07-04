@@ -19,6 +19,13 @@ final class AppModel {
     private(set) var isBusy = false
     var errorMessage: String?
 
+    /// The verified YouTrack connection; nil shows the first-run settings.
+    private(set) var youTrack: YouTrackConnection?
+    var youTrackInstanceURLField = ""
+    var youTrackTokenField = ""
+    var selectedProjectID: YouTrackProject.ID?
+    var youTrackErrorMessage: String?
+
     init(core: AppCore = AppCore(environment: .live(), workspaceDirectory: AppModel.defaultWorkspaceDirectory())) {
         self.core = core
     }
@@ -30,6 +37,47 @@ final class AppModel {
 
     var selectedDevice: SimulatorDevice? {
         devices.first { $0.id == selectedDeviceID }
+    }
+
+    var selectedProject: YouTrackProject? {
+        youTrack?.projects.first { $0.id == selectedProjectID }
+    }
+
+    /// The relaunch path: resume a saved connection, prefilling the
+    /// instance URL either way.
+    func loadYouTrack() async {
+        await perform(reportingTo: \.youTrackErrorMessage) {
+            if let url = try core.youTrackInstanceURL() {
+                youTrackInstanceURLField = url.absoluteString
+            }
+            guard let connection = try await core.reconnectYouTrack() else { return }
+            connected(connection)
+        }
+    }
+
+    func connectYouTrack() async {
+        await perform(reportingTo: \.youTrackErrorMessage) {
+            let connection = try await core.connectYouTrack(
+                instanceURL: youTrackInstanceURLField,
+                token: youTrackTokenField
+            )
+            youTrackTokenField = ""
+            connected(connection)
+        }
+    }
+
+    /// Back to the settings form, e.g. to point at another instance or paste
+    /// a fresh token. The saved connection stays until the next connect.
+    func editYouTrackConnection() {
+        youTrack = nil
+        youTrackErrorMessage = nil
+    }
+
+    private func connected(_ connection: YouTrackConnection) {
+        youTrack = connection
+        if selectedProject == nil {
+            selectedProjectID = connection.projects.first?.id
+        }
     }
 
     func ingest(_ url: URL) async {
@@ -60,14 +108,17 @@ final class AppModel {
         }
     }
 
-    private func perform(_ action: () async throws -> Void) async {
+    private func perform(
+        reportingTo errorKeyPath: ReferenceWritableKeyPath<AppModel, String?> = \.errorMessage,
+        _ action: () async throws -> Void
+    ) async {
         isBusy = true
-        errorMessage = nil
+        self[keyPath: errorKeyPath] = nil
         defer { isBusy = false }
         do {
             try await action()
         } catch {
-            errorMessage = error.localizedDescription
+            self[keyPath: errorKeyPath] = error.localizedDescription
         }
     }
 }

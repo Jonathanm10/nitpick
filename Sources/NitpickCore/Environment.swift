@@ -19,23 +19,35 @@ public struct CoreEnvironment: Sendable {
         self.credentialStore = credentialStore
     }
 
-    /// The production environment. HTTP transport and credential store are
-    /// stubbed until the YouTrack connection slice (issue 02).
+    /// The production environment.
     public static func live() -> CoreEnvironment {
         CoreEnvironment(
             subprocess: ProcessSubprocessRunner(),
-            httpTransport: UnimplementedHTTPTransport(),
-            credentialStore: UnimplementedCredentialStore()
+            httpTransport: URLSessionHTTPTransport(),
+            credentialStore: KeychainCredentialStore()
         )
     }
 }
 
-/// The HTTP effects seam. Unused until the YouTrack connection slice.
+/// The HTTP effects seam.
 public protocol HTTPTransport: Sendable {
     func send(_ request: URLRequest) async throws -> (data: Data, response: HTTPURLResponse)
 }
 
-/// The credential effects seam. Unused until the YouTrack connection slice.
+/// Live transport backed by the shared URLSession.
+public struct URLSessionHTTPTransport: HTTPTransport {
+    public init() {}
+
+    public func send(_ request: URLRequest) async throws -> (data: Data, response: HTTPURLResponse) {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        return (data, http)
+    }
+}
+
+/// The credential effects seam.
 public protocol CredentialStore: Sendable {
     func secret(for key: String) throws -> String?
     func setSecret(_ secret: String?, for key: String) throws

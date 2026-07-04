@@ -44,13 +44,25 @@ final class FakeSubprocessRunner: SubprocessRunner {
 }
 
 extension CoreEnvironment {
-    /// Environment for scenario tests: scripted subprocess seam, everything
-    /// else unimplemented.
-    static func fake(subprocess: FakeSubprocessRunner) -> CoreEnvironment {
+    /// Environment for scenario tests: scripted seams where the scenario
+    /// needs them, everything else unimplemented.
+    static func fake(
+        subprocess: any SubprocessRunner = UnimplementedSubprocessRunner(),
+        httpTransport: any HTTPTransport = UnimplementedHTTPTransport(),
+        credentialStore: any CredentialStore = UnimplementedCredentialStore()
+    ) -> CoreEnvironment {
         CoreEnvironment(
             subprocess: subprocess,
-            httpTransport: UnimplementedHTTPTransport(),
-            credentialStore: UnimplementedCredentialStore()
+            httpTransport: httpTransport,
+            credentialStore: credentialStore
         )
+    }
+}
+
+/// Reaching the subprocess seam in a scenario that never scripted it is a
+/// test bug, surfaced like the other unimplemented effects.
+struct UnimplementedSubprocessRunner: SubprocessRunner {
+    func run(_ command: SubprocessCommand) async throws -> SubprocessResult {
+        throw UnimplementedEffect(name: "Subprocess runner")
     }
 }
