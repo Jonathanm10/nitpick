@@ -82,9 +82,16 @@ extension AppCore {
             }
     }
 
-    /// Boots the device, brings Simulator.app forward, installs the Build,
-    /// and launches it (ADR-0002).
-    public func launch(_ build: Build, on device: SimulatorDevice) async throws {
+    /// Boots the device, brings Simulator.app forward, applies the Device
+    /// Settings, installs the Build, and launches it (ADR-0002). Settings
+    /// are applied on every launch — session start and mid-session device
+    /// switch alike — so the simulator is never in a state nitpick didn't
+    /// put it in and a Finding's Accessibility stamp can never lie.
+    public func launch(
+        _ build: Build,
+        on device: SimulatorDevice,
+        settings: DeviceSettings = DeviceSettings()
+    ) async throws {
         // Exit 149: "Unable to boot device in current state: Booted" — the
         // designer re-launching onto a booted device is normal, not a failure.
         try await runRequiringSuccess(
@@ -100,6 +107,10 @@ extension AppCore {
         try await runRequiringSuccess(
             SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", "Simulator"])
         )
+        // Before install/launch, so the Build never draws a frame under
+        // settings the session doesn't know about.
+        try await setDynamicTypeSize(settings.dynamicTypeSize, on: device)
+        try await setAppearance(settings.appearance, on: device)
         try await runRequiringSuccess(
             SubprocessCommand(
                 executablePath: "/usr/bin/xcrun",
@@ -133,6 +144,34 @@ extension AppCore {
             throw SimulatorError.captureUnreadable(path: captureURL.path)
         }
         return png
+    }
+
+    /// Sets the device's Dynamic Type size — one command, applied live to
+    /// the running Build.
+    public func setDynamicTypeSize(
+        _ size: DeviceSettings.DynamicTypeSize,
+        on device: SimulatorDevice
+    ) async throws {
+        try await runRequiringSuccess(
+            SubprocessCommand(
+                executablePath: "/usr/bin/xcrun",
+                arguments: ["simctl", "ui", device.udid, "content_size", size.rawValue]
+            )
+        )
+    }
+
+    /// Sets the device's light/dark appearance — one command, applied live
+    /// to the running Build.
+    public func setAppearance(
+        _ appearance: DeviceSettings.Appearance,
+        on device: SimulatorDevice
+    ) async throws {
+        try await runRequiringSuccess(
+            SubprocessCommand(
+                executablePath: "/usr/bin/xcrun",
+                arguments: ["simctl", "ui", device.udid, "appearance", appearance.rawValue]
+            )
+        )
     }
 
     /// Runs a command through the subprocess seam and turns a disallowed

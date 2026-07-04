@@ -15,6 +15,15 @@ final class AppModel {
     var selectedDeviceID: SimulatorDevice.ID?
     /// True once the Build has been launched on the selected device.
     private(set) var isReviewing = false
+    /// The device the Build is actually running on — the stamp source for
+    /// every capture. Set only after a successful launch, so a failed or
+    /// in-flight switch can never stamp a Finding with a device the Build
+    /// isn't running on.
+    private(set) var reviewDevice: SimulatorDevice?
+    /// The Device Settings currently applied to the review device — the
+    /// settings half of the stamp. Advances only after the core confirms
+    /// the simulator accepted the change.
+    private(set) var deviceSettings = DeviceSettings()
     /// The core-rendered annotated capture — what the designer sees while
     /// editing, and exactly what filing flattens.
     private(set) var capturedImage: NSImage?
@@ -117,6 +126,7 @@ final class AppModel {
         // must never pair an old project with new credentials.
         session = nil
         isReviewing = false
+        reviewDevice = nil
         clearSelection()
         // Keep the picker's choice only when the identical project (id,
         // key, and name) exists on this connection — an entity-id collision
@@ -132,6 +142,7 @@ final class AppModel {
         await perform {
             build = try await core.ingestBuild(at: url)
             isReviewing = false
+            reviewDevice = nil
             session = nil
             clearSelection()
             devices = try await core.simulatorDevices()
@@ -147,27 +158,73 @@ final class AppModel {
     func startReview() async {
         guard let build, let device = selectedDevice, let project = selectedProject else { return }
         await perform {
-            try await core.launch(build, on: device)
+            // Every session starts from default Device Settings; launch
+            // applies them, so the stamp matches the simulator from the
+            // first capture on.
+            let settings = DeviceSettings()
+            try await core.launch(build, on: device, settings: settings)
+            deviceSettings = settings
+            reviewDevice = device
             isReviewing = true
             session = ReviewSession(build: build, project: project)
             clearSelection()
         }
     }
 
+    /// Mid-session device switch (PRD story 7): relaunches the session's
+    /// Build on the new device under the session's current Device Settings.
+    /// The session — Build, project, tray — is untouched. On failure the
+    /// picker reverts to the device still running the Build.
+    func switchDevice(to id: SimulatorDevice.ID?) async {
+        guard isReviewing, !isBusy, let build,
+              let id, id != reviewDevice?.id,
+              let device = devices.first(where: { $0.id == id })
+        else { return }
+        selectedDeviceID = id
+        await perform {
+            do {
+                try await core.launch(build, on: device, settings: deviceSettings)
+                reviewDevice = device
+            } catch {
+                selectedDeviceID = reviewDevice?.id
+                throw error
+            }
+        }
+    }
+
+    func setDynamicTypeSize(_ size: DeviceSettings.DynamicTypeSize) async {
+        guard !isBusy, let device = reviewDevice, size != deviceSettings.dynamicTypeSize else { return }
+        await perform {
+            try await core.setDynamicTypeSize(size, on: device)
+            deviceSettings.dynamicTypeSize = size
+        }
+    }
+
+    func setAppearance(_ appearance: DeviceSettings.Appearance) async {
+        guard !isBusy, let device = reviewDevice, appearance != deviceSettings.appearance else { return }
+        await perform {
+            try await core.setAppearance(appearance, on: device)
+            deviceSettings.appearance = appearance
+        }
+    }
+
     func captureScreen() async {
         // A pending label draft pins the editor: retargeting before the
         // surface resolves it would drop the visible note or commit it to
-        // the wrong Finding — same invariant as the filing gate.
-        guard let device = selectedDevice, session != nil, !hasPendingLabelDraft else { return }
+        // the wrong Finding — same invariant as the filing gate. Busy means
+        // a switch or settings change may be in flight — capturing then
+        // could stamp a Device Context the screenshot wasn't taken under.
+        guard !isBusy, let device = reviewDevice, session != nil, !hasPendingLabelDraft else { return }
         await perform {
             let png = try await core.captureScreen(of: device)
             // The capture drops straight into the tray as a Finding — no
-            // filing dialog (PRD story 22) — and opens in the editor.
+            // filing dialog (PRD story 22) — and opens in the editor,
+            // stamped with the Device Context in effect right now.
             selectedItemID = session?.addFinding(Finding(
                 summary: "",
                 description: "",
                 screenshotPNG: png,
-                deviceContext: DeviceContext(device: device)
+                deviceContext: DeviceContext(device: device, settings: deviceSettings)
             ))
             captureID = UUID()
             // The surface resets its live draft off captureID, but if it

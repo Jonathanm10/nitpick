@@ -90,4 +90,67 @@ struct MetadataBlockTests {
             """
         )
     }
+
+    // MARK: - The Accessibility line fed by real Device Settings (issue 06)
+
+    static let device = SimulatorDevice(udid: "AAAA-1111", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: true)
+
+    @Test("default Device Settings stamp no Accessibility line")
+    func defaultSettingsStampNothing() {
+        var finding = Self.finding()
+        finding.deviceContext = DeviceContext(device: Self.device, settings: DeviceSettings())
+        #expect(
+            Self.session.metadataBlock(for: finding) == """
+            ---
+            App: ch.liip.reviewme 2.1.0 (421)
+            Device: iPhone 17 Pro — iOS 26.4
+            Filed with nitpick — session 2026-07-04T09:15:32Z
+            """
+        )
+    }
+
+    @Test("non-default Device Settings render Dynamic Type then Dark Mode")
+    func nonDefaultSettingsStamp() {
+        var finding = Self.finding()
+        finding.deviceContext = DeviceContext(
+            device: Self.device,
+            settings: DeviceSettings(dynamicTypeSize: .accessibilityLarge, appearance: .dark)
+        )
+        #expect(
+            Self.session.metadataBlock(for: finding) == """
+            ---
+            App: ch.liip.reviewme 2.1.0 (421)
+            Device: iPhone 17 Pro — iOS 26.4
+            Accessibility: Dynamic Type AX2, Dark Mode
+            Filed with nitpick — session 2026-07-04T09:15:32Z
+            """
+        )
+    }
+
+    @Test("a non-default Dynamic Type size alone renders without Dark Mode")
+    func dynamicTypeAlone() {
+        var finding = Self.finding()
+        finding.deviceContext = DeviceContext(
+            device: Self.device,
+            settings: DeviceSettings(dynamicTypeSize: .extraLarge)
+        )
+        #expect(
+            Self.session.metadataBlock(for: finding) == """
+            ---
+            App: ch.liip.reviewme 2.1.0 (421)
+            Device: iPhone 17 Pro — iOS 26.4
+            Accessibility: Dynamic Type XL
+            Filed with nitpick — session 2026-07-04T09:15:32Z
+            """
+        )
+    }
+
+    /// The metadata contract's Dynamic Type vocabulary, pinned size by
+    /// size: designers read these off the issue, and the v2 verify pass
+    /// parses them back out.
+    @Test("every Dynamic Type size has a pinned stamp name")
+    func dynamicTypeStampNames() {
+        let names = DeviceSettings.DynamicTypeSize.allCases.map(\.displayName)
+        #expect(names == ["XS", "S", "M", "L", "XL", "XXL", "XXXL", "AX1", "AX2", "AX3", "AX4", "AX5"])
+    }
 }

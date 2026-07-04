@@ -35,7 +35,7 @@ struct WalkingSkeletonScenarioTests {
 
         // …starts the review (device happens to be booted already: exit 149)…
         runner.enqueue(SubprocessResult(exitCode: 149))
-        for _ in 0..<4 { runner.enqueue(SubprocessResult(exitCode: 0)) }
+        for _ in 0..<6 { runner.enqueue(SubprocessResult(exitCode: 0)) }
         try await core.launch(build, on: device)
 
         // …and captures the screen.
@@ -58,6 +58,8 @@ struct WalkingSkeletonScenarioTests {
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "boot", "AAAA-1111"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "bootstatus", "AAAA-1111", "-b"]),
             SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", "Simulator"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "content_size", "large"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "appearance", "light"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "install", "AAAA-1111", appPath]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "launch", "AAAA-1111", "ch.liip.reviewme"]),
             SubprocessCommand(

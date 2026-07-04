@@ -25,11 +25,19 @@ struct ReviewLifecycleTests {
         )
     }
 
-    private var expectedSequence: [SubprocessCommand] {
+    private func expectedSequence(contentSize: String = "large", appearance: String = "light") -> [SubprocessCommand] {
         [
             SubprocessCommand(executablePath: "/usr/bin/xcrun", arguments: ["simctl", "boot", "AAAA-1111"]),
             SubprocessCommand(executablePath: "/usr/bin/xcrun", arguments: ["simctl", "bootstatus", "AAAA-1111", "-b"]),
             SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", "Simulator"]),
+            SubprocessCommand(
+                executablePath: "/usr/bin/xcrun",
+                arguments: ["simctl", "ui", "AAAA-1111", "content_size", contentSize]
+            ),
+            SubprocessCommand(
+                executablePath: "/usr/bin/xcrun",
+                arguments: ["simctl", "ui", "AAAA-1111", "appearance", appearance]
+            ),
             SubprocessCommand(
                 executablePath: "/usr/bin/xcrun",
                 arguments: ["simctl", "install", "AAAA-1111", build.appBundleURL.path]
@@ -41,13 +49,29 @@ struct ReviewLifecycleTests {
         ]
     }
 
-    @Test("boots, waits for boot to finish, opens Simulator, installs, launches — in that order")
+    @Test("boots, waits for boot, opens Simulator, applies default Device Settings, installs, launches — in that order")
     func launchSequence() async throws {
-        for _ in 0..<5 { runner.enqueue(SubprocessResult(exitCode: 0)) }
+        for _ in 0..<7 { runner.enqueue(SubprocessResult(exitCode: 0)) }
 
         try await core.launch(build, on: device)
 
-        #expect(runner.executedCommands == expectedSequence)
+        #expect(runner.executedCommands == expectedSequence())
+    }
+
+    /// Applying the session's settings on every launch is what keeps the
+    /// stamps trustworthy: a simulator left dark by an earlier run can
+    /// never contradict a Finding's Accessibility line.
+    @Test("launching under non-default Device Settings applies them before install")
+    func launchWithSettings() async throws {
+        for _ in 0..<7 { runner.enqueue(SubprocessResult(exitCode: 0)) }
+
+        try await core.launch(
+            build,
+            on: device,
+            settings: DeviceSettings(dynamicTypeSize: .accessibilityMedium, appearance: .dark)
+        )
+
+        #expect(runner.executedCommands == expectedSequence(contentSize: "accessibility-medium", appearance: "dark"))
     }
 
     @Test("an already-booted device is not an error")
@@ -56,11 +80,11 @@ struct ReviewLifecycleTests {
             exitCode: 149,
             standardError: Data("Unable to boot device in current state: Booted".utf8)
         ))
-        for _ in 0..<4 { runner.enqueue(SubprocessResult(exitCode: 0)) }
+        for _ in 0..<6 { runner.enqueue(SubprocessResult(exitCode: 0)) }
 
         try await core.launch(build, on: device)
 
-        #expect(runner.executedCommands == expectedSequence)
+        #expect(runner.executedCommands == expectedSequence())
     }
 
     @Test("a real boot failure stops the sequence")
@@ -70,17 +94,17 @@ struct ReviewLifecycleTests {
         await #expect(throws: SubprocessFailure.self) {
             try await core.launch(build, on: device)
         }
-        #expect(runner.executedCommands == [expectedSequence[0]])
+        #expect(runner.executedCommands == [expectedSequence()[0]])
     }
 
     @Test("an install failure surfaces and stops before launch")
     func installFailure() async throws {
-        for _ in 0..<3 { runner.enqueue(SubprocessResult(exitCode: 0)) }
+        for _ in 0..<5 { runner.enqueue(SubprocessResult(exitCode: 0)) }
         runner.enqueue(SubprocessResult(exitCode: 22, standardError: Data("Failed to install".utf8)))
 
         await #expect(throws: SubprocessFailure.self) {
             try await core.launch(build, on: device)
         }
-        #expect(runner.executedCommands == Array(expectedSequence.prefix(4)))
+        #expect(runner.executedCommands == Array(expectedSequence().prefix(6)))
     }
 }

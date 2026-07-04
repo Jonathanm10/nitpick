@@ -112,9 +112,9 @@ public struct DeviceContext: Equatable, Sendable {
     public var deviceModel: String
     /// e.g. "iOS 26.4".
     public var osName: String
-    /// Human-readable non-default accessibility settings, in display order.
-    /// Empty means everything default; the Accessibility metadata line is
-    /// then omitted. (Issue 06 adds the switching UI that populates this.)
+    /// Human-readable non-default accessibility settings, in display order
+    /// (rendered from `DeviceSettings`). Empty means everything default;
+    /// the Accessibility metadata line is then omitted.
     public var accessibilitySettings: [String]
 
     public init(deviceModel: String, osName: String, accessibilitySettings: [String] = []) {
@@ -123,9 +123,14 @@ public struct DeviceContext: Equatable, Sendable {
         self.accessibilitySettings = accessibilitySettings
     }
 
-    /// The Device Context of a simulator device running default settings.
-    public init(device: SimulatorDevice) {
-        self.init(deviceModel: device.name, osName: device.osName)
+    /// The Device Context of a simulator device under the given Device
+    /// Settings — the composition every capture stamps.
+    public init(device: SimulatorDevice, settings: DeviceSettings = DeviceSettings()) {
+        self.init(
+            deviceModel: device.name,
+            osName: device.osName,
+            accessibilitySettings: settings.accessibilityDescriptions
+        )
     }
 }
 

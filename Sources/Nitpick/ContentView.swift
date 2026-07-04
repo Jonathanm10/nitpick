@@ -104,23 +104,78 @@ struct ContentView: View {
             }
     }
 
+    /// Before the review: pick a device and start. During the review: the
+    /// same picker switches the running Build to another device, and the
+    /// Device Context controls set Dynamic Type and appearance — all
+    /// stamped onto the next capture.
     private var deviceRow: some View {
         HStack(spacing: 12) {
-            Picker("Device", selection: $model.selectedDeviceID) {
+            Picker("Device", selection: deviceSelection) {
                 ForEach(model.devices) { device in
                     Text("\(device.name) — \(device.osName)")
                         .tag(Optional(device.id))
                 }
             }
             .labelsHidden()
+            .disabled(model.isBusy)
 
-            Button("Start review") {
-                Task { await model.startReview() }
+            if model.isReviewing {
+                Picker("Dynamic Type", selection: dynamicTypeSelection) {
+                    ForEach(DeviceSettings.DynamicTypeSize.allCases, id: \.self) { size in
+                        Text(size.displayName).tag(size)
+                    }
+                }
+                .fixedSize()
+                .disabled(model.isBusy)
+                .help("The simulator's Dynamic Type size — stamped onto every capture.")
+
+                Picker("Appearance", selection: appearanceSelection) {
+                    Text("Light").tag(DeviceSettings.Appearance.light)
+                    Text("Dark").tag(DeviceSettings.Appearance.dark)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .disabled(model.isBusy)
+                .help("The simulator's appearance — stamped onto every capture.")
+            } else {
+                Button("Start review") {
+                    Task { await model.startReview() }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.selectedDevice == nil || model.selectedProject == nil || model.isBusy)
+                .help("Reviewing needs a device and a YouTrack project — the session files into it.")
             }
-            .keyboardShortcut(.defaultAction)
-            .disabled(model.selectedDevice == nil || model.selectedProject == nil || model.isBusy)
-            .help("Reviewing needs a device and a YouTrack project — the session files into it.")
         }
+    }
+
+    /// Mid-session, choosing a device is a switch: the model relaunches the
+    /// Build and reverts the selection if the switch fails.
+    private var deviceSelection: Binding<SimulatorDevice.ID?> {
+        Binding(
+            get: { model.selectedDeviceID },
+            set: { id in
+                if model.isReviewing {
+                    Task { await model.switchDevice(to: id) }
+                } else {
+                    model.selectedDeviceID = id
+                }
+            }
+        )
+    }
+
+    private var dynamicTypeSelection: Binding<DeviceSettings.DynamicTypeSize> {
+        Binding(
+            get: { model.deviceSettings.dynamicTypeSize },
+            set: { size in Task { await model.setDynamicTypeSize(size) } }
+        )
+    }
+
+    private var appearanceSelection: Binding<DeviceSettings.Appearance> {
+        Binding(
+            get: { model.deviceSettings.appearance },
+            set: { appearance in Task { await model.setAppearance(appearance) } }
+        )
     }
 
     private var captureSection: some View {
