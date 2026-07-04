@@ -54,6 +54,13 @@ public enum YouTrackError: Error, Equatable, LocalizedError {
     case notAYouTrackInstance(url: String)
     /// Any other non-success status.
     case unexpectedResponse(statusCode: Int)
+    /// Filing was attempted before a YouTrack connection was configured.
+    case notConnected
+    /// A Finding cannot file without a summary.
+    case summaryRequired
+    /// The server answered 403 to a filing step: the token authenticates,
+    /// but the user lacks the permission the step needs.
+    case permissionDenied(action: String)
 
     public var errorDescription: String? {
         switch self {
@@ -67,6 +74,12 @@ public enum YouTrackError: Error, Equatable, LocalizedError {
             "\(url) did not answer like a YouTrack instance. Check the instance URL."
         case .unexpectedResponse(let statusCode):
             "YouTrack answered with HTTP \(statusCode). Check the instance URL, or try again later."
+        case .notConnected:
+            "Connect to YouTrack (instance URL + permanent token) before filing."
+        case .summaryRequired:
+            "The Finding needs a summary before it can be filed."
+        case .permissionDenied(let action):
+            "YouTrack denied permission to \(action). Ask a YouTrack administrator about your access."
         }
     }
 }
@@ -123,13 +136,13 @@ extension AppCore {
     private static let projectCountLimit = 10_000
 
     private func verifyYouTrack(instanceURL: URL, token: String) async throws -> YouTrackConnection {
-        let user: MePayload = try await fetchYouTrack(
+        let user: MePayload = try await requestYouTrack(
             instanceURL: instanceURL, token: token,
             path: "api/users/me", query: "fields=login,fullName"
         )
         var projects: [ProjectPayload] = []
         while true {
-            let page: [ProjectPayload] = try await fetchYouTrack(
+            let page: [ProjectPayload] = try await requestYouTrack(
                 instanceURL: instanceURL, token: token,
                 path: "api/admin/projects",
                 query: "fields=id,name,shortName&$top=\(Self.projectPageSize)&$skip=\(projects.count)"
@@ -147,21 +160,39 @@ extension AppCore {
         )
     }
 
-    private func fetchYouTrack<Payload: Decodable>(
-        instanceURL: URL, token: String, path: String, query: String
+    /// One authorized round trip to the instance: builds the request, maps
+    /// the status code to a designer-actionable error, decodes the payload.
+    /// `deniedAction` turns a 403 into `permissionDenied` naming the step —
+    /// during filing a 403 means a missing permission, not a bad token.
+    func requestYouTrack<Payload: Decodable>(
+        instanceURL: URL, token: String,
+        method: String = "GET",
+        path: String, query: String,
+        body: (contentType: String, data: Data)? = nil,
+        deniedAction: String? = nil
     ) async throws -> Payload {
-        var request = URLRequest(url: URL(
-            // Path and query are compile-time constants; the base URL is
-            // normalized. Composing by string keeps `,` and `$` literal.
-            string: "\(instanceURL.absoluteString)/\(path)?\(query)"
-        )!)
+        // The base URL is normalized; paths are compile-time constants plus
+        // server-issued entity IDs. Composing by string keeps `,` and `$`
+        // literal; the guard covers a server ID that no URL tolerates.
+        guard let url = URL(string: "\(instanceURL.absoluteString)/\(path)?\(query)") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let body {
+            request.setValue(body.contentType, forHTTPHeaderField: "Content-Type")
+            request.httpBody = body.data
+        }
 
         let (data, response) = try await environment.httpTransport.send(request)
         switch response.statusCode {
         case 200..<300: break
-        case 401, 403: throw YouTrackError.tokenRejected
+        case 401: throw YouTrackError.tokenRejected
+        case 403:
+            if let deniedAction { throw YouTrackError.permissionDenied(action: deniedAction) }
+            throw YouTrackError.tokenRejected
         default: throw YouTrackError.unexpectedResponse(statusCode: response.statusCode)
         }
         do {
@@ -220,7 +251,7 @@ extension AppCore {
         try data.write(to: youTrackConfigurationFile, options: .atomic)
     }
 
-    private func savedYouTrackCredentials() throws -> (instanceURL: URL, token: String)? {
+    func savedYouTrackCredentials() throws -> (instanceURL: URL, token: String)? {
         guard
             let token = try environment.credentialStore.secret(for: Self.youTrackTokenKey),
             let data = try? Data(contentsOf: youTrackConfigurationFile)

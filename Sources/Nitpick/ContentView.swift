@@ -55,6 +55,9 @@ struct ContentView: View {
                     }
                 }
                 .frame(maxWidth: 320, alignment: .leading)
+                // The session pins its project at Start review; filing
+                // never re-asks. A new choice takes effect next session.
+                .disabled(model.session != nil)
             } else {
                 Text("Connect to YouTrack")
                     .font(.headline)
@@ -115,7 +118,8 @@ struct ContentView: View {
                 Task { await model.startReview() }
             }
             .keyboardShortcut(.defaultAction)
-            .disabled(model.selectedDevice == nil || model.isBusy)
+            .disabled(model.selectedDevice == nil || model.selectedProject == nil || model.isBusy)
+            .help("Reviewing needs a device and a YouTrack project — the session files into it.")
         }
     }
 
@@ -127,13 +131,36 @@ struct ContentView: View {
             .keyboardShortcut("s", modifiers: [.command])
             .disabled(model.isBusy)
 
+            if let filed = model.filedIssue {
+                HStack(spacing: 8) {
+                    Text("Filed \(filed.idReadable)")
+                        .textSelection(.enabled)
+                    Link("Open in YouTrack", destination: filed.url)
+                }
+            }
+
             if let image = model.capturedImage {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                composeSection
             }
         }
+    }
+
+    @ViewBuilder
+    private var composeSection: some View {
+        TextField("Summary", text: $model.summaryField)
+        TextField("Description", text: $model.descriptionField, axis: .vertical)
+            .lineLimit(3...6)
+        Button("File to YouTrack") {
+            Task { await model.fileFinding() }
+        }
+        .disabled(
+            model.summaryField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || model.isBusy
+        )
     }
 }

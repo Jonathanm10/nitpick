@@ -16,6 +16,10 @@ final class AppModel {
     /// True once the Build has been launched on the selected device.
     private(set) var isReviewing = false
     private(set) var capturedImage: NSImage?
+    private(set) var capturedPNG: Data?
+    /// The Device Context stamped at capture time — filing must describe
+    /// the capture, not whatever the device picker shows at filing time.
+    private(set) var captureContext: DeviceContext?
     private(set) var isBusy = false
     var errorMessage: String?
 
@@ -25,6 +29,13 @@ final class AppModel {
     var youTrackTokenField = ""
     var selectedProjectID: YouTrackProject.ID?
     var youTrackErrorMessage: String?
+
+    /// The active Review Session: Build + project, pinned at Start review.
+    private(set) var session: ReviewSession?
+    var summaryField = ""
+    var descriptionField = ""
+    /// The last filed issue — ID + link, shown until the next capture.
+    private(set) var filedIssue: FiledIssue?
 
     init(core: AppCore = AppCore(environment: .live(), workspaceDirectory: AppModel.defaultWorkspaceDirectory())) {
         self.core = core
@@ -74,8 +85,17 @@ final class AppModel {
     }
 
     private func connected(_ connection: YouTrackConnection) {
+        // A new connection ends the active Review Session: its pinned
+        // project belongs to the connection it was chosen from, and filing
+        // must never pair an old project with new credentials.
+        session = nil
+        isReviewing = false
+        // Keep the picker's choice only when the identical project (id,
+        // key, and name) exists on this connection — an entity-id collision
+        // across instances must not silently select a different project.
+        let previous = selectedProject
         youTrack = connection
-        if selectedProject == nil {
+        if previous == nil || !connection.projects.contains(where: { $0 == previous }) {
             selectedProjectID = connection.projects.first?.id
         }
     }
@@ -84,7 +104,9 @@ final class AppModel {
         await perform {
             build = try await core.ingestBuild(at: url)
             isReviewing = false
-            capturedImage = nil
+            session = nil
+            filedIssue = nil
+            clearCapture()
             devices = try await core.simulatorDevices()
             if selectedDevice == nil {
                 selectedDeviceID = devices.first?.id
@@ -92,11 +114,16 @@ final class AppModel {
         }
     }
 
+    /// Starts the Review Session: launches the Build and pins the chosen
+    /// project exactly once — filing never re-asks (PRD session boundary:
+    /// a Review Session always pairs Build + project).
     func startReview() async {
-        guard let build, let device = selectedDevice else { return }
+        guard let build, let device = selectedDevice, let project = selectedProject else { return }
         await perform {
             try await core.launch(build, on: device)
             isReviewing = true
+            session = ReviewSession(build: build, project: project)
+            filedIssue = nil
         }
     }
 
@@ -105,7 +132,34 @@ final class AppModel {
         await perform {
             let png = try await core.captureScreen(of: device)
             capturedImage = NSImage(data: png)
+            capturedPNG = png
+            captureContext = DeviceContext(device: device)
+            filedIssue = nil
         }
+    }
+
+    /// Files the composed Finding into the session's project and surfaces
+    /// the resulting issue ID + link; the session tray arrives with issue 05.
+    func fileFinding() async {
+        guard let session, let png = capturedPNG, let context = captureContext else { return }
+        await perform {
+            let finding = Finding(
+                summary: summaryField,
+                description: descriptionField,
+                screenshotPNG: png,
+                deviceContext: context
+            )
+            filedIssue = try await core.file(finding, in: session)
+            summaryField = ""
+            descriptionField = ""
+            clearCapture()
+        }
+    }
+
+    private func clearCapture() {
+        capturedImage = nil
+        capturedPNG = nil
+        captureContext = nil
     }
 
     private func perform(
