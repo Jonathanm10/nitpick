@@ -33,6 +33,9 @@ struct ContentView: View {
         }
         .padding(20)
         .frame(minWidth: 520, minHeight: 640)
+        // One-shot window growth at Start review (issue 03): fires on the
+        // session's closed→open edge — nothing mid-loop reopens a session.
+        .background(SessionWindowGrowth(isSessionOpen: model.session != nil))
         .dropDestination(for: URL.self) { urls, _ in
             guard let url = urls.first else { return false }
             Task { await model.ingest(url) }
