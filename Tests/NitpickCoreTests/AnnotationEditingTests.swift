@@ -108,6 +108,31 @@ struct AnnotationEditingTests {
         #expect(finding.annotations == [Self.pen, Self.arrow])
     }
 
+    @Test("successive translated replaces undo one per step — the arrow-key nudge contract")
+    func nudgeSequenceUndoesStepwise() {
+        var finding = Self.finding()
+        finding.add(Self.rectangle)
+
+        // Three presses of the same arrow: three replaces, no coalescing.
+        let step = CGVector(dx: 3, dy: 0)
+        let once = Self.rectangle.translated(by: step)
+        let twice = once.translated(by: step)
+        let thrice = twice.translated(by: step)
+        finding.replaceAnnotation(at: 0, with: once)
+        finding.replaceAnnotation(at: 0, with: twice)
+        finding.replaceAnnotation(at: 0, with: thrice)
+        #expect(finding.annotations == [thrice])
+
+        // Each ⌘Z steps back exactly one nudge, never the whole run.
+        finding.undo()
+        #expect(finding.annotations == [twice])
+        finding.undo()
+        #expect(finding.annotations == [once])
+        finding.undo()
+        #expect(finding.annotations == [Self.rectangle])
+        #expect(finding.canUndo)  // one step left: the original add
+    }
+
     @Test("edit history never affects Finding equality — only observable state does")
     func equalityIgnoresHistory() {
         var edited = Self.finding()

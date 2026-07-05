@@ -113,6 +113,19 @@ struct AnnotationSurface: View {
             .focused($surfaceFocused)
             .onDeleteCommand { model.deleteSelectedAnnotation() }
             .onExitCommand { model.deselectAnnotation() }
+            .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
+                // Nudge rides the surface's own key focus: a focused text
+                // field (Summary, Description, label editor) keeps its
+                // arrows. With focus, the press is consumed even with
+                // nothing selected — an idle arrow must not scroll or
+                // move focus.
+                guard surfaceFocused else { return .ignored }
+                model.nudgeSelectedAnnotation(
+                    Self.nudgeDirection(for: press.key),
+                    multiplier: press.modifiers.contains(.shift) ? 5 : 1
+                )
+                return .handled
+            }
         }
         .aspectRatio(pixelSize, contentMode: .fit)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -199,6 +212,17 @@ struct AnnotationSurface: View {
         }
         selectGesture = .undecided
         surfaceFocused = true
+    }
+
+    /// An arrow key as a unit vector in image pixels — origin top-left,
+    /// so Up is -y.
+    private static func nudgeDirection(for key: KeyEquivalent) -> CGVector {
+        switch key {
+        case .upArrow: CGVector(dx: 0, dy: -1)
+        case .downArrow: CGVector(dx: 0, dy: 1)
+        case .leftArrow: CGVector(dx: -1, dy: 0)
+        default: CGVector(dx: 1, dy: 0)  // .rightArrow — the keys set admits no other
+        }
     }
 
     /// The in-flight shape, previewed with the same metrics the core

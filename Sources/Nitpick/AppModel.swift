@@ -592,6 +592,28 @@ extension AppModel {
         refreshAnnotatedImage()
     }
 
+    /// An arrow-key nudge: translates the selection one `strokeWidth` —
+    /// the mark's own visual grain, so the step tracks capture
+    /// resolution — times `multiplier` (Shift's 5×), through the same
+    /// translation helper the drag uses. Each press commits one
+    /// `replaceAnnotation` — one undo step; no coalescing. Ignored
+    /// mid-drag: the cursor owns the shape until release.
+    func nudgeSelectedAnnotation(_ direction: CGVector, multiplier: CGFloat = 1) {
+        guard !isBusy, annotationDrag == nil,
+              let index = selectedAnnotationIndex,
+              let annotation = selectedAnnotation,
+              let metrics = annotationMetrics
+        else { return }
+        let step = metrics.strokeWidth * multiplier
+        editSelectedFinding {
+            $0.replaceAnnotation(
+                at: index,
+                with: annotation.translated(by: CGVector(dx: direction.dx * step, dy: direction.dy * step))
+            )
+        }
+        refreshAnnotatedImage()
+    }
+
     /// A rigid move of the selected Annotation, in flight from the first
     /// cursor movement on the shape until release. The shape leaves the
     /// flattened base (exclude-one render) and rides as a renderer-drawn
