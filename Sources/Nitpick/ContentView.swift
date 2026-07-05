@@ -281,11 +281,39 @@ struct ContentView: View {
                 }
             }
         } else {
-            // The empty slot holds the split's geometry until a capture
-            // lands (issue 04 fills it with the placeholder).
-            Color.clear
+            capturePlaceholder
         }
     }
+
+    /// The empty pane (issue 04): between Start review and the first
+    /// capture — and whenever a discard clears the selection — a subdued
+    /// device-aspect outline holds the capture's slot with the next step
+    /// spelled out. Same skeleton as the editable pane (hidden toolbar
+    /// above an aspect-fitted rectangle), so the first ⌘S replaces it in
+    /// place and a mid-session discard never collapses the pane.
+    private var capturePlaceholder: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AnnotationToolbar(model: model)
+                .hidden()
+                .disabled(true)
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
+                .foregroundStyle(.tertiary)
+                .aspectRatio(Self.placeholderDeviceAspect, contentMode: .fit)
+                .overlay {
+                    Text("⌘S to capture")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    /// A portrait phone outline (9:19.5 — every current iPhone). The pane
+    /// is device-aspect, not device-exact: the selected simulator device
+    /// carries no point-size metadata, and the PRD (Q5) rejects a lookup
+    /// table for marginal gain.
+    private static let placeholderDeviceAspect = CGSize(width: 9, height: 19.5)
 
     /// The control column, ordered by use: Capture (once the Build is
     /// running), the session-wide Design Reference, the tray, and the
