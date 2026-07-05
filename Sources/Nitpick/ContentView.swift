@@ -15,14 +15,16 @@ struct ContentView: View {
                 deviceRow
             }
             if model.session != nil {
-                reviewSection
+                sessionSplit
             }
             if let message = model.errorMessage {
                 Text(message)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
             }
-            Spacer(minLength: 0)
+            if model.session == nil {
+                Spacer(minLength: 0)
+            }
             historySection
         }
         .padding(20)
@@ -216,17 +218,57 @@ struct ContentView: View {
         )
     }
 
-    /// The open session: capture (once the Build is running), the tray,
-    /// and the editor. Shown whenever a session exists — including one
-    /// restored after a relaunch, before its Build is launched again.
-    private var reviewSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Session-level Design Reference: one Figma URL for every
-            // Finding of this session (a per-Finding override lives in the
-            // compose fields). A link, never a rendering (ADR-0003).
-            TextField("Design Reference (Figma URL, all Findings)", text: $model.sessionDesignReferenceField)
-                .disabled(model.isBusy)
+    /// The open session, split (issue 01): the capture pane fills the
+    /// left side at full height — the annotation toolbar directly above
+    /// the annotated capture — and every session control stacks in a
+    /// fixed-width column on the right. Shown whenever a session exists —
+    /// including one restored after a relaunch, before its Build is
+    /// launched again.
+    private var sessionSplit: some View {
+        HStack(alignment: .top, spacing: 16) {
+            capturePane
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            controlColumn
+                .frame(width: 320, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
 
+    /// The full-size pane: the selected Finding under edit, or — once
+    /// filed — the same capture frozen at the same size, no edits. The
+    /// hidden toolbar keeps the editable layout's slot, so selecting
+    /// between editable and frozen rows never resizes the image.
+    @ViewBuilder
+    private var capturePane: some View {
+        if let item = model.selectedItem {
+            if item.isEditable {
+                AnnotationSurface(model: model)
+            } else if let image = model.capturedImage {
+                // Frozen: the issue already exists — show the capture, no edits.
+                VStack(alignment: .leading, spacing: 8) {
+                    AnnotationToolbar(model: model)
+                        .hidden()
+                        .disabled(true)
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+            }
+        } else {
+            // The empty slot holds the split's geometry until a capture
+            // lands (issue 04 fills it with the placeholder).
+            Color.clear
+        }
+    }
+
+    /// The control column, ordered by use: Capture (once the Build is
+    /// running), the session-wide Design Reference, the tray, and the
+    /// compose fields for the selected Finding.
+    private var controlColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
             if model.isReviewing {
                 Button("Capture") {
                     Task { await model.captureScreen() }
@@ -235,13 +277,21 @@ struct ContentView: View {
                 .disabled(model.isBusy || model.hasPendingLabelDraft)
             }
 
+            // Session-level Design Reference: one Figma URL for every
+            // Finding of this session (a per-Finding override lives in the
+            // compose fields). A link, never a rendering (ADR-0003).
+            TextField("Design Reference (Figma URL, all Findings)", text: $model.sessionDesignReferenceField)
+                .disabled(model.isBusy)
+
             if model.session?.tray.isEmpty == false {
                 traySection
             }
 
-            if let item = model.selectedItem {
-                editorSection(for: item)
+            if model.selectedItem?.isEditable == true {
+                composeSection
             }
+
+            Spacer(minLength: 0)
         }
     }
 
@@ -290,22 +340,6 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(model.selectedItemID == item.id ? Color.accentColor.opacity(0.15) : .clear)
         )
-    }
-
-    @ViewBuilder
-    private func editorSection(for item: TrayItem) -> some View {
-        if item.isEditable {
-            AnnotationSurface(model: model)
-            composeSection
-        } else if let image = model.capturedImage {
-            // Frozen: the issue already exists — show the capture, no edits.
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
     }
 
     @ViewBuilder
