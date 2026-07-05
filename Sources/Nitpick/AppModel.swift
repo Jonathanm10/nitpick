@@ -41,7 +41,17 @@ final class AppModel {
     /// different tray selection — so the annotation surface resets its
     /// in-flight draft even when two targets share a pixel size.
     private(set) var captureID = UUID()
-    var annotationTool: AnnotationTool = .pen
+    var annotationTool: AnnotationTool = .pen {
+        // Switching to any draw tool drops the selection — a stale
+        // selection must never receive a stray keypress.
+        didSet {
+            if annotationTool != .select { selectedAnnotationIndex = nil }
+        }
+    }
+    /// The index of the Annotation selected with the Select tool —
+    /// ephemeral workspace chrome: never persisted, never flattened into
+    /// any PNG. Every editor-retargeting event clears it.
+    private(set) var selectedAnnotationIndex: Int?
     var annotationColor: AnnotationColor = .default
     /// True while a placed text label awaits its text — set by the
     /// annotation surface; filing is gated on it so a visible draft can
@@ -384,85 +394,12 @@ final class AppModel {
             ))
             persistOpenSession()
             captureID = UUID()
+            selectedAnnotationIndex = nil
             // The surface resets its live draft off captureID, but if it
             // was unmounted first its onChange never fires — the model
             // owns the gate, so the model resets it.
             hasPendingLabelDraft = false
             refreshAnnotatedImage()
-        }
-    }
-
-    // MARK: - Tray selection and Annotation editing (state lives in the core's session)
-
-    var canUndoAnnotation: Bool { selectedItem?.finding.canUndo ?? false }
-    var canRedoAnnotation: Bool { selectedItem?.finding.canRedo ?? false }
-
-    var annotationMetrics: AnnotationMetrics? {
-        capturePixelSize.map(AnnotationMetrics.init(imageSize:))
-    }
-
-    /// Opens a tray item in the editor. Refused while a label draft is
-    /// pending: the surface still owns the typed text, and retargeting
-    /// first would land its commit on the wrong Finding.
-    func selectItem(_ id: TrayItem.ID) {
-        guard selectedItemID != id, !hasPendingLabelDraft else { return }
-        selectedItemID = id
-        captureID = UUID()
-        hasPendingLabelDraft = false
-        refreshAnnotatedImage()
-    }
-
-    /// Removes a Finding from the tray; the core refuses to discard
-    /// anything filing has already touched. Refused while a label draft
-    /// is pending, like every other editor-retargeting mutation.
-    func discardFinding(id: TrayItem.ID) {
-        guard !isBusy, !hasPendingLabelDraft else { return }
-        session?.discardFinding(id: id)
-        persistOpenSession()
-        if selectedItemID == id, selectedItem == nil {
-            clearSelection()
-        }
-    }
-
-    func addAnnotation(_ shape: Annotation.Shape) {
-        editSelectedFinding { $0.add(Annotation(shape, color: annotationColor)) }
-        refreshAnnotatedImage()
-    }
-
-    func undoAnnotation() {
-        editSelectedFinding { $0.undo() }
-        refreshAnnotatedImage()
-    }
-
-    func redoAnnotation() {
-        editSelectedFinding { $0.redo() }
-        refreshAnnotatedImage()
-    }
-
-    /// Every edit funnels through the core's session, which refuses edits
-    /// to items filing has already touched. Edits also freeze while filing
-    /// is in flight: the run works on a copy of the session, so a late
-    /// edit would show in the preview yet be missing from the filed issue.
-    private func editSelectedFinding(_ edit: (inout Finding) -> Void) {
-        guard !isBusy, let selectedItemID else { return }
-        session?.updateFinding(id: selectedItemID, edit)
-        persistOpenSession()
-    }
-
-    private func refreshAnnotatedImage() {
-        guard let finding = selectedItem?.finding else {
-            capturedImage = nil
-            capturePixelSize = nil
-            return
-        }
-        if let image = try? finding.annotatedScreenshotImage() {
-            capturedImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
-            capturePixelSize = CGSize(width: image.width, height: image.height)
-        } else {
-            // An undecodable capture: show nothing rather than lie; filing
-            // will surface the real error.
-            capturedImage = NSImage(data: finding.screenshotPNG)
-            capturePixelSize = capturedImage.map { CGSize(width: $0.size.width, height: $0.size.height) }
         }
     }
 
@@ -540,6 +477,7 @@ final class AppModel {
         capturedImage = nil
         capturePixelSize = nil
         selectedItemID = nil
+        selectedAnnotationIndex = nil
         hasPendingLabelDraft = false
     }
 
@@ -554,6 +492,117 @@ final class AppModel {
             try await action()
         } catch {
             self[keyPath: errorKeyPath] = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Tray selection and Annotation editing (state lives in the core's session)
+
+extension AppModel {
+    var canUndoAnnotation: Bool { selectedItem?.finding.canUndo ?? false }
+    var canRedoAnnotation: Bool { selectedItem?.finding.canRedo ?? false }
+
+    var annotationMetrics: AnnotationMetrics? {
+        capturePixelSize.map(AnnotationMetrics.init(imageSize:))
+    }
+
+    /// Opens a tray item in the editor. Refused while a label draft is
+    /// pending: the surface still owns the typed text, and retargeting
+    /// first would land its commit on the wrong Finding.
+    func selectItem(_ id: TrayItem.ID) {
+        guard selectedItemID != id, !hasPendingLabelDraft else { return }
+        selectedItemID = id
+        captureID = UUID()
+        selectedAnnotationIndex = nil
+        hasPendingLabelDraft = false
+        refreshAnnotatedImage()
+    }
+
+    /// Removes a Finding from the tray; the core refuses to discard
+    /// anything filing has already touched. Refused while a label draft
+    /// is pending, like every other editor-retargeting mutation.
+    func discardFinding(id: TrayItem.ID) {
+        guard !isBusy, !hasPendingLabelDraft else { return }
+        session?.discardFinding(id: id)
+        persistOpenSession()
+        if selectedItemID == id, selectedItem == nil {
+            clearSelection()
+        }
+    }
+
+    func addAnnotation(_ shape: Annotation.Shape) {
+        editSelectedFinding { $0.add(Annotation(shape, color: annotationColor)) }
+        refreshAnnotatedImage()
+    }
+
+    func undoAnnotation() {
+        // History moves indices arbitrarily — a stale selection must
+        // never point Delete at the wrong Annotation.
+        selectedAnnotationIndex = nil
+        editSelectedFinding { $0.undo() }
+        refreshAnnotatedImage()
+    }
+
+    func redoAnnotation() {
+        selectedAnnotationIndex = nil
+        editSelectedFinding { $0.redo() }
+        refreshAnnotatedImage()
+    }
+
+    /// The selected Annotation itself, bounds-checked so the shell's
+    /// indicator can never read past a mutated array.
+    var selectedAnnotation: Annotation? {
+        guard let index = selectedAnnotationIndex,
+              let annotations = selectedItem?.finding.annotations,
+              annotations.indices.contains(index)
+        else { return nil }
+        return annotations[index]
+    }
+
+    /// A Select-tool click, in image pixels: selects the topmost
+    /// Annotation under the point, or — on empty surface — deselects.
+    func selectAnnotation(at point: CGPoint) {
+        guard let finding = selectedItem?.finding, let metrics = annotationMetrics else { return }
+        selectedAnnotationIndex = finding.annotationIndex(at: point, metrics: metrics)
+    }
+
+    func deselectAnnotation() {
+        selectedAnnotationIndex = nil
+    }
+
+    /// Delete/Backspace on the selection: one core removal, one undo
+    /// step — ⌘Z brings the Annotation back.
+    func deleteSelectedAnnotation() {
+        guard !isBusy, let index = selectedAnnotationIndex, selectedAnnotation != nil else { return }
+        selectedAnnotationIndex = nil
+        editSelectedFinding { $0.removeAnnotation(at: index) }
+        refreshAnnotatedImage()
+    }
+
+    /// Every edit funnels through the core's session, which refuses edits
+    /// to items filing has already touched. Edits also freeze while filing
+    /// is in flight: the run works on a copy of the session, so a late
+    /// edit would show in the preview yet be missing from the filed issue.
+    private func editSelectedFinding(_ edit: (inout Finding) -> Void) {
+        guard !isBusy, let selectedItemID else { return }
+        session?.updateFinding(id: selectedItemID, edit)
+        persistOpenSession()
+    }
+
+    private func refreshAnnotatedImage() {
+        guard let finding = selectedItem?.finding else {
+            capturedImage = nil
+            capturePixelSize = nil
+            return
+        }
+        if let image = try? finding.annotatedScreenshotImage() {
+            capturedImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+            capturePixelSize = CGSize(width: image.width, height: image.height)
+        } else {
+            // An undecodable capture: show nothing rather than lie; filing
+            // will surface the real error.
+            capturedImage = NSImage(data: finding.screenshotPNG)
+            capturePixelSize = capturedImage.map { CGSize(width: $0.size.width, height: $0.size.height) }
         }
     }
 }

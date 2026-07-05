@@ -148,7 +148,7 @@ extension Annotation {
 
         case .label(let text, let position):
             guard !text.isEmpty else { return }
-            let font = CTFontCreateWithName("Helvetica-Bold" as CFString, metrics.fontSize, nil)
+            let font = metrics.labelFont
             let attributed = NSAttributedString(string: text, attributes: [
                 NSAttributedString.Key(kCTFontAttributeName as String): font,
                 NSAttributedString.Key(kCTForegroundColorAttributeName as String): cgColor,

@@ -1,15 +1,17 @@
 import NitpickCore
 import SwiftUI
 
-/// Which Annotation tool the next gesture draws — a UI concept; the shapes
-/// themselves are core vocabulary.
+/// Which Annotation tool the next gesture uses — a UI concept; the shapes
+/// themselves are core vocabulary. Select picks up a committed Annotation;
+/// the rest draw.
 enum AnnotationTool: String, CaseIterable, Identifiable {
-    case pen, arrow, rectangle, label
+    case select, pen, arrow, rectangle, label
 
     var id: String { rawValue }
 
     var symbolName: String {
         switch self {
+        case .select: "cursorarrow"
         case .pen: "scribble"
         case .arrow: "arrow.up.right"
         case .rectangle: "rectangle"
@@ -19,6 +21,7 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
 
     var help: String {
         switch self {
+        case .select: "Select — click a mark to select it"
         case .pen: "Pen — draw freehand"
         case .arrow: "Arrow — point at an element"
         case .rectangle: "Rectangle — mark a region"
@@ -47,6 +50,10 @@ struct AnnotationSurface: View {
     @State private var labelPosition: CGPoint?
     @State private var labelText = ""
     @FocusState private var labelFocused: Bool
+    /// Key focus for the surface itself: granted by a Select-tool click,
+    /// so Delete/Backspace and Esc act on the selection only while no
+    /// text field (Summary, Description, label editor) is being edited.
+    @FocusState private var surfaceFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -87,11 +94,17 @@ struct AnnotationSurface: View {
                     .resizable()
                     .interpolation(.high)
                 draftOverlay(scale: scale)
+                selectionIndicator(scale: scale)
                 labelEditor(scale: scale)
             }
             .frame(width: pixelSize.width * scale, height: pixelSize.height * scale)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .gesture(drawGesture(scale: scale, pixelSize: pixelSize))
+            .focusable()
+            .focusEffectDisabled()
+            .focused($surfaceFocused)
+            .onDeleteCommand { model.deleteSelectedAnnotation() }
+            .onExitCommand { model.deselectAnnotation() }
         }
         .aspectRatio(pixelSize, contentMode: .fit)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -114,13 +127,19 @@ struct AnnotationSurface: View {
                     draft = .arrow(from: start, to: point)
                 case .rectangle:
                     draft = .rectangle(rect(from: start, to: point))
-                case .label:
+                case .label, .select:
                     break
                 }
             }
             .onEnded { value in
                 defer { draft = nil }
                 switch model.annotationTool {
+                case .select:
+                    // Hit → select; empty surface → nil → deselect. The
+                    // click also takes key focus, so Delete reaches the
+                    // selection instead of a lingering text field.
+                    model.selectAnnotation(at: pixelPoint(value.location, scale: scale, in: pixelSize))
+                    surfaceFocused = true
                 case .label:
                     // A still-open draft commits before the next one opens
                     // — typed text is never silently discarded.
@@ -170,6 +189,23 @@ struct AnnotationSurface: View {
                 }
             }
             .allowsHitTesting(false)
+        }
+    }
+
+    /// The selection indicator: a dashed outline around the selected
+    /// Annotation's rendered bounds. Pure workspace chrome at view scale —
+    /// it never passes through the flattening renderer, so it can never
+    /// appear in flattened or filed output.
+    @ViewBuilder
+    private func selectionIndicator(scale: CGFloat) -> some View {
+        if let annotation = model.selectedAnnotation, let metrics = model.annotationMetrics,
+           let bounds = annotation.boundingRect(metrics: metrics) {
+            let padded = bounds.insetBy(dx: -metrics.strokeWidth, dy: -metrics.strokeWidth)
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                .frame(width: padded.width * scale, height: padded.height * scale)
+                .offset(x: padded.minX * scale, y: padded.minY * scale)
+                .allowsHitTesting(false)
         }
     }
 
