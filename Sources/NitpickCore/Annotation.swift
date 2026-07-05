@@ -49,6 +49,33 @@ public struct Annotation: Equatable, Sendable, Codable {
     }
 }
 
+extension Annotation {
+    /// This Annotation translated rigidly by `offset`, in image pixels:
+    /// every point of a pen stroke moves, an arrow keeps its head at the
+    /// head, a rectangle keeps its size, a label keeps its text anchor —
+    /// nothing resizes or reshapes. Color and text ride along untouched.
+    public func translated(by offset: CGVector) -> Annotation {
+        var moved = self
+        switch shape {
+        case .pen(let points):
+            moved.shape = .pen(points: points.map { $0.translated(by: offset) })
+        case .arrow(let from, let to):
+            moved.shape = .arrow(from: from.translated(by: offset), to: to.translated(by: offset))
+        case .rectangle(let rect):
+            moved.shape = .rectangle(rect.offsetBy(dx: offset.dx, dy: offset.dy))
+        case .label(let text, let position):
+            moved.shape = .label(text, at: position.translated(by: offset))
+        }
+        return moved
+    }
+}
+
+extension CGPoint {
+    fileprivate func translated(by offset: CGVector) -> CGPoint {
+        CGPoint(x: x + offset.dx, y: y + offset.dy)
+    }
+}
+
 extension Finding {
     /// Adds an Annotation on top of the existing ones. Undoable; like every
     /// edit, it discards any redoable future.

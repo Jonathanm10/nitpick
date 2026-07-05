@@ -43,8 +43,10 @@ final class AppModel {
     private(set) var captureID = UUID()
     var annotationTool: AnnotationTool = .pen {
         // Switching to any draw tool drops the selection — a stale
-        // selection must never receive a stray keypress.
+        // selection must never receive a stray keypress — and aborts any
+        // in-flight move uncommitted.
         didSet {
+            cancelAnnotationDrag()
             if annotationTool != .select { selectedAnnotationIndex = nil }
         }
     }
@@ -52,6 +54,10 @@ final class AppModel {
     /// ephemeral workspace chrome: never persisted, never flattened into
     /// any PNG. Every editor-retargeting event clears it.
     private(set) var selectedAnnotationIndex: Int?
+    /// The in-flight rigid move of the selected Annotation — nil except
+    /// between the first cursor movement on the shape and release. Like
+    /// the selection it belongs to, ephemeral workspace state.
+    private(set) var annotationDrag: AnnotationDrag?
     var annotationColor: AnnotationColor = .default
     /// True while a placed text label awaits its text — set by the
     /// annotation surface; filing is gated on it so a visible draft can
@@ -395,6 +401,7 @@ final class AppModel {
             persistOpenSession()
             captureID = UUID()
             selectedAnnotationIndex = nil
+            annotationDrag = nil
             // The surface resets its live draft off captureID, but if it
             // was unmounted first its onChange never fires — the model
             // owns the gate, so the model resets it.
@@ -478,6 +485,7 @@ final class AppModel {
         capturePixelSize = nil
         selectedItemID = nil
         selectedAnnotationIndex = nil
+        annotationDrag = nil
         hasPendingLabelDraft = false
     }
 
@@ -514,6 +522,7 @@ extension AppModel {
         selectedItemID = id
         captureID = UUID()
         selectedAnnotationIndex = nil
+        annotationDrag = nil
         hasPendingLabelDraft = false
         refreshAnnotatedImage()
     }
@@ -539,12 +548,14 @@ extension AppModel {
         // History moves indices arbitrarily — a stale selection must
         // never point Delete at the wrong Annotation.
         selectedAnnotationIndex = nil
+        annotationDrag = nil
         editSelectedFinding { $0.undo() }
         refreshAnnotatedImage()
     }
 
     func redoAnnotation() {
         selectedAnnotationIndex = nil
+        annotationDrag = nil
         editSelectedFinding { $0.redo() }
         refreshAnnotatedImage()
     }
@@ -567,6 +578,7 @@ extension AppModel {
     }
 
     func deselectAnnotation() {
+        cancelAnnotationDrag()
         selectedAnnotationIndex = nil
     }
 
@@ -575,7 +587,84 @@ extension AppModel {
     func deleteSelectedAnnotation() {
         guard !isBusy, let index = selectedAnnotationIndex, selectedAnnotation != nil else { return }
         selectedAnnotationIndex = nil
+        annotationDrag = nil
         editSelectedFinding { $0.removeAnnotation(at: index) }
+        refreshAnnotatedImage()
+    }
+
+    /// A rigid move of the selected Annotation, in flight from the first
+    /// cursor movement on the shape until release. The shape leaves the
+    /// flattened base (exclude-one render) and rides as a renderer-drawn
+    /// overlay the view shifts — never double-drawn, never ghosted at its
+    /// old position. While held it composites above the whole base, so a
+    /// mid-stack shape shows over later marks for the drag's duration;
+    /// release re-renders true stacking.
+    struct AnnotationDrag {
+        let index: Int
+        /// The Annotation as the drag found it — release translates this,
+        /// and commits only if it is still in place.
+        let annotation: Annotation
+        /// The shape alone on transparency at its pre-drag position,
+        /// rendered by the core so the preview is pixel truth.
+        let overlayImage: NSImage
+        /// Whole image pixels — rounded on update, the single source for
+        /// the live preview and the committed move alike.
+        var offset = CGVector.zero
+    }
+
+    /// Begins a rigid move when `point` (image pixels) falls on the
+    /// selected Annotation; returns whether the move owns the gesture.
+    func beginAnnotationDrag(at point: CGPoint) -> Bool {
+        cancelAnnotationDrag()  // heals a drag orphaned by a cancelled gesture
+        guard !isBusy,
+              let index = selectedAnnotationIndex,
+              let annotation = selectedAnnotation,
+              let metrics = annotationMetrics,
+              let pixelSize = capturePixelSize,
+              annotation.hitTest(point, metrics: metrics),
+              let overlay = annotation.renderedAlone(canvasSize: pixelSize)
+        else { return false }
+        annotationDrag = AnnotationDrag(
+            index: index,
+            annotation: annotation,
+            overlayImage: NSImage(cgImage: overlay, size: pixelSize)
+        )
+        refreshAnnotatedImage(excludingAnnotationAt: index)
+        return true
+    }
+
+    /// Tracks the cursor. The offset rounds to whole pixels so the
+    /// shifted overlay stays pixel-identical to what release flattens —
+    /// rendering is translation-invariant on the pixel lattice, and the
+    /// rounded value is what preview and commit alike use.
+    func updateAnnotationDrag(offset: CGVector) {
+        annotationDrag?.offset = CGVector(dx: offset.dx.rounded(), dy: offset.dy.rounded())
+    }
+
+    /// Release: the whole move is one `replaceAnnotation` — one undo
+    /// step, ⌘Z returns the shape to its pre-drag position. Commits only
+    /// if the dragged Annotation still stands where the drag found it;
+    /// an interleaved mutation (an undo mid-drag) drops the move rather
+    /// than landing it on the wrong shape.
+    func endAnnotationDrag() {
+        guard let drag = annotationDrag else { return }
+        annotationDrag = nil
+        if drag.offset.dx != 0 || drag.offset.dy != 0,
+           let annotations = selectedItem?.finding.annotations,
+           annotations.indices.contains(drag.index),
+           annotations[drag.index] == drag.annotation {
+            editSelectedFinding {
+                $0.replaceAnnotation(at: drag.index, with: drag.annotation.translated(by: drag.offset))
+            }
+        }
+        refreshAnnotatedImage()
+    }
+
+    /// Abandons an in-flight move without committing — the base returns
+    /// to the full render, the shape to its pre-drag position.
+    func cancelAnnotationDrag() {
+        guard annotationDrag != nil else { return }
+        annotationDrag = nil
         refreshAnnotatedImage()
     }
 
@@ -589,13 +678,13 @@ extension AppModel {
         persistOpenSession()
     }
 
-    private func refreshAnnotatedImage() {
+    private func refreshAnnotatedImage(excludingAnnotationAt excluded: Int? = nil) {
         guard let finding = selectedItem?.finding else {
             capturedImage = nil
             capturePixelSize = nil
             return
         }
-        if let image = try? finding.annotatedScreenshotImage() {
+        if let image = try? finding.annotatedScreenshotImage(excludingAnnotationAt: excluded) {
             capturedImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
             capturePixelSize = CGSize(width: image.width, height: image.height)
         } else {

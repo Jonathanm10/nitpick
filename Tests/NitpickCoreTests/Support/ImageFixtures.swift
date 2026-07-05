@@ -35,7 +35,12 @@ enum ImageFixtures {
     /// images compare by color values regardless of how they were encoded.
     static func decodeRGBA(_ png: Data) throws -> (width: Int, height: Int, pixels: [UInt8]) {
         let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
-        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        return try rgba(#require(CGImageSourceCreateImageAtIndex(source, 0, nil)))
+    }
+
+    /// Normalizes a CGImage into the same RGBA8 sRGB pixel buffer, for
+    /// comparing renders that never round-trip through PNG.
+    static func rgba(_ image: CGImage) throws -> (width: Int, height: Int, pixels: [UInt8]) {
         let width = image.width
         let height = image.height
         var pixels = [UInt8](repeating: 0, count: width * height * 4)

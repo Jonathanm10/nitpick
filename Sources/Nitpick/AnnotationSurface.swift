@@ -54,6 +54,12 @@ struct AnnotationSurface: View {
     /// so Delete/Backspace and Esc act on the selection only while no
     /// text field (Summary, Description, label editor) is being edited.
     @FocusState private var surfaceFocused: Bool
+    /// The Select tool's gesture phase, decided at the first cursor
+    /// movement: a move when the press landed on the selected shape,
+    /// otherwise nothing until release selects. View-local like the
+    /// draft — the model owns the move itself.
+    private enum SelectGesture { case undecided, moving, rejected }
+    @State private var selectGesture = SelectGesture.undecided
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -66,6 +72,7 @@ struct AnnotationSurface: View {
         // same device share dimensions but must never share a draft.
         .onChange(of: model.captureID) {
             draft = nil
+            selectGesture = .undecided
             labelPosition = nil
             labelText = ""
         }
@@ -93,6 +100,7 @@ struct AnnotationSurface: View {
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.high)
+                moveOverlay(scale: scale)
                 draftOverlay(scale: scale)
                 selectionIndicator(scale: scale)
                 labelEditor(scale: scale)
@@ -127,19 +135,20 @@ struct AnnotationSurface: View {
                     draft = .arrow(from: start, to: point)
                 case .rectangle:
                     draft = .rectangle(rect(from: start, to: point))
-                case .label, .select:
+                case .label:
                     break
+                case .select:
+                    selectToolChanged(
+                        from: start, to: point,
+                        travel: hypot(value.translation.width, value.translation.height)
+                    )
                 }
             }
             .onEnded { value in
                 defer { draft = nil }
                 switch model.annotationTool {
                 case .select:
-                    // Hit → select; empty surface → nil → deselect. The
-                    // click also takes key focus, so Delete reaches the
-                    // selection instead of a lingering text field.
-                    model.selectAnnotation(at: pixelPoint(value.location, scale: scale, in: pixelSize))
-                    surfaceFocused = true
+                    selectToolEnded(pressedAt: pixelPoint(value.startLocation, scale: scale, in: pixelSize))
                 case .label:
                     // A still-open draft commits before the next one opens
                     // — typed text is never silently discarded.
@@ -153,6 +162,43 @@ struct AnnotationSurface: View {
                     }
                 }
             }
+    }
+
+    /// The Select tool's press-and-move, in image pixels: a hair of
+    /// cursor `travel` (view points) tells a drag from a click — a click
+    /// without movement stays pure selection. Translation begins only
+    /// from a hit on the selected shape; empty-surface drags do nothing.
+    private func selectToolChanged(from start: CGPoint, to point: CGPoint, travel: CGFloat) {
+        switch selectGesture {
+        case .rejected:
+            break
+        case .undecided:
+            guard travel >= 2 else { break }
+            if model.beginAnnotationDrag(at: start) {
+                selectGesture = .moving
+                model.updateAnnotationDrag(offset: CGVector(dx: point.x - start.x, dy: point.y - start.y))
+            } else {
+                selectGesture = .rejected
+            }
+        case .moving:
+            model.updateAnnotationDrag(offset: CGVector(dx: point.x - start.x, dy: point.y - start.y))
+        }
+    }
+
+    /// The Select tool's release: a move commits whole — one undo step.
+    /// Anything else acts as the click at the press point: hit → select,
+    /// empty surface → deselect — a drag from empty surface never picks
+    /// up whatever it happens to end over. Either way the surface takes
+    /// key focus, so Delete reaches the selection instead of a lingering
+    /// text field.
+    private func selectToolEnded(pressedAt start: CGPoint) {
+        if selectGesture == .moving {
+            model.endAnnotationDrag()
+        } else {
+            model.selectAnnotation(at: start)
+        }
+        selectGesture = .undecided
+        surfaceFocused = true
     }
 
     /// The in-flight shape, previewed with the same metrics the core
@@ -192,13 +238,38 @@ struct AnnotationSurface: View {
         }
     }
 
+    /// The dragged Annotation riding the cursor: the shape alone on
+    /// transparency, rendered by the core at its pre-drag position and
+    /// shifted by the drag's whole-pixel offset — renderer truth, so the
+    /// mark tracking the cursor is exactly what release flattens.
+    @ViewBuilder
+    private func moveOverlay(scale: CGFloat) -> some View {
+        if let drag = model.annotationDrag {
+            Image(nsImage: drag.overlayImage)
+                .resizable()
+                .interpolation(.high)
+                .offset(x: drag.offset.dx * scale, y: drag.offset.dy * scale)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// The selected Annotation as the designer currently sees it: mid-
+    /// drag, the pre-drag shape translated by the live offset, so the
+    /// selection indicator rides along with the mark.
+    private var displayedSelection: Annotation? {
+        if let drag = model.annotationDrag {
+            return drag.annotation.translated(by: drag.offset)
+        }
+        return model.selectedAnnotation
+    }
+
     /// The selection indicator: a dashed outline around the selected
     /// Annotation's rendered bounds. Pure workspace chrome at view scale —
     /// it never passes through the flattening renderer, so it can never
     /// appear in flattened or filed output.
     @ViewBuilder
     private func selectionIndicator(scale: CGFloat) -> some View {
-        if let annotation = model.selectedAnnotation, let metrics = model.annotationMetrics,
+        if let annotation = displayedSelection, let metrics = model.annotationMetrics,
            let bounds = annotation.boundingRect(metrics: metrics) {
             let padded = bounds.insetBy(dx: -metrics.strokeWidth, dy: -metrics.strokeWidth)
             RoundedRectangle(cornerRadius: 4)
@@ -275,64 +346,6 @@ struct AnnotationSurface: View {
         head.addLine(to: CGPoint(x: base.x - normal.x * headWidth / 2, y: base.y - normal.y * headWidth / 2))
         head.closeSubpath()
         return (line, head)
-    }
-}
-
-/// The annotation toolbar: tool picker, colors, undo/redo. A standalone
-/// view so the frozen pane can reserve its exact slot (hidden, disabled)
-/// and render a filed capture at the same size the editable surface
-/// gives it (issue 01: "same pane, same size").
-struct AnnotationToolbar: View {
-    @Bindable var model: AppModel
-
-    var body: some View {
-        HStack(spacing: 16) {
-            Picker("Tool", selection: $model.annotationTool) {
-                ForEach(AnnotationTool.allCases) { tool in
-                    Image(systemName: tool.symbolName)
-                        .help(tool.help)
-                        .tag(tool)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            HStack(spacing: 6) {
-                ForEach(AnnotationColor.allCases, id: \.self) { color in
-                    Button {
-                        model.annotationColor = color
-                    } label: {
-                        Circle()
-                            .fill(color.swatch)
-                            .strokeBorder(
-                                .primary.opacity(model.annotationColor == color ? 0.9 : 0.2),
-                                lineWidth: model.annotationColor == color ? 2 : 1
-                            )
-                            .frame(width: 18, height: 18)
-                    }
-                    .buttonStyle(.plain)
-                    .help(color.rawValue.capitalized)
-                }
-            }
-            Spacer()
-
-            Button {
-                model.undoAnnotation()
-            } label: {
-                Image(systemName: "arrow.uturn.backward")
-            }
-            .keyboardShortcut("z", modifiers: .command)
-            .disabled(!model.canUndoAnnotation)
-            .help("Undo")
-            Button {
-                model.redoAnnotation()
-            } label: {
-                Image(systemName: "arrow.uturn.forward")
-            }
-            .keyboardShortcut("z", modifiers: [.command, .shift])
-            .disabled(!model.canRedoAnnotation)
-            .help("Redo")
-        }
     }
 }
 

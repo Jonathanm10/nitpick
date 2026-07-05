@@ -54,8 +54,14 @@ extension Finding {
         return data as Data
     }
 
-    /// The flattened image, for the shell to display while editing.
-    public func annotatedScreenshotImage() throws -> CGImage {
+    /// The flattened image, for the shell to display while editing. With
+    /// `excludedIndex`, that one Annotation is left out — the base image
+    /// under a mid-drag move, so the moving shape is never double-drawn
+    /// or ghosted at its old position. An out-of-range or nil index
+    /// excludes nothing.
+    public func annotatedScreenshotImage(
+        excludingAnnotationAt excludedIndex: Int? = nil
+    ) throws -> CGImage {
         guard
             let source = CGImageSourceCreateWithData(screenshotPNG as CFData, nil),
             let base = CGImageSourceCreateImageAtIndex(source, 0, nil),
@@ -77,7 +83,7 @@ extension Finding {
         context.scaleBy(x: 1, y: -1)
 
         let metrics = AnnotationMetrics(imageSize: size)
-        for annotation in annotations {
+        for (index, annotation) in annotations.enumerated() where index != excludedIndex {
             annotation.draw(in: context, metrics: metrics)
         }
 
@@ -85,6 +91,35 @@ extension Finding {
             throw AnnotationRenderingError.unreadableScreenshot
         }
         return image
+    }
+}
+
+extension Annotation {
+    /// This Annotation rendered alone on a transparent canvas of the
+    /// capture's pixel size, with the same metrics flattening uses — the
+    /// shell's mid-drag overlay. It goes through the exact draw path
+    /// flattening does, so the moving shape is pixel-identical to its
+    /// committed self, and shifting it by whole pixels keeps it so —
+    /// which is why drag offsets round to the pixel lattice. Stacked
+    /// above the exclude-one base it visually lifts the shape over
+    /// anything it overlaps for the drag's duration; release restores
+    /// true stacking. Nil only for a degenerate canvas size.
+    public func renderedAlone(canvasSize: CGSize) -> CGImage? {
+        let width = Int(canvasSize.width)
+        let height = Int(canvasSize.height)
+        guard
+            width > 0, height > 0,
+            let context = CGContext(
+                data: nil, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        else { return nil }
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        draw(in: context, metrics: AnnotationMetrics(imageSize: canvasSize))
+        return context.makeImage()
     }
 }
 
