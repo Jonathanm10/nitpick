@@ -17,6 +17,7 @@ struct NitpickApp: App {
                 Button("Check for Updates…") { updater.checkForUpdates() }
                     .disabled(!updater.canCheckForUpdates)
             }
+            ReviewCommands(model: model)
         }
 
         Window("History", id: "history") {
@@ -24,11 +25,42 @@ struct NitpickApp: App {
         }
         .defaultSize(width: 680, height: 520)
         .keyboardShortcut("y")
+
         // The standard Settings scene: ⌘, and the app-menu item for free.
         // It owns the YouTrack connection (issue 01) and never opens on
         // its own — launch with no connection hints on home instead.
         Settings {
             SettingsView(model: model)
+        }
+    }
+}
+
+struct ReviewCommands: Commands {
+    @Bindable var model: AppModel
+
+    var body: some Commands {
+        CommandMenu("Review") {
+            Button(model.startReviewTitle) {
+                Task { await model.startReview() }
+            }
+            .keyboardShortcut("r", modifiers: [.command])
+            .disabled(!model.canStartReview)
+
+            Button("Capture") {
+                Task { await model.captureScreen() }
+            }
+            .keyboardShortcut("s", modifiers: [.command])
+            .disabled(!model.canCapture)
+
+            Button("File All") {
+                Task { await model.fileAllFindings() }
+            }
+            .disabled(!model.canFileAll)
+
+            Button("End Review") {
+                model.requestEndReview()
+            }
+            .disabled(!model.canEndReview)
         }
     }
 }

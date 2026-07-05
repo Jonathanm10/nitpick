@@ -49,6 +49,9 @@ final class AppModel {
     var hasPendingLabelDraft = false
     private(set) var isBusy = false
     var errorMessage: String?
+    /// Menu commands live outside ContentView, so the End Review confirmation
+    /// flag sits on the model where both the window and the menu can drive it.
+    var endReviewConfirmationRequested = false
 
     /// The verified YouTrack connection; nil shows the first-run settings.
     private(set) var youTrack: YouTrackConnection?
@@ -125,6 +128,18 @@ final class AppModel {
         devices.first { $0.id == selectedDeviceID }
     }
 
+    var startReviewTitle: String { session == nil ? "Start review" : "Resume review" }
+
+    var canStartReview: Bool {
+        !isReviewing
+            && selectedDevice?.isRuntimeAvailable == true
+            && (session != nil || selectedProject != nil)
+            && !isBusy
+    }
+
+    var canCapture: Bool { isReviewing && !isBusy && !hasPendingLabelDraft }
+
+    var canEndReview: Bool { session != nil && !isBusy }
     var selectedProject: YouTrackProject? {
         youTrack?.projects.first { $0.id == selectedProjectID }
     }
@@ -197,7 +212,7 @@ final class AppModel {
                 youTrackInstanceURLField = url.absoluteString
             }
             guard let connection = try await core.reconnectYouTrack() else { return }
-            connected(connection)
+            try connected(connection)
         }
     }
 
@@ -208,7 +223,7 @@ final class AppModel {
                 token: youTrackTokenField
             )
             youTrackTokenField = ""
-            connected(connection)
+            try connected(connection)
         }
     }
 
@@ -219,7 +234,7 @@ final class AppModel {
         youTrackErrorMessage = nil
     }
 
-    private func connected(_ connection: YouTrackConnection) {
+    private func connected(_ connection: YouTrackConnection) throws {
         // A connection change ends the active Review Session unless this
         // connection offers the session's exact project (id, key, and
         // name) — filing must never pair the pinned project with
@@ -227,10 +242,7 @@ final class AppModel {
         // instance keeps the session; its open-session file stays on disk
         // either way, so ending it here never destroys review work.
         if let session, !connection.projects.contains(session.project) {
-            self.session = nil
-            isReviewing = false
-            reviewDevice = nil
-            clearSelection()
+            try endSession(clearingPersisted: false)
         }
         // A surviving session's pinned project drives the (disabled)
         // picker. Otherwise keep the picker's choice only when the
@@ -256,10 +268,8 @@ final class AppModel {
             // a relaunch would resurrect what the designer deliberately
             // left. An invalid drop throws above and costs nothing.
             if session != nil {
-                session = nil
-                try core.clearOpenSession()
+                try endSession(clearingPersisted: true)
             }
-            clearSelection()
             try await refreshSetup()
         }
     }
@@ -270,7 +280,7 @@ final class AppModel {
     /// resumes instead: its pinned project and tray stay; only the
     /// simulator is relaunched.
     func startReview() async {
-        guard let build, let project = session?.project ?? selectedProject else { return }
+        guard canStartReview, let build, let project = session?.project ?? selectedProject else { return }
         await perform {
             // Session-start prerequisite check (issue 10): a missing Xcode
             // or runtime surfaces as guidance before any boot is attempted.
@@ -292,6 +302,25 @@ final class AppModel {
         }
     }
 
+    /// Routes End Review from the button and the menu: confirm if unfiled
+    /// Findings would be discarded, otherwise end immediately.
+    func requestEndReview() {
+        guard canEndReview else { return }
+        if session?.hasUnfiledFindings == true {
+            endReviewConfirmationRequested = true
+        } else {
+            Task { await endReview() }
+        }
+    }
+
+    /// Ends the Review Session without filing. The Build stays loaded,
+    /// the shell returns to its no-session state, and History is untouched.
+    func endReview() async {
+        guard canEndReview else { return }
+        await perform {
+            try endSession(clearingPersisted: true)
+        }
+    }
     /// Mid-session device switch (PRD story 7): relaunches the session's
     /// Build on the new device under the session's current Device Settings.
     /// The session — Build, project, tray — is untouched. On failure the
@@ -336,7 +365,7 @@ final class AppModel {
         // the wrong Finding — same invariant as the filing gate. Busy means
         // a switch or settings change may be in flight — capturing then
         // could stamp a Device Context the screenshot wasn't taken under.
-        guard !isBusy, let device = reviewDevice, session != nil, !hasPendingLabelDraft else { return }
+        guard canCapture, let device = reviewDevice else { return }
         await perform {
             let png = try await core.captureScreen(of: device)
             // The capture drops straight into the tray as a Finding — no
@@ -441,7 +470,7 @@ final class AppModel {
     /// where its issue links stay visible (PRD story 25), and the next
     /// review starts fresh.
     func fileAllFindings() async {
-        guard let session, !hasPendingLabelDraft else { return }
+        guard canFileAll, let session else { return }
         await perform {
             let outcome = await core.fileAll(in: session)
             if outcome.failure == nil {
@@ -455,6 +484,15 @@ final class AppModel {
             refreshHistory()
             if let failure = outcome.failure { throw failure }
         }
+    }
+    private func endSession(clearingPersisted: Bool) throws {
+        session = nil
+        isReviewing = false
+        reviewDevice = nil
+        if clearingPersisted {
+            try core.clearOpenSession()
+        }
+        clearSelection()
     }
 
     /// True when file-all can run: something is left to file and every

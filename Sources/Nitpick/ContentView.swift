@@ -80,6 +80,17 @@ struct ContentView: View {
         } message: { _ in
             Text("Ingesting a new Build ends this review — \(unfiledFindingsPhrase) will be discarded.")
         }
+        .confirmationDialog(
+            "End the review?",
+            isPresented: $model.endReviewConfirmationRequested
+        ) {
+            Button("End Review", role: .destructive) {
+                Task { await model.endReview() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Ending this review will discard \(unfiledFindingsPhrase).")
+        }
         .task { await model.onLaunch() }
         .overlay(alignment: .topTrailing) {
             if model.isBusy {
@@ -206,15 +217,11 @@ struct ContentView: View {
             } else {
                 // A restored session resumes with its pinned project;
                 // a fresh start needs the picker's choice.
-                Button(model.session == nil ? "Start review" : "Resume review") {
+                Button(model.startReviewTitle) {
                     Task { await model.startReview() }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(
-                    model.selectedDevice?.isRuntimeAvailable != true
-                        || (model.selectedProject == nil && model.session == nil)
-                        || model.isBusy
-                )
+                .disabled(!model.canStartReview)
                 .help("Reviewing needs a device and a YouTrack project — the session files into it.")
             }
         }
@@ -346,16 +353,15 @@ struct ContentView: View {
     private static let placeholderDeviceAspect = CGSize(width: 9, height: 19.5)
 
     /// The control column, ordered by use: Capture (once the Build is
-    /// running), the session-wide Design Reference, the tray, and the
-    /// compose fields for the selected Finding.
+    /// running), the session-wide Design Reference, the tray, the compose
+    /// fields for the selected Finding, and End Review at the foot.
     private var controlColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
             if model.isReviewing {
                 Button("Capture") {
                     Task { await model.captureScreen() }
                 }
-                .keyboardShortcut("s", modifiers: [.command])
-                .disabled(model.isBusy || model.hasPendingLabelDraft)
+                .disabled(!model.canCapture)
             }
 
             // Session-level Design Reference: one Figma URL for every
@@ -373,6 +379,13 @@ struct ContentView: View {
             }
 
             Spacer(minLength: 0)
+
+            Button("End Review") {
+                model.requestEndReview()
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .disabled(!model.canEndReview)
         }
     }
 

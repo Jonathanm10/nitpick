@@ -110,6 +110,26 @@ struct DurabilityTests {
         try core.clearOpenSession()
     }
 
+    /// End Review's persistence contract (issue 02): ending a session
+    /// discards its unfiled Findings for good — the cleared slot leaves a
+    /// relaunch nothing to restore. Prior art: filing clears the slot the
+    /// same way; this pins the clear-with-unfiled-work path End Review
+    /// composes.
+    @Test("clearing a persisted open session with unfiled Findings leaves nothing to restore")
+    func clearedUnfiledWorkStaysGone() throws {
+        let workspace = try Fixtures.makeTemporaryDirectory()
+        let core = Self.relaunchedCore(workspace: workspace)
+        var session = IssueFilingTests.session
+        session.addFinding(IssueFilingTests.finding(summary: "First"))
+        session.addFinding(IssueFilingTests.finding(summary: "Second"))
+        #expect(session.hasUnfiledFindings)
+        try core.saveOpenSession(session)
+
+        try core.clearOpenSession()
+
+        #expect(try Self.relaunchedCore(workspace: workspace).loadOpenSession() == nil)
+    }
+
     @Test("a discarded Finding stays discarded after the relaunch")
     func discardSurvives() throws {
         let workspace = try Fixtures.makeTemporaryDirectory()
