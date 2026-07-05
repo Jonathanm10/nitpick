@@ -32,6 +32,10 @@ _Avoid_: disparity, nitpick, issue (reserved for the YouTrack artifact)
 The Review Session's Findings in capture order, awaiting filing. A Finding leaves the Tray only by being filed or discarded.
 _Avoid_: queue, basket, list
 
+**History**:
+The designer's own record of filed Review Sessions and the issues their Findings became. Written only at filing — a discarded session leaves no trace — and never reflects later changes in YouTrack.
+_Avoid_: log, archive, recents
+
 **Design Reference**:
 An optional Figma URL on a Review Session or a Finding, pointing at the design source of truth. A link, never a rendering.
 _Avoid_: mockup, design spec
