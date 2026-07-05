@@ -28,6 +28,10 @@ _Avoid_: drawing, markup
 A single discrepancy captured during a Review Session: one annotated screenshot plus the designer's description. Files as exactly one YouTrack issue.
 _Avoid_: disparity, nitpick, issue (reserved for the YouTrack artifact)
 
+**Tray**:
+The Review Session's Findings in capture order, awaiting filing. A Finding leaves the Tray only by being filed or discarded.
+_Avoid_: queue, basket, list
+
 **Design Reference**:
 An optional Figma URL on a Review Session or a Finding, pointing at the design source of truth. A link, never a rendering.
 _Avoid_: mockup, design spec
