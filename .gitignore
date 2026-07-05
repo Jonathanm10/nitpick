@@ -3,3 +3,5 @@
 /scripts/live-smoke/SmokeApp.app/SmokeApp
 /scripts/live-smoke/SmokeApp.zip
 /dist/
+/.scratch/
+/.codegraph/
