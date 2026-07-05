@@ -12,6 +12,13 @@ be overridden from the environment.
 
 ## One-time setup (per release machine)
 
+`scripts/release/setup-signing.sh` walks through all four steps
+interactively and fills `release.env` as it goes; for hosting it sets up a
+public GitHub repo with one fixed `updates` release whose assets are the
+appcast + zips (enclosure URLs stay stable across versions), after
+scrubbing the local-only `.scratch/` and `.codegraph/` paths from git.
+The steps, for reference:
+
 1. **Developer ID certificate.** Install a "Developer ID Application"
    certificate + private key in the login Keychain. Copy its name from
    `security find-identity -v -p codesigning` into `NITPICK_SIGNING_IDENTITY`
@@ -59,8 +66,15 @@ The script runs the whole ladder and stops on the first failure:
    enclosure, and re-verifies every signature against `NITPICK_ED_PUBLIC_KEY`
    so a mismatched private key can never ship.
 
-Then upload `Nitpick-<version>-<build>.zip` and `appcast.xml` to the host so the
-enclosure URLs resolve. Keep `dist/releases/` around between releases:
+Then upload `Nitpick-<version>-<build>.zip` and `appcast.xml` so the
+enclosure URLs resolve — with the GitHub hosting the wizard sets up:
+
+```sh
+gh release upload updates dist/releases/Nitpick-<version>-<build>.zip \
+    dist/releases/appcast.xml --clobber
+```
+
+Keep `dist/releases/` around between releases:
 `generate_appcast` extends the existing appcast and keeps the previous
 entries.
 
