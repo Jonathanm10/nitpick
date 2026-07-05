@@ -18,6 +18,12 @@ struct NitpickApp: App {
                     .disabled(!updater.canCheckForUpdates)
             }
         }
+
+        Window("History", id: "history") {
+            HistoryWindow(model: model)
+        }
+        .defaultSize(width: 680, height: 520)
+        .keyboardShortcut("y")
     }
 }
 

@@ -64,6 +64,10 @@ final class AppModel {
     /// newest first. Read-only, read from disk — never from YouTrack.
     private(set) var history: [HistoryEntry] = []
 
+    var historyTrace: HistoryTrace? {
+        HistoryTrace(history: history)
+    }
+
     var selectedItem: TrayItem? {
         guard let selectedItemID else { return nil }
         return session?.tray.first { $0.id == selectedItemID }

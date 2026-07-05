@@ -33,7 +33,9 @@ struct ContentView: View {
             }
             if model.session == nil {
                 Spacer(minLength: 0)
-                historySection
+                if let trace = model.historyTrace {
+                    HistoryTraceLine(trace: trace)
+                }
             }
         }
         .padding(20)
@@ -445,47 +447,4 @@ struct ContentView: View {
             .disabled(model.isBusy)
     }
 
-    /// The local history log: filed sessions with their issue links,
-    /// newest first — the "did I already file this?" answer. Read-only
-    /// rows, read from disk; no YouTrack state is ever fetched for it.
-    @ViewBuilder
-    private var historySection: some View {
-        if !model.history.isEmpty {
-            Divider()
-            Text("History")
-                .font(.headline)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(model.history) { entry in
-                        historyRow(entry)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 180)
-        }
-    }
-
-    private func historyRow(_ entry: HistoryEntry) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
-                Text(entry.project.name)
-                    .font(.callout.weight(.semibold))
-                Text("\(entry.build.bundleID) \(entry.build.version) (\(entry.build.buildNumber))")
-                    .font(.callout.monospaced())
-                    .foregroundStyle(.secondary)
-                Text(entry.startedAt.formatted(date: .abbreviated, time: .shortened))
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(entry.findings, id: \.issue.idReadable) { finding in
-                HStack(spacing: 8) {
-                    Link(finding.issue.idReadable, destination: finding.issue.url)
-                    let summary = finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-                    Text(summary.isEmpty ? "Untitled Finding" : summary)
-                        .lineLimit(1)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
 }
