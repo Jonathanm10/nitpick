@@ -463,8 +463,10 @@ final class AppModel {
         }
     }
 
-    var remainingFindingCount: Int {
-        session?.tray.count { $0.filedIssue == nil } ?? 0
+    /// The core's unfiled count — what "File all (n)" shows and the drop
+    /// guard's confirmation names.
+    var unfiledFindingCount: Int {
+        session?.unfiledFindingCount ?? 0
     }
 
     /// Sessions persist as they are created (issue 07): every mutation

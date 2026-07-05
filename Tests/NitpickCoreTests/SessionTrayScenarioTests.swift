@@ -100,6 +100,61 @@ struct SessionTrayScenarioTests {
         #expect(item.finding.annotations.count == 1)
     }
 
+    // MARK: - The drop guard's predicate (issue 05)
+
+    @Test("the tray's filing state drives the unfiled-Findings predicate: empty false, captures true, discard-all false")
+    func unfiledFindingsFollowTheTray() throws {
+        var session = IssueFilingTests.session
+        #expect(!session.hasUnfiledFindings)
+        #expect(session.unfiledFindingCount == 0)
+
+        let first = session.addFinding(IssueFilingTests.finding(summary: "First"))
+        let second = session.addFinding(IssueFilingTests.finding(summary: "Second"))
+        #expect(session.hasUnfiledFindings)
+        #expect(session.unfiledFindingCount == 2)
+
+        session.discardFinding(id: first)
+        #expect(session.hasUnfiledFindings)
+        #expect(session.unfiledFindingCount == 1)
+
+        session.discardFinding(id: second)
+        #expect(!session.hasUnfiledFindings)
+        #expect(session.unfiledFindingCount == 0)
+    }
+
+    @Test("an interrupted filing still counts as unfiled work; file-all clears the predicate")
+    func unfiledFindingsAcrossTheFilingLadder() async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await IssueFilingTests.connectedCore(transport: transport)
+        var session = IssueFilingTests.session
+        session.addFinding(IssueFilingTests.finding(summary: "Solo"))
+
+        // The network dies right after issue creation: the item freezes
+        // mid-ladder — no longer editable, not yet filed.
+        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: Self.createdIssue421)
+        transport.enqueue(error: URLError(.timedOut))
+
+        let interrupted = await core.fileAll(in: session)
+
+        try #require(interrupted.failure != nil)
+        try #require(!interrupted.session.tray[0].isEditable)
+        // Frozen is not filed: the issue exists but carries neither
+        // attachments nor tag — still unfiled work worth guarding.
+        #expect(interrupted.session.hasUnfiledFindings)
+        #expect(interrupted.session.unfiledFindingCount == 1)
+
+        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.attachmentsJSON)
+        transport.enqueue(json: IssueFilingTests.appliedTagJSON)
+
+        let filed = await core.fileAll(in: interrupted.session)
+
+        try #require(filed.failure == nil)
+        #expect(!filed.session.hasUnfiledFindings)
+        #expect(filed.session.unfiledFindingCount == 0)
+    }
+
     // MARK: - File-all
 
     @Test("file-all creates exactly one issue per remaining Finding, in tray order, and lists every link")

@@ -121,6 +121,21 @@ extension ReviewSession {
     public var filedIssues: [FiledIssue] {
         tray.compactMap(\.filedIssue)
     }
+
+    /// How many Findings await filing — anything short of the full ladder,
+    /// including an item frozen mid-ladder: its issue exists but is
+    /// incomplete, still work worth guarding. The count the drop-guard
+    /// confirmation names (PRD story 20) and "File all (n)" shows.
+    public var unfiledFindingCount: Int {
+        tray.count { $0.filedIssue == nil }
+    }
+
+    /// True while the session holds unfiled Findings — the drop guard's
+    /// predicate (PRD story 19): ingesting a new Build ends this session,
+    /// and only filed work survives it (as History).
+    public var hasUnfiledFindings: Bool {
+        unfiledFindingCount > 0
+    }
 }
 
 /// The device and settings in effect when a Finding is captured: device

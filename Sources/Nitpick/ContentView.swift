@@ -3,6 +3,11 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var model: AppModel
+    /// A Build dropped while the open session still holds unfiled
+    /// Findings — staged until the designer confirms the destruction the
+    /// collapsed drop zone made invisible (issue 05). Nil otherwise: a
+    /// clean drop never touches this.
+    @State private var pendingBuildDrop: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -38,8 +43,37 @@ struct ContentView: View {
         .background(SessionWindowGrowth(isSessionOpen: model.session != nil))
         .dropDestination(for: URL.self) { urls, _ in
             guard let url = urls.first else { return false }
-            Task { await model.ingest(url) }
+            // Ingesting ends the open session (one Build per Review
+            // Session) — and with it every unfiled Finding. A session
+            // holding unfiled work stages the drop behind a confirmation;
+            // a clean one ingests without ceremony, exactly as before.
+            // The guard is deliberately not pre-validating the URL: a
+            // stray non-Build drop over unfiled work confirms and then
+            // fails with today's ingest error, session untouched (ingest
+            // throws before any teardown) — a spurious dialog is the safe
+            // failure; a stale view-side validity check could silently
+            // skip the guard for a Build shape ingest later accepts.
+            if model.session?.hasUnfiledFindings == true {
+                pendingBuildDrop = url
+            } else {
+                Task { await model.ingest(url) }
+            }
             return true
+        }
+        .confirmationDialog(
+            "Ingest the dropped Build?",
+            isPresented: Binding(
+                get: { pendingBuildDrop != nil },
+                set: { if !$0 { pendingBuildDrop = nil } }
+            ),
+            presenting: pendingBuildDrop
+        ) { url in
+            Button("Discard and Ingest", role: .destructive) {
+                Task { await model.ingest(url) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Ingesting a new Build ends this review — \(unfiledFindingsPhrase) will be discarded.")
         }
         .task { await model.onLaunch() }
         .overlay(alignment: .topTrailing) {
@@ -49,6 +83,13 @@ struct ContentView: View {
                     .padding(24)
             }
         }
+    }
+
+    /// The confirmation's count, in the domain's words (PRD story 20):
+    /// "3 unfiled Findings", "1 unfiled Finding".
+    private var unfiledFindingsPhrase: String {
+        let count = model.unfiledFindingCount
+        return count == 1 ? "1 unfiled Finding" : "\(count) unfiled Findings"
     }
 
     @ViewBuilder
@@ -356,7 +397,7 @@ struct ContentView: View {
                 trayRow(item)
             }
         }
-        Button("File all (\(model.remainingFindingCount))") {
+        Button("File all (\(model.unfiledFindingCount))") {
             Task { await model.fileAllFindings() }
         }
         .disabled(!model.canFileAll)
