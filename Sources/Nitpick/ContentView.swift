@@ -6,9 +6,13 @@ struct ContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            youTrackSection
-            Divider()
-            dropZone
+            if let session = model.session {
+                sessionHeader(session)
+            } else {
+                youTrackSection
+                Divider()
+                dropZone
+            }
             if let guidance = model.setupGuidance {
                 setupGuidanceSection(guidance)
             } else if model.build != nil {
@@ -24,8 +28,8 @@ struct ContentView: View {
             }
             if model.session == nil {
                 Spacer(minLength: 0)
+                historySection
             }
-            historySection
         }
         .padding(20)
         .frame(minWidth: 520, minHeight: 640)
@@ -107,6 +111,22 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+    }
+
+    /// The collapsed setup chrome (issue 02): while a session is open, one
+    /// line names what is under review and where its Findings will file —
+    /// app, version, build number, project. Nothing interactive is lost:
+    /// the project is pinned at Start review and the picker is disabled
+    /// mid-session anyway. The full block and drop zone return with the
+    /// next session-less state.
+    private func sessionHeader(_ session: ReviewSession) -> some View {
+        HStack(spacing: 6) {
+            Text(session.build.appBundleURL.deletingPathExtension().lastPathComponent)
+                .font(.headline)
+            Text("\(session.build.identity.version) (\(session.build.identity.buildNumber)) · \(session.project.name)")
+                .foregroundStyle(.secondary)
+        }
+        .lineLimit(1)
     }
 
     /// Before the review: pick a device and start. During the review: the
