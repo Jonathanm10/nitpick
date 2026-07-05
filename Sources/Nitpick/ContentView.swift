@@ -9,14 +9,17 @@ struct ContentView: View {
     /// clean drop never touches this.
     @State private var pendingBuildDrop: URL?
 
+    /// Opens the Settings window — the connection's home (issue 01);
+    /// the hint row is the only way home points at it.
+    @Environment(\.openSettings) private var openSettings
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let session = model.session {
                 sessionHeader(session)
             } else {
-                youTrackSection
-                Divider()
                 dropZone
+                projectSlot
             }
             if let guidance = model.setupGuidance {
                 setupGuidanceSection(guidance)
@@ -92,45 +95,29 @@ struct ContentView: View {
         return count == 1 ? "1 unfiled Finding" : "\(count) unfiled Findings"
     }
 
+    /// The project picker's slot (issue 01): the picker itself when a
+    /// connection exists — Review Session context, pinned at Start review —
+    /// or a hint pointing at Settings when none does, so a disabled Start
+    /// review is never unexplained. No connection chrome lives on home;
+    /// the form, identity, and errors moved to the Settings window.
     @ViewBuilder
-    private var youTrackSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let connection = model.youTrack {
-                HStack(spacing: 12) {
-                    Text("Connected as \(connection.user.fullName) (\(connection.user.login))")
-                    Spacer()
-                    Button("Change…") { model.editYouTrackConnection() }
+    private var projectSlot: some View {
+        if let connection = model.youTrack {
+            Picker("Project", selection: $model.selectedProjectID) {
+                ForEach(connection.projects) { project in
+                    Text("\(project.name) (\(project.shortName))")
+                        .tag(Optional(project.id))
                 }
-                Picker("Project", selection: $model.selectedProjectID) {
-                    ForEach(connection.projects) { project in
-                        Text("\(project.name) (\(project.shortName))")
-                            .tag(Optional(project.id))
-                    }
-                }
-                .frame(maxWidth: 320, alignment: .leading)
-                // The session pins its project at Start review; filing
-                // never re-asks. A new choice takes effect next session.
-                .disabled(model.session != nil)
-            } else {
-                Text("Connect to YouTrack")
-                    .font(.headline)
-                TextField("Instance URL (https://youtrack.example.com)", text: $model.youTrackInstanceURLField)
-                    .textContentType(.URL)
-                    .autocorrectionDisabled()
-                SecureField("Permanent token", text: $model.youTrackTokenField)
-                Button("Connect") {
-                    Task { await model.connectYouTrack() }
-                }
-                .disabled(
-                    model.youTrackInstanceURLField.isEmpty
-                        || model.youTrackTokenField.isEmpty
-                        || model.isBusy
-                )
             }
-            if let message = model.youTrackErrorMessage {
-                Text(message)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
+            .frame(maxWidth: 320, alignment: .leading)
+            // The session pins its project at Start review; filing
+            // never re-asks. A new choice takes effect next session.
+            .disabled(model.session != nil)
+        } else {
+            HStack(spacing: 12) {
+                Text("Not connected to YouTrack")
+                    .foregroundStyle(.secondary)
+                Button("Open Settings…") { openSettings() }
             }
         }
     }
