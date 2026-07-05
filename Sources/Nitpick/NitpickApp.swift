@@ -18,6 +18,12 @@ struct NitpickApp: App {
                     .disabled(!updater.canCheckForUpdates)
             }
         }
+
+        Window("History", id: "history") {
+            HistoryWindow(model: model)
+        }
+        .defaultSize(width: 680, height: 520)
+        .keyboardShortcut("y")
         // The standard Settings scene: ⌘, and the app-menu item for free.
         // It owns the YouTrack connection (issue 01) and never opens on
         // its own — launch with no connection hints on home instead.
