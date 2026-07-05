@@ -570,11 +570,18 @@ extension AppModel {
         return annotations[index]
     }
 
+    /// The topmost committed Annotation under an image-pixel point,
+    /// with the same core hit test the Select tool clicks with — the
+    /// right-click menu asks it before offering Delete.
+    func annotationIndex(at point: CGPoint) -> Int? {
+        guard let finding = selectedItem?.finding, let metrics = annotationMetrics else { return nil }
+        return finding.annotationIndex(at: point, metrics: metrics)
+    }
+
     /// A Select-tool click, in image pixels: selects the topmost
     /// Annotation under the point, or — on empty surface — deselects.
     func selectAnnotation(at point: CGPoint) {
-        guard let finding = selectedItem?.finding, let metrics = annotationMetrics else { return }
-        selectedAnnotationIndex = finding.annotationIndex(at: point, metrics: metrics)
+        selectedAnnotationIndex = annotationIndex(at: point)
     }
 
     func deselectAnnotation() {
@@ -582,12 +589,30 @@ extension AppModel {
         selectedAnnotationIndex = nil
     }
 
-    /// Delete/Backspace on the selection: one core removal, one undo
-    /// step — ⌘Z brings the Annotation back.
+    /// Delete/Backspace on the selection.
     func deleteSelectedAnnotation() {
-        guard !isBusy, let index = selectedAnnotationIndex, selectedAnnotation != nil else { return }
-        selectedAnnotationIndex = nil
-        annotationDrag = nil
+        guard let index = selectedAnnotationIndex else { return }
+        deleteAnnotation(at: index)
+    }
+
+    /// One core removal, one undo step — ⌘Z brings the Annotation back.
+    /// Reached by Delete/Backspace on the selection and by right-click →
+    /// Delete under any tool. Bounds-checked against the current
+    /// Annotations, not the caller's snapshot — a context menu holds its
+    /// index for as long as it stays open. A selection elsewhere
+    /// survives: removal shifts later indices down by one.
+    func deleteAnnotation(at index: Int) {
+        guard !isBusy, let annotations = selectedItem?.finding.annotations,
+              annotations.indices.contains(index)
+        else { return }
+        cancelAnnotationDrag()
+        if let selected = selectedAnnotationIndex {
+            if selected == index {
+                selectedAnnotationIndex = nil
+            } else if selected > index {
+                selectedAnnotationIndex = selected - 1
+            }
+        }
         editSelectedFinding { $0.removeAnnotation(at: index) }
         refreshAnnotatedImage()
     }

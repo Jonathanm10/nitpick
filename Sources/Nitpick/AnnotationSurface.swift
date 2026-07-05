@@ -1,3 +1,4 @@
+import AppKit
 import NitpickCore
 import SwiftUI
 
@@ -100,6 +101,7 @@ struct AnnotationSurface: View {
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.high)
+                rightClickDelete(scale: scale, pixelSize: pixelSize)
                 moveOverlay(scale: scale)
                 draftOverlay(scale: scale)
                 selectionIndicator(scale: scale)
@@ -277,6 +279,17 @@ struct AnnotationSurface: View {
         }
     }
 
+    /// The right-click layer: Delete on any committed Annotation, with
+    /// any tool active — right-click never draws, so the gesture is
+    /// unclaimed. It sits directly above the image and below the label
+    /// editor, whose text field keeps its own context menu.
+    private func rightClickDelete(scale: CGFloat, pixelSize: CGSize) -> some View {
+        RightClickDeleteSurface(
+            annotationIndex: { model.annotationIndex(at: pixelPoint($0, scale: scale, in: pixelSize)) },
+            deleteAnnotation: { model.deleteAnnotation(at: $0) }
+        )
+    }
+
     /// The selected Annotation as the designer currently sees it: mid-
     /// drag, the pre-drag shape translated by the live offset, so the
     /// selection indicator rides along with the mark.
@@ -370,6 +383,72 @@ struct AnnotationSurface: View {
         head.addLine(to: CGPoint(x: base.x - normal.x * headWidth / 2, y: base.y - normal.y * headWidth / 2))
         head.closeSubpath()
         return (line, head)
+    }
+}
+
+/// The AppKit layer for the one gesture SwiftUI cannot express: a
+/// location-aware context menu. Hit-testing rides `NSApp.currentEvent`,
+/// so the view exists only for right mouse events — every other event
+/// falls through to the surface beneath, leaving each tool's left-click
+/// and drag untouched.
+private struct RightClickDeleteSurface: NSViewRepresentable {
+    /// `.disabled` reaches AppKit only through the environment: while
+    /// filing is in flight the menu freezes with the rest of the surface.
+    @Environment(\.isEnabled) private var isEnabled
+    /// View-space point → index of the committed Annotation it hits.
+    let annotationIndex: (CGPoint) -> Int?
+    let deleteAnnotation: (Int) -> Void
+
+    func makeNSView(context: Context) -> RightClickMenuView { RightClickMenuView() }
+
+    /// Closures re-capture the view's current scale on every layout, so
+    /// the point→pixel mapping never goes stale across a window resize.
+    func updateNSView(_ view: RightClickMenuView, context: Context) {
+        view.isEnabled = isEnabled
+        view.annotationIndex = annotationIndex
+        view.deleteAnnotation = deleteAnnotation
+    }
+}
+
+/// Offers Delete when a right-click lands on an Annotation; shows
+/// nothing on empty surface.
+private final class RightClickMenuView: NSView {
+    var isEnabled = true
+    var annotationIndex: ((CGPoint) -> Int?)?
+    var deleteAnnotation: ((Int) -> Void)?
+
+    /// Top-left origin — the same space as the view points the surface's
+    /// pixel mapping expects.
+    override var isFlipped: Bool { true }
+
+    /// Transparent to every event but a right-click: returning nil sends
+    /// hit-testing past this view.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        switch NSApp.currentEvent?.type {
+        case .rightMouseDown, .rightMouseUp, .rightMouseDragged:
+            super.hitTest(point)
+        default:
+            nil
+        }
+    }
+
+    /// The menu, or — on empty surface — nothing. The hit index rides
+    /// the item's tag to the action; the model re-checks it against the
+    /// current Annotations, since a menu can stay open indefinitely.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard isEnabled,
+              let index = annotationIndex?(convert(event.locationInWindow, from: nil))
+        else { return nil }
+        let menu = NSMenu()
+        let delete = NSMenuItem(title: "Delete", action: #selector(deleteItem(_:)), keyEquivalent: "")
+        delete.target = self
+        delete.tag = index
+        menu.addItem(delete)
+        return menu
+    }
+
+    @objc private func deleteItem(_ sender: NSMenuItem) {
+        deleteAnnotation?(sender.tag)
     }
 }
 
