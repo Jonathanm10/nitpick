@@ -130,8 +130,12 @@ final class AppModel {
 
     var startReviewTitle: String { session == nil ? "Start review" : "Resume review" }
 
+    /// Mirrored by the window's Start/Resume button and the Review menu
+    /// item — the hero group shows the button before a Build exists, so
+    /// the Build is part of the predicate, keeping the menu honest too.
     var canStartReview: Bool {
-        !isReviewing
+        build != nil
+            && !isReviewing
             && selectedDevice?.isRuntimeAvailable == true
             && (session != nil || selectedProject != nil)
             && !isBusy
@@ -140,6 +144,7 @@ final class AppModel {
     var canCapture: Bool { isReviewing && !isBusy && !hasPendingLabelDraft }
 
     var canEndReview: Bool { session != nil && !isBusy }
+
     var selectedProject: YouTrackProject? {
         youTrack?.projects.first { $0.id == selectedProjectID }
     }

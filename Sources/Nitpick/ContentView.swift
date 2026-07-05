@@ -17,28 +17,17 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 16) {
             if let session = model.session {
                 sessionHeader(session)
-            } else {
-                dropZone
-                projectSlot
-            }
-            if let guidance = model.setupGuidance {
-                setupGuidanceSection(guidance)
-            } else if model.build != nil {
-                deviceRow
-            }
-            if model.session != nil {
-                sessionSplit
-            }
-            if let message = model.errorMessage {
-                Text(message)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-            }
-            if model.session == nil {
-                Spacer(minLength: 0)
-                if let trace = model.historyTrace {
-                    HistoryTraceLine(trace: trace)
+                if let guidance = model.setupGuidance {
+                    setupGuidanceSection(guidance)
+                } else {
+                    deviceRow
                 }
+                sessionSplit
+                if let message = model.errorMessage {
+                    errorLine(message)
+                }
+            } else {
+                heroHome
             }
         }
         .padding(20)
@@ -108,6 +97,62 @@ struct ContentView: View {
         return count == 1 ? "1 unfiled Finding" : "\(count) unfiled Findings"
     }
 
+    /// The no-session hero (issue 04): the drop zone centered as the
+    /// workflow's entry point, the session's three inputs grouped beneath
+    /// it as one step, and the trace line at the foot. Ingest and launch
+    /// errors render under the group — where the action that caused them
+    /// lives.
+    @ViewBuilder
+    private var heroHome: some View {
+        Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 16) {
+            dropZone
+            startGroup
+            if let message = model.errorMessage {
+                errorLine(message)
+            }
+        }
+        .frame(maxWidth: 440)
+        .frame(maxWidth: .infinity)
+        Spacer(minLength: 0)
+        if let trace = model.historyTrace {
+            HistoryTraceLine(trace: trace)
+        }
+    }
+
+    /// The one step beneath the drop zone (issue 04): device, project, and
+    /// Start review — the three inputs a Review Session consumes. Setup
+    /// guidance stands in for the device picker until the Mac is ready
+    /// (issue 10); the not-connected hint sits in the project picker's
+    /// slot (issue 01).
+    @ViewBuilder
+    private var startGroup: some View {
+        if let guidance = model.setupGuidance {
+            setupGuidanceSection(guidance)
+        } else {
+            Picker("Device", selection: deviceSelection) {
+                devicePickerContent
+            }
+            .disabled(model.isBusy)
+        }
+        projectSlot
+        Button(model.startReviewTitle) {
+            Task { await model.startReview() }
+        }
+        .keyboardShortcut(.defaultAction)
+        .disabled(!model.canStartReview)
+        .help("Reviewing needs a device and a YouTrack project — the session files into it.")
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    /// Ingest, launch, and filing failures — shown on home, in both
+    /// states, where the designer acted.
+    private func errorLine(_ message: String) -> some View {
+        Text(message)
+            .foregroundStyle(.red)
+            .textSelection(.enabled)
+    }
+
     /// The project picker's slot (issue 01): the picker itself when a
     /// connection exists — Review Session context, pinned at Start review —
     /// or a hint pointing at Settings when none does, so a disabled Start
@@ -135,24 +180,34 @@ struct ContentView: View {
         }
     }
 
+    /// The hero drop zone (issue 04): the workflow's entry point, centered
+    /// and unmissable. Empty it invites the drop; loaded it names the Build
+    /// under review — name, version, build number (PRD story 25).
     private var dropZone: some View {
-        RoundedRectangle(cornerRadius: 12)
+        RoundedRectangle(cornerRadius: 16)
             .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
             .foregroundStyle(.secondary)
-            .frame(height: 96)
+            .frame(height: 200)
+            .frame(maxWidth: .infinity)
             .overlay {
                 if let build = model.build {
-                    VStack(spacing: 4) {
+                    VStack(spacing: 6) {
                         Text(build.appBundleURL.deletingPathExtension().lastPathComponent)
-                            .font(.headline)
+                            .font(.title2.weight(.semibold))
                         Text("\(build.identity.bundleID) \(build.identity.version) (\(build.identity.buildNumber))")
                             .font(.callout.monospaced())
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
                 } else {
-                    Text("Drop a simulator Build (.app or .zip)")
-                        .foregroundStyle(.secondary)
+                    VStack(spacing: 10) {
+                        Image(systemName: "square.and.arrow.down.on.square")
+                            .font(.system(size: 36, weight: .light))
+                            .foregroundStyle(.tertiary)
+                        Text("Drop a simulator Build (.app or .zip)")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
     }
@@ -173,24 +228,14 @@ struct ContentView: View {
         .lineLimit(1)
     }
 
-    /// Before the review: pick a device and start. During the review: the
-    /// same picker switches the running Build to another device, and the
-    /// Device Context controls set Dynamic Type and appearance — all
-    /// stamped onto the next capture.
+    /// The open session's Device Context row: the device picker switches
+    /// the running Build to another device, and the Dynamic Type and
+    /// appearance controls set what the next capture is stamped with. A
+    /// restored session shows Resume review here until its Build runs.
     private var deviceRow: some View {
         HStack(spacing: 12) {
             Picker("Device", selection: deviceSelection) {
-                ForEach(model.devices) { device in
-                    // A device whose runtime is missing is flagged at pick
-                    // time — visible but not selectable (issue 10).
-                    Text(
-                        device.isRuntimeAvailable
-                            ? "\(device.name) — \(device.osName)"
-                            : "\(device.name) — \(device.osName) (runtime missing)"
-                    )
-                    .tag(Optional(device.id))
-                    .selectionDisabled(!device.isRuntimeAvailable)
-                }
+                devicePickerContent
             }
             .labelsHidden()
             .disabled(model.isBusy)
@@ -224,6 +269,20 @@ struct ContentView: View {
                 .disabled(!model.canStartReview)
                 .help("Reviewing needs a device and a YouTrack project — the session files into it.")
             }
+        }
+    }
+
+    /// Every pickable simulator device; a device whose runtime is missing
+    /// is flagged at pick time — visible but not selectable (issue 10).
+    private var devicePickerContent: some View {
+        ForEach(model.devices) { device in
+            Text(
+                device.isRuntimeAvailable
+                    ? "\(device.name) — \(device.osName)"
+                    : "\(device.name) — \(device.osName) (runtime missing)"
+            )
+            .tag(Optional(device.id))
+            .selectionDisabled(!device.isRuntimeAvailable)
         }
     }
 
