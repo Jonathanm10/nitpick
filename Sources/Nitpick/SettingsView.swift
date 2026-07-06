@@ -20,6 +20,7 @@ struct SettingsView: View {
                     Text("Connected as \(connection.user.fullName) (\(connection.user.login))")
                     Spacer()
                     Button("Change…") { model.editYouTrackConnection() }
+                        .motionPressFeedback()
                 }
             } else {
                 Text("Connect to YouTrack")
@@ -36,6 +37,7 @@ struct SettingsView: View {
                         || model.youTrackTokenField.isEmpty
                         || model.isBusy
                 )
+                .motionPressFeedback()
             }
             if let message = model.youTrackErrorMessage {
                 Text(message)

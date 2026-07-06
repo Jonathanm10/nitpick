@@ -49,6 +49,8 @@ struct HistoryWindow: View {
             ForEach(entry.findings, id: \.issue.idReadable) { finding in
                 HStack(spacing: 8) {
                     Link(finding.issue.idReadable, destination: finding.issue.url)
+                        .font(.callout)
+                        .motionPressFeedback()
                     let summary = finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
                     Text(summary.isEmpty ? "Untitled Finding" : summary)
                         .lineLimit(1)
@@ -82,11 +84,13 @@ struct HistoryTraceLine: View {
             }
             .buttonStyle(.plain)
             .contentShape(Rectangle())
+            .motionPressFeedback()
 
             HStack(spacing: 8) {
                 ForEach(trace.visibleIssues, id: \.idReadable) { issue in
                     Link(issue.idReadable, destination: issue.url)
                         .font(.callout)
+                        .motionPressFeedback()
                 }
                 if trace.overflowCount > 0 {
                     Button("+\(trace.overflowCount)") {
@@ -94,6 +98,7 @@ struct HistoryTraceLine: View {
                     }
                     .buttonStyle(.plain)
                     .font(.callout)
+                    .motionPressFeedback()
                 }
             }
             .foregroundStyle(.secondary)

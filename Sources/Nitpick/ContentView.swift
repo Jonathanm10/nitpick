@@ -65,7 +65,9 @@ struct ContentView: View {
             Button("Discard and Ingest", role: .destructive) {
                 Task { await model.ingest(url) }
             }
+            .motionPressFeedback()
             Button("Cancel", role: .cancel) {}
+            .motionPressFeedback()
         } message: { _ in
             Text("Ingesting a new Build ends this review — \(unfiledFindingsPhrase) will be discarded.")
         }
@@ -76,7 +78,9 @@ struct ContentView: View {
             Button("End Review", role: .destructive) {
                 Task { await model.endReview() }
             }
+            .motionPressFeedback()
             Button("Cancel", role: .cancel) {}
+            .motionPressFeedback()
         } message: {
             Text("Ending this review will discard \(unfiledFindingsPhrase).")
         }
@@ -142,6 +146,7 @@ struct ContentView: View {
         .keyboardShortcut(.defaultAction)
         .disabled(!model.canStartReview)
         .help("Reviewing needs a device and a YouTrack project — the session files into it.")
+        .motionPressFeedback()
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
@@ -176,6 +181,7 @@ struct ContentView: View {
                 Text("Not connected to YouTrack")
                     .foregroundStyle(.secondary)
                 Button("Open Settings…") { openSettings() }
+                    .motionPressFeedback()
             }
         }
     }
@@ -268,6 +274,7 @@ struct ContentView: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(!model.canStartReview)
                 .help("Reviewing needs a device and a YouTrack project — the session files into it.")
+                .motionPressFeedback()
             }
         }
     }
@@ -302,6 +309,7 @@ struct ContentView: View {
                     Task { await model.recheckSetup() }
                 }
                 .disabled(model.isBusy)
+                .motionPressFeedback()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(4)
@@ -421,6 +429,7 @@ struct ContentView: View {
                     Task { await model.captureScreen() }
                 }
                 .disabled(!model.canCapture)
+                .motionPressFeedback()
             }
 
             // Session-level Design Reference: one Figma URL for every
@@ -445,6 +454,7 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
             .disabled(!model.canEndReview)
+            .motionPressFeedback()
         }
     }
 
@@ -462,6 +472,7 @@ struct ContentView: View {
             Task { await model.fileAllFindings() }
         }
         .disabled(!model.canFileAll)
+        .motionPressFeedback()
     }
 
     private func trayRow(_ item: TrayItem) -> some View {
@@ -478,6 +489,7 @@ struct ContentView: View {
                 Button("Discard") { model.discardFinding(id: item.id) }
                     .buttonStyle(.borderless)
                     .disabled(model.isBusy || model.hasPendingLabelDraft)
+                    .motionPressFeedback()
             } else {
                 // Mid-ladder: its issue exists but is incomplete — a File
                 // all retry finishes it without re-creating anything.

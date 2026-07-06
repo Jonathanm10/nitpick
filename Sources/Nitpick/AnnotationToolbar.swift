@@ -35,6 +35,7 @@ struct AnnotationToolbar: View {
                     }
                     .buttonStyle(.plain)
                     .help(color.rawValue.capitalized)
+                    .motionPressFeedback()
                 }
             }
             Spacer()
@@ -47,6 +48,7 @@ struct AnnotationToolbar: View {
             .keyboardShortcut("z", modifiers: .command)
             .disabled(!model.canUndoAnnotation)
             .help("Undo")
+            .motionPressFeedback()
             Button {
                 model.redoAnnotation()
             } label: {
@@ -55,6 +57,7 @@ struct AnnotationToolbar: View {
             .keyboardShortcut("z", modifiers: [.command, .shift])
             .disabled(!model.canRedoAnnotation)
             .help("Redo")
+            .motionPressFeedback()
         }
     }
 }
