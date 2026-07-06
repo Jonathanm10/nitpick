@@ -24,6 +24,10 @@ _Avoid_: device configuration, environment
 A markup element — pen stroke, arrow, rectangle, or text label — laid over a Finding's screenshot. Editable until the Finding is filed.
 _Avoid_: drawing, markup
 
+**Editor**:
+The pane where the selected Finding is annotated and described. A Finding stays editable here until it is filed.
+_Avoid_: canvas, surface, compose area
+
 **Finding**:
 A single discrepancy captured during a Review Session: one annotated screenshot plus the designer's description. Files as exactly one YouTrack issue.
 _Avoid_: disparity, nitpick, issue (reserved for the YouTrack artifact)
