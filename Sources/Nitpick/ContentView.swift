@@ -390,55 +390,23 @@ struct ContentView: View {
             .disabled(!model.canEndReview)
             .motionPressFeedback()
         }
+        // The column gets the session's full height so the tray can claim the
+        // spare space and scroll inside a fixed-width shell instead of growing
+        // the whole control stack.
+        .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// The session tray: every capture in order, selectable for editing,
-    /// discardable until filing touches it, carrying its issue link once
-    /// filed. File-all lives here — the one end-of-session action.
+    /// The session tray: the rows live in a platform List so swipe actions get
+    /// native physics and full-swipe behavior, while File all stays as the
+    /// explicit end-of-section action beneath them.
     @ViewBuilder
     private var traySection: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(model.session?.tray ?? []) { item in
-                trayRow(item)
-            }
-        }
+        TrayView(model: model)
         Button("File all (\(model.unfiledFindingCount))") {
             Task { await model.fileAllFindings() }
         }
         .disabled(!model.canFileAll)
         .motionPressFeedback()
-    }
-
-    private func trayRow(_ item: TrayItem) -> some View {
-        HStack(spacing: 8) {
-            let summary = item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-            Text(summary.isEmpty ? "Untitled Finding" : summary)
-                .lineLimit(1)
-            Text(item.finding.deviceContext.deviceModel)
-                .foregroundStyle(.secondary)
-            Spacer()
-            if let filed = item.filedIssue {
-                Link(filed.idReadable, destination: filed.url)
-            } else if item.isEditable {
-                Button("Discard") { model.discardFinding(id: item.id) }
-                    .buttonStyle(.borderless)
-                    .disabled(model.isBusy || model.hasPendingLabelDraft)
-                    .motionPressFeedback()
-            } else {
-                // Mid-ladder: its issue exists but is incomplete — a File
-                // all retry finishes it without re-creating anything.
-                Text(model.isBusy ? "Filing…" : "Filing interrupted — retry")
-                    .foregroundStyle(.orange)
-            }
-        }
-        .padding(.vertical, 3)
-        .padding(.horizontal, 6)
-        .contentShape(Rectangle())
-        .onTapGesture { model.selectItem(item.id) }
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(model.selectedItemID == item.id ? Color.accentColor.opacity(0.15) : .clear)
-        )
     }
 
     @ViewBuilder
@@ -452,5 +420,5 @@ struct ContentView: View {
         TextField("Design Reference (Figma URL, this Finding only)", text: $model.findingDesignReferenceField)
             .disabled(model.isBusy)
     }
-
 }
+
