@@ -70,7 +70,10 @@ extension AppCore {
     /// relaunch) resumes exactly where the run stopped instead of
     /// re-filing. When the whole tray has filed, the session leaves the
     /// open slot and becomes a read-only history entry.
-    public func fileAll(in session: ReviewSession) async -> FileAllOutcome {
+    public func fileAll(
+        in session: ReviewSession,
+        onProgress: (@MainActor @Sendable (ReviewSession) -> Void)? = nil
+    ) async -> FileAllOutcome {
         var updated = session
         let remaining = updated.tray.indices.filter { updated.tray[$0].filedIssue == nil }
         guard !remaining.isEmpty else { return FileAllOutcome(session: updated, failure: nil) }
@@ -101,6 +104,9 @@ extension AppCore {
                     // next request fires — a crash mid-run resumes on
                     // relaunch, never re-files.
                     try saveOpenSession(updated)
+                }
+                if let onProgress {
+                    await onProgress(updated)
                 }
             }
             // Every tray item is filed: freeze the session into history
