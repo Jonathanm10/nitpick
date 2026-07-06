@@ -16,7 +16,7 @@ APP="${1:-$ROOT/dist/Nitpick.app}"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-ditto -c -k --keepParent "$APP" "$WORK/Nitpick.zip"
+ditto -c -k --keepParent --norsrc --noextattr --noqtn "$APP" "$WORK/Nitpick.zip"
 
 xcrun notarytool submit "$WORK/Nitpick.zip" \
     --keychain-profile "$NITPICK_NOTARY_PROFILE" --wait

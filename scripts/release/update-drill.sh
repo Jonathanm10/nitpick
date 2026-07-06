@@ -37,7 +37,7 @@ export NITPICK_DOWNLOAD_URL_PREFIX="http://localhost:$PORT/"
 scripts/release/bundle.sh --version 1.0.1 --build 2
 scripts/release/sign.sh --adhoc
 scripts/release/verify.sh
-ditto -c -k --keepParent "$ROOT/dist/Nitpick.app" "$DRILL/serve/Nitpick-1.0.1.zip"
+ditto -c -k --keepParent --norsrc --noextattr --noqtn "$ROOT/dist/Nitpick.app" "$DRILL/serve/Nitpick-1.0.1.zip"
 
 # v1.0.0 (build 1): the installed app the drill updates from.
 scripts/release/bundle.sh --version 1.0.0 --build 1

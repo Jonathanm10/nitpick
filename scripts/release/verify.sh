@@ -1,5 +1,5 @@
 #!/bin/sh
-# Verifies a built bundle before it leaves the machine. Two tiers:
+# Verifies a built bundle before it leaves the machine. Three tiers:
 #
 #   verify.sh [app-path]              structural + signature checks — valid on
 #                                     any signed bundle, including ad-hoc
@@ -8,6 +8,16 @@
 #                                     signed, notarized, stapled bundle passes
 #   verify.sh --launch …              adds a launch smoke test: the app must
 #                                     start and still be running 5s later
+#   verify.sh --zip <zip>             extracts the release zip with CLI unzip —
+#                                     the least metadata-aware extractor users
+#                                     reach for — asserts no AppleDouble (._*)
+#                                     files landed inside the bundle, then runs
+#                                     the full notarized ladder on that copy.
+#                                     Archive Utility merges ._* entries back
+#                                     into xattrs, but `unzip` materializes
+#                                     them as files inside the sealed bundle,
+#                                     breaking the signature ("unsealed
+#                                     contents") and failing Gatekeeper.
 #
 # Gatekeeper is deliberately NOT part of the base tier: an ad-hoc dev bundle
 # always fails spctl, and a green checkmark there would prove nothing about
@@ -16,14 +26,29 @@ set -eu
 cd "$(dirname "$0")/../.."
 ROOT="$PWD"
 
-APP="$ROOT/dist/Nitpick.app" NOTARIZED=0 LAUNCH=0
+APP="$ROOT/dist/Nitpick.app" NOTARIZED=0 LAUNCH=0 ZIP=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --notarized) NOTARIZED=1; shift ;;
         --launch) LAUNCH=1; shift ;;
+        --zip) ZIP="$2"; shift 2 ;;
         *) APP="$1"; shift ;;
     esac
 done
+
+# Zip tier: verify the artifact as a hostile extractor would see it.
+if [ -n "$ZIP" ]; then
+    [ -f "$ZIP" ] || { echo "verify.sh: no zip at $ZIP" >&2; exit 2; }
+    WORK="$(mktemp -d)"
+    trap 'rm -rf "$WORK"' EXIT
+    /usr/bin/unzip -qq "$ZIP" -d "$WORK" \
+        || { echo "verify.sh: FAIL — unzip cannot extract $ZIP" >&2; exit 1; }
+    STRAYS="$(find "$WORK" -name '._*' -o -name '__MACOSX')"
+    [ -z "$STRAYS" ] || {
+        echo "verify.sh: FAIL — metadata sidecar files in the zip break the seal for CLI-unzip users:" >&2
+        echo "$STRAYS" >&2; exit 1; }
+    APP="$WORK/Nitpick.app" NOTARIZED=1
+fi
 [ -d "$APP" ] || { echo "verify.sh: no bundle at $APP" >&2; exit 2; }
 EXECUTABLE="$APP/Contents/MacOS/Nitpick"
 fail() { echo "verify.sh: FAIL — $1" >&2; exit 1; }

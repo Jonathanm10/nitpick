@@ -61,7 +61,13 @@ The script runs the whole ladder and stops on the first failure:
    staple validation, and a launch smoke test.
 6. Packages the **stapled** app as `dist/releases/Nitpick-<version>-<build>.zip`
    (the zip is both the download and Sparkle's update enclosure; the build
-   number keeps a re-release from overwriting a published archive).
+   number keeps a re-release from overwriting a published archive). The zip
+   carries no AppleDouble (`._*`) metadata entries (`ditto --norsrc
+   --noextattr --noqtn`): Archive Utility merges those back into xattrs, but
+   CLI `unzip` materializes them as files inside the sealed bundle — breaking
+   the signature and making Gatekeeper reject the app as unverifiable.
+   `verify.sh --zip` then re-extracts the zip with CLI `unzip` and runs the
+   full notarized ladder on that copy, so a metadata regression can't ship.
 7. `appcast.sh` — updates `dist/releases/appcast.xml`, EdDSA-signs the new
    enclosure, and re-verifies every signature against `NITPICK_ED_PUBLIC_KEY`
    so a mismatched private key can never ship.
@@ -104,7 +110,9 @@ The one check that can't be scripted from the build machine: copy the
 released zip to a Mac that has never seen a security override for nitpick,
 unzip, and double-click. It must open without any right-click-Open dance.
 `spctl --assess --type execute Nitpick.app` on that machine must say
-`accepted`, `source=Notarized Developer ID`.
+`accepted`, `source=Notarized Developer ID`. Extract with the terminal's
+`unzip`, not just Finder — the two disagree about zip metadata, and
+`verify.sh --zip` guards exactly the extractor Finder doesn't exercise.
 
 ## Sandbox stance
 

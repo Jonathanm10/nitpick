@@ -31,10 +31,17 @@ RELEASES="$ROOT/dist/releases"
 # update enclosure, so it must be built AFTER stapling. The build number is
 # part of the name: a build-only re-release must never overwrite a zip an
 # existing appcast entry still points at.
+#
+# --norsrc --noextattr --noqtn: ship no AppleDouble (._*) metadata entries.
+# Archive Utility merges them back into xattrs, but CLI `unzip` materializes
+# them as files inside the sealed bundle — breaking the signature and making
+# Gatekeeper reject the app as unverifiable. The bundle needs none of that
+# metadata; verify.sh --zip fails the release if any ever reappears.
 mkdir -p "$RELEASES"
 ZIP="$RELEASES/Nitpick-$VERSION-$BUILD.zip"
 rm -f "$ZIP"
-ditto -c -k --keepParent "$ROOT/dist/Nitpick.app" "$ZIP"
+ditto -c -k --keepParent --norsrc --noextattr --noqtn "$ROOT/dist/Nitpick.app" "$ZIP"
+./verify.sh --zip "$ZIP"
 
 ./appcast.sh "$RELEASES"
 
