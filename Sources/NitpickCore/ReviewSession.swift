@@ -68,6 +68,17 @@ public struct TrayItem: Equatable, Sendable, Identifiable {
         return nil
     }
 
+    /// Pristine means the shell may still throw the Finding away on Esc:
+    /// no annotations, no meaningful text, and filing has never touched
+    /// the item. Once filing advances past untouched, the core will never
+    /// call it pristine again.
+    public var isPristine: Bool {
+        filingProgress == .notStarted
+            && finding.annotations.isEmpty
+            && finding.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && finding.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// Editable and discardable only while nothing about the item exists
     /// on the instance (PRD stories 18, 23). The moment its issue is
     /// created the item freezes, so a filing retry can never diverge from

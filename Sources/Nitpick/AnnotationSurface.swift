@@ -20,6 +20,19 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Tool shortcuts live only when the surface has keyboard focus and no
+    /// text field is active. They are mnemonic and keep tool switching
+    /// instant: no animation, just a state change.
+    var shortcutKey: KeyEquivalent {
+        switch self {
+        case .select: "v"
+        case .pen: "p"
+        case .arrow: "a"
+        case .rectangle: "r"
+        case .label: "t"
+        }
+    }
+
     var help: String {
         switch self {
         case .select: "Select — click a mark to select it"
@@ -76,6 +89,7 @@ struct AnnotationSurface: View {
             selectGesture = .undecided
             labelPosition = nil
             labelText = ""
+            surfaceFocused = true
         }
         // The model gates filing on this: a placed-but-unsubmitted label
         // is visible in the preview and must never be silently dropped.
@@ -113,8 +127,13 @@ struct AnnotationSurface: View {
             .focusable()
             .focusEffectDisabled()
             .focused($surfaceFocused)
+            .defaultFocus($surfaceFocused, true)
             .onDeleteCommand { model.deleteSelectedAnnotation() }
-            .onExitCommand { model.deselectAnnotation() }
+            // The surface holds focus right after a capture, so it must
+            // run the same escape rule as the editor scope — installed
+            // only when the rule would act, or the mis-capture discard
+            // (PRD story 10) would die here as a consumed no-op.
+            .onExitCommand(perform: model.editorEscapeWouldAct ? { model.handleEditorEscape() } : nil)
             .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
                 // Nudge rides the surface's own key focus: a focused text
                 // field (Summary, Description, label editor) keeps its
@@ -126,6 +145,24 @@ struct AnnotationSurface: View {
                     Self.nudgeDirection(for: press.key),
                     multiplier: press.modifiers.contains(.shift) ? 5 : 1
                 )
+                return .handled
+            }
+            .onKeyPress(keys: Set(AnnotationTool.allCases.map(\.shortcutKey))) { press in
+                guard !labelFocused else { return .ignored }
+                switch press.key {
+                case AnnotationTool.select.shortcutKey:
+                    model.annotationTool = .select
+                case AnnotationTool.pen.shortcutKey:
+                    model.annotationTool = .pen
+                case AnnotationTool.arrow.shortcutKey:
+                    model.annotationTool = .arrow
+                case AnnotationTool.rectangle.shortcutKey:
+                    model.annotationTool = .rectangle
+                case AnnotationTool.label.shortcutKey:
+                    model.annotationTool = .label
+                default:
+                    return .ignored
+                }
                 return .handled
             }
         }

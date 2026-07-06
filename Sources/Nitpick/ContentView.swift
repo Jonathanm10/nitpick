@@ -32,6 +32,24 @@ struct ContentView: View {
         }
         .padding(20)
         .frame(minWidth: 520, minHeight: 640)
+        // Esc routes through the model's one editor-escape rule — but the
+        // handler is installed only when the rule would act: an installed
+        // no-op would still consume the command, and a Finding the
+        // designer has invested in must keep standard field behavior.
+        .onExitCommand(perform: model.editorEscapeWouldAct ? { model.handleEditorEscape() } : nil)
+        // Command-Return is the one keystroke back to the Build; a hidden
+        // default-action button keeps the shortcut live no matter which
+        // editor field is focused.
+        .overlay(alignment: .topLeading) {
+            Button {
+                _ = model.returnToBuild()
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+            .hidden()
+            .accessibilityHidden(true)
+        }
         // One-shot window growth at Start review (issue 03): fires on the
         // session's closed→open edge — nothing mid-loop reopens a session.
         .background(SessionWindowGrowth(isSessionOpen: model.session != nil))
@@ -510,6 +528,7 @@ struct ContentView: View {
     @ViewBuilder
     private var composeSection: some View {
         TextField("Summary", text: $model.summaryField)
+            .onSubmit { _ = model.returnToBuild() }
             .disabled(model.isBusy)
         TextField("Description", text: $model.descriptionField, axis: .vertical)
             .lineLimit(3...6)

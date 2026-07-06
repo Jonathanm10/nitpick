@@ -28,6 +28,58 @@ struct SessionTrayScenarioTests {
         transport.enqueue(json: IssueFilingTests.appliedTagJSON)
     }
 
+    // MARK: - The pristine predicate
+
+    @Test("a fresh capture is pristine; annotation round-trips away and back")
+    func pristineCaptureTracksAnnotations() throws {
+        var session = IssueFilingTests.session
+        let id = session.addFinding(IssueFilingTests.finding(summary: "", description: ""))
+
+        let item = try #require(session.tray.first { $0.id == id })
+        #expect(item.isPristine)
+
+        session.updateFinding(id: id) {
+            $0.add(Annotation(.rectangle(CGRect(x: 40, y: 40, width: 100, height: 80))))
+        }
+
+        let annotated = try #require(session.tray.first { $0.id == id })
+        #expect(!annotated.isPristine)
+
+        session.updateFinding(id: id) {
+            $0.removeAnnotation(at: 0)
+        }
+
+        let restored = try #require(session.tray.first { $0.id == id })
+        #expect(restored.isPristine)
+    }
+
+    @Test("whitespace-only summary and description still count as pristine")
+    func whitespaceOnlyTextIsPristine() throws {
+        var session = IssueFilingTests.session
+        session.addFinding(IssueFilingTests.finding(summary: " \n\t", description: "  \n"))
+
+        let item = try #require(session.tray.first)
+        #expect(item.isPristine)
+    }
+
+    @Test("any filing mark makes a tray item permanently non-pristine")
+    func filingMarksNeverReturnToPristine() async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await IssueFilingTests.connectedCore(transport: transport)
+        var session = IssueFilingTests.session
+        session.addFinding(IssueFilingTests.finding(summary: "Ready to file"))
+
+        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: Self.createdIssue421)
+        transport.enqueue(error: URLError(.timedOut))
+
+        let outcome = await core.fileAll(in: session)
+
+        let item = try #require(outcome.session.tray.first)
+        #expect(!item.isPristine)
+        #expect(!item.isEditable)
+    }
+
     // MARK: - The tray
 
     @Test("captures land in the tray as Findings with their screenshots — no filing traffic until file-all")

@@ -452,6 +452,19 @@ final class AppModel {
         return didCapture
     }
 
+    /// Sends the designer back to the Build — v1 targets Simulator.app
+    /// concretely. The editor uses this as the one "return to the Build"
+    /// action, so the shell stays thin and the platform swap remains a
+    /// single core-side decision.
+    @discardableResult
+    func returnToBuild() -> Bool {
+        guard let simulator = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "com.apple.iphonesimulator")
+            .first
+        else { return false }
+        return simulator.activate(options: [.activateAllWindows])
+    }
+
     /// The hotkey follows the same capture path as ⌘S, then only on
     /// success brings Nitpick forward to the session window.
     private func captureFromHotkey() async {
@@ -587,6 +600,28 @@ extension AppModel {
         if selectedItemID == id, selectedItem == nil {
             clearSelection()
         }
+    }
+
+    /// Esc in the Editor, one rule for every focus scope (PRD stories 10,
+    /// 11): an in-flight or selected Annotation is released first;
+    /// otherwise a pristine Finding — the mis-capture case — dies
+    /// instantly. The core's predicate decides pristine.
+    func handleEditorEscape() {
+        if annotationDrag != nil || selectedAnnotationIndex != nil {
+            deselectAnnotation()
+        } else if let item = selectedItem, item.isPristine {
+            discardFinding(id: item.id)
+        }
+    }
+
+    /// Whether Esc would act right now. The shell installs its Esc handler
+    /// only when true — installing one that no-ops would still consume the
+    /// command, and a Finding the designer has invested in must fall
+    /// through to standard field behavior (PRD story 11). Mirrors
+    /// `handleEditorEscape` and `discardFinding`'s guards exactly.
+    var editorEscapeWouldAct: Bool {
+        annotationDrag != nil || selectedAnnotationIndex != nil
+            || (!isBusy && !hasPendingLabelDraft && selectedItem?.isPristine == true)
     }
 
     func addAnnotation(_ shape: Annotation.Shape) {
