@@ -32,6 +32,9 @@ public enum SimulatorError: Error, Equatable, LocalizedError {
     case captureUnreadable(path: String)
     /// `launch` was asked to boot a device whose OS runtime is missing.
     case runtimeUnavailable(deviceName: String, osName: String)
+    /// `captureScreen` was asked for a device that is no longer booted —
+    /// typically the designer closed the simulator mid-session.
+    case deviceNotBooted(deviceName: String)
 
     public var errorDescription: String? {
         switch self {
@@ -41,6 +44,8 @@ public enum SimulatorError: Error, Equatable, LocalizedError {
             return "The capture succeeded but no image could be read at \(path)."
         case .runtimeUnavailable(let deviceName, let osName):
             return "\(deviceName) can't be booted: its \(osName) simulator runtime isn't installed."
+        case .deviceNotBooted(let deviceName):
+            return "\(deviceName) is not booted — the simulator may have been closed."
         }
     }
 }
@@ -146,6 +151,16 @@ extension AppCore {
     /// simulator's own screenshot facility — no Screen Recording permission
     /// (ADR-0001). Returns PNG bytes.
     public func captureScreen(of device: SimulatorDevice) async throws -> Data {
+        // `simctl io screenshot` does not fail on a device that isn't
+        // booted — it waits for one, forever, which would hang the app
+        // when the designer closes the simulator mid-session. Check the
+        // live state first and throw the real story instead. Matched by
+        // udid: `device` carries the state it had at launch time, not now.
+        // (A shutdown racing in after this check could still hang — the
+        // subprocess seam has no timeout; accepted, the window is tiny.)
+        guard try await simulatorDevices().contains(where: { $0.udid == device.udid && $0.isBooted }) else {
+            throw SimulatorError.deviceNotBooted(deviceName: device.name)
+        }
         let capturesDirectory = workspaceDirectory.appendingPathComponent("captures", isDirectory: true)
         try FileManager.default.createDirectory(at: capturesDirectory, withIntermediateDirectories: true)
         let captureURL = capturesDirectory.appendingPathComponent("capture.png")

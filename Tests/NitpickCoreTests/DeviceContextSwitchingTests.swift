@@ -83,6 +83,10 @@ struct DeviceContextSwitchingTests {
         // Reviewing on the iPhone under default settings: the first capture
         // is stamped with that Device Context.
         let iPhonePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
+        runner.enqueue(SubprocessResult(
+            exitCode: 0,
+            standardOutput: Data(Fixtures.deviceListJSON(udid: iPhone.udid, name: iPhone.name, state: "Booted").utf8)
+        ))
         runner.enqueue(SubprocessResult(exitCode: 0)) { _ in try iPhonePNG.write(to: capturePath) }
         session.addFinding(Finding(
             summary: "Toolbar icons misaligned", description: "",
@@ -105,6 +109,10 @@ struct DeviceContextSwitchingTests {
 
         // …and captures again under the new Device Context.
         let iPadPNG = Data([0x89, 0x50, 0x4E, 0x47, 0x02])
+        runner.enqueue(SubprocessResult(
+            exitCode: 0,
+            standardOutput: Data(Fixtures.deviceListJSON(udid: iPad.udid, name: iPad.name, state: "Booted").utf8)
+        ))
         runner.enqueue(SubprocessResult(exitCode: 0)) { _ in try iPadPNG.write(to: capturePath) }
         session.addFinding(Finding(
             summary: "Sidebar overlaps content", description: "",
@@ -112,10 +120,13 @@ struct DeviceContextSwitchingTests {
             deviceContext: DeviceContext(device: iPad, settings: settings)
         ))
 
-        // The exact wire story: capture, two settings changes, the switch's
-        // full relaunch under the session's settings, capture.
+        // The exact wire story: each capture's booted re-check + capture,
+        // two settings changes, the switch's full relaunch under the
+        // session's settings.
         let xcrun = "/usr/bin/xcrun"
+        let listCommand = SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "list", "devices", "--json"])
         #expect(runner.executedCommands == [
+            listCommand,
             SubprocessCommand(
                 executablePath: xcrun,
                 arguments: ["simctl", "io", "AAAA-1111", "screenshot", "--type=png", capturePath.path]
@@ -129,6 +140,7 @@ struct DeviceContextSwitchingTests {
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "BBBB-2222", "appearance", "dark"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "install", "BBBB-2222", build.appBundleURL.path]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "launch", "BBBB-2222", "ch.liip.reviewme"]),
+            listCommand,
             SubprocessCommand(
                 executablePath: xcrun,
                 arguments: ["simctl", "io", "BBBB-2222", "screenshot", "--type=png", capturePath.path]

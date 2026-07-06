@@ -57,6 +57,10 @@ struct SessionTrayScenarioTests {
         let firstPNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01])
         let secondPNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x02])
         for png in [firstPNG, secondPNG] {
+            runner.enqueue(SubprocessResult(
+                exitCode: 0,
+                standardOutput: Data(Fixtures.deviceListJSON(udid: device.udid, name: device.name, state: "Booted").utf8)
+            ))
             runner.enqueue(SubprocessResult(exitCode: 0)) { _ in
                 try png.write(to: workspace.appendingPathComponent("captures/capture.png"))
             }

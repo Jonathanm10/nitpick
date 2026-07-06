@@ -388,25 +388,37 @@ final class AppModel {
         // could stamp a Device Context the screenshot wasn't taken under.
         guard canCapture, let device = reviewDevice else { return }
         await perform {
-            let png = try await core.captureScreen(of: device)
-            // The capture drops straight into the tray as a Finding — no
-            // filing dialog (PRD story 22) — and opens in the editor,
-            // stamped with the Device Context in effect right now.
-            selectedItemID = session?.addFinding(Finding(
-                summary: "",
-                description: "",
-                screenshotPNG: png,
-                deviceContext: DeviceContext(device: device, settings: deviceSettings)
-            ))
-            persistOpenSession()
-            captureID = UUID()
-            selectedAnnotationIndex = nil
-            annotationDrag = nil
-            // The surface resets its live draft off captureID, but if it
-            // was unmounted first its onChange never fires — the model
-            // owns the gate, so the model resets it.
-            hasPendingLabelDraft = false
-            refreshAnnotatedImage()
+            do {
+                let png = try await core.captureScreen(of: device)
+                // The capture drops straight into the tray as a Finding — no
+                // filing dialog (PRD story 22) — and opens in the editor,
+                // stamped with the Device Context in effect right now.
+                selectedItemID = session?.addFinding(Finding(
+                    summary: "",
+                    description: "",
+                    screenshotPNG: png,
+                    deviceContext: DeviceContext(device: device, settings: deviceSettings)
+                ))
+                persistOpenSession()
+                captureID = UUID()
+                selectedAnnotationIndex = nil
+                annotationDrag = nil
+                // The surface resets its live draft off captureID, but if it
+                // was unmounted first its onChange never fires — the model
+                // owns the gate, so the model resets it.
+                hasPendingLabelDraft = false
+                refreshAnnotatedImage()
+            } catch {
+                // A capture refused because the device is gone means the
+                // designer closed the simulator under the session: the
+                // review pauses into the restored-session state — session
+                // and tray intact, Resume review relaunches the Build.
+                if case SimulatorError.deviceNotBooted = error {
+                    isReviewing = false
+                    reviewDevice = nil
+                }
+                throw error
+            }
         }
     }
 

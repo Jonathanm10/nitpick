@@ -51,8 +51,12 @@ struct ComposeAndFileScenarioTests {
             startedAt: Date(timeIntervalSince1970: 1_783_156_532)  // 2026-07-04T09:15:32Z
         )
 
-        // A capture…
+        // A capture — preceded by its booted re-check…
         let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x42])
+        runner.enqueue(SubprocessResult(
+            exitCode: 0,
+            standardOutput: Data(Fixtures.deviceListJSON(udid: device.udid, name: device.name, state: "Booted").utf8)
+        ))
         runner.enqueue(SubprocessResult(exitCode: 0)) { _ in
             try pngBytes.write(to: workspace.appendingPathComponent("captures/capture.png"))
         }
@@ -78,9 +82,10 @@ struct ComposeAndFileScenarioTests {
         ))
 
         // The whole subprocess side ran: list, boot, bootstatus, open,
-        // the two Device Settings applications, install, launch, capture
-        // (pinned command-exactly by the walking skeleton scenario).
-        #expect(runner.executedCommands.count == 9)
+        // the two Device Settings applications, install, launch, the
+        // capture's booted re-check, capture (pinned command-exactly by
+        // the walking skeleton scenario).
+        #expect(runner.executedCommands.count == 10)
 
         // The exact filing requests, after the two connect requests.
         let base = "https://youtrack.example.com"

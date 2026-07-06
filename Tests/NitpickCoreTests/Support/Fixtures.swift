@@ -14,6 +14,24 @@ enum Fixtures {
         return URL(fileURLWithPath: canonical, isDirectory: true)
     }
 
+    /// `simctl list devices --json` output holding a single device in the
+    /// given state — what the capture preflight consumes.
+    static func deviceListJSON(udid: String, name: String, state: String) -> String {
+        """
+        {
+          "devices" : {
+            "com.apple.CoreSimulator.SimRuntime.iOS-26-4" : [
+              {
+                "udid" : "\(udid)",
+                "name" : "\(name)",
+                "state" : "\(state)",
+                "isAvailable" : true
+              }
+            ]
+          }
+        }
+        """
+    }
 
     /// The Info.plist of a CI-produced simulator Build with the given identity.
     static func simulatorInfoPlist(

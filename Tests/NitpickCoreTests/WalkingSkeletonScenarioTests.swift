@@ -38,9 +38,14 @@ struct WalkingSkeletonScenarioTests {
         for _ in 0..<6 { runner.enqueue(SubprocessResult(exitCode: 0)) }
         try await core.launch(build, on: device)
 
-        // …and captures the screen.
+        // …and captures the screen — capture first re-checks the device
+        // is still booted (a closed simulator must refuse, not hang).
         let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF])
         let capturePath = workspace.appendingPathComponent("captures/capture.png").path
+        runner.enqueue(SubprocessResult(
+            exitCode: 0,
+            standardOutput: Data(Fixtures.deviceListJSON(udid: "AAAA-1111", name: "iPhone 17 Pro", state: "Booted").utf8)
+        ))
         runner.enqueue(SubprocessResult(exitCode: 0)) { _ in
             try pngBytes.write(to: URL(fileURLWithPath: capturePath))
         }
@@ -62,6 +67,7 @@ struct WalkingSkeletonScenarioTests {
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "appearance", "light"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "install", "AAAA-1111", appPath]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "launch", "AAAA-1111", "ch.liip.reviewme"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "list", "devices", "--json"]),
             SubprocessCommand(
                 executablePath: xcrun,
                 arguments: ["simctl", "io", "AAAA-1111", "screenshot", "--type=png", capturePath]
