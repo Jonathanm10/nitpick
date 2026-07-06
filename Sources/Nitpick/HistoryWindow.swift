@@ -3,6 +3,8 @@ import SwiftUI
 
 struct HistoryWindow: View {
     @Bindable var model: AppModel
+    @State private var revealed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -11,8 +13,13 @@ struct HistoryWindow: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(model.history) { entry in
-                            historyRow(entry)
+                        ForEach(Array(model.history.enumerated()), id: \.element.id) { index, entry in
+                            let delay = staggerDelay(for: index)
+                            if revealed {
+                                historyRow(entry, staggerDelay: delay)
+                                    .transition(historyEntranceTransition)
+                                    .animation(MotionTokens.enter.delay(delay), value: revealed)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -21,6 +28,7 @@ struct HistoryWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear(perform: replayEntrance)
     }
 
     private var emptyState: some View {
@@ -35,7 +43,7 @@ struct HistoryWindow: View {
     /// The read-only row matches the old home strip exactly: the filed
     /// session identity, then each filed Finding with its issue link and
     /// summary. No editing, no YouTrack fetches.
-    private func historyRow(_ entry: HistoryEntry) -> some View {
+    private func historyRow(_ entry: HistoryEntry, staggerDelay: Double) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 Text(entry.project.name)
@@ -57,6 +65,29 @@ struct HistoryWindow: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+    // PRD story 24 wants the History window to replay its entrance when the
+    // window itself reappears, not when a ScrollView row comes into view.
+    // This window-owned reveal flag is reset on appearance; scrolling never
+    // touches it.
+    private var historyEntranceTransition: AnyTransition {
+        MotionTokens.reducedMotionAware(
+            .move(edge: .top).combined(with: .opacity),
+            reduceMotion: reduceMotion
+        )
+    }
+
+    /// The stagger is computed per row so the list feels light without letting
+    /// long histories crawl forever.
+    private func staggerDelay(for index: Int) -> Double {
+        min(Double(index) * 0.04, 0.4)
+    }
+
+    private func replayEntrance() {
+        revealed = false
+        Task { @MainActor in
+            revealed = true
         }
     }
 }
