@@ -76,6 +76,7 @@ struct TrayView: View {
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.green)
                     Link(filed.idReadable, destination: filed.url)
+                        .motionPressFeedback()
                 }
                 .font(.callout)
                 .transition(
