@@ -9,6 +9,7 @@ import Observation
 @Observable
 final class AppModel {
     private let core: AppCore
+    private let captureHotkey: CaptureHotkey
 
     private(set) var build: Build?
     private(set) var devices: [SimulatorDevice] = []
@@ -78,7 +79,12 @@ final class AppModel {
 
     /// The active Review Session: Build + project pinned at Start review,
     /// and the session tray its captures accumulate in.
-    private(set) var session: ReviewSession?
+    /// The capture hotkey follows this one property so every open/close
+    /// edge stays in a single choke point; the stored value mutates often,
+    /// but registration only cares whether a session exists.
+    private(set) var session: ReviewSession? {
+        didSet { captureHotkey.setActive(session != nil) }
+    }
     /// The local history log: filed sessions with their issue links,
     /// newest first. Read-only, read from disk — never from YouTrack.
     private(set) var history: [HistoryEntry] = []
@@ -131,8 +137,25 @@ final class AppModel {
         return trimmed.isEmpty ? nil : URL(string: trimmed)
     }
 
-    init(core: AppCore = AppCore(environment: .live(), workspaceDirectory: AppModel.defaultWorkspaceDirectory())) {
+    init(
+        core: AppCore = AppCore(environment: .live(), workspaceDirectory: AppModel.defaultWorkspaceDirectory()),
+        captureHotkey: CaptureHotkey = CaptureHotkey()
+    ) {
         self.core = core
+        self.captureHotkey = captureHotkey
+        captureHotkey.onPress = { [weak self] in
+            Task { [weak self] in
+                guard let self else { return }
+                await self.captureFromHotkey()
+            }
+        }
+    }
+    
+    deinit {
+        let hotkey = captureHotkey
+        Task { @MainActor in
+            hotkey.setActive(false)
+        }
     }
 
     /// `~/Library/Application Support/Nitpick` — extracted Builds and captures.
@@ -380,13 +403,18 @@ final class AppModel {
         }
     }
 
-    func captureScreen() async {
+    /// Runs the existing capture path and reports whether it actually
+    /// landed. The hotkey uses the signal to decide whether Nitpick should
+    /// steal focus; a refused capture must leave the designer where they are.
+    @discardableResult
+    func captureScreen() async -> Bool {
         // A pending label draft pins the editor: retargeting before the
         // surface resolves it would drop the visible note or commit it to
         // the wrong Finding — same invariant as the filing gate. Busy means
         // a switch or settings change may be in flight — capturing then
         // could stamp a Device Context the screenshot wasn't taken under.
-        guard canCapture, let device = reviewDevice else { return }
+        guard canCapture, let device = reviewDevice else { return false }
+        var didCapture = false
         await perform {
             do {
                 let png = try await core.captureScreen(of: device)
@@ -408,6 +436,7 @@ final class AppModel {
                 // owns the gate, so the model resets it.
                 hasPendingLabelDraft = false
                 refreshAnnotatedImage()
+                didCapture = true
             } catch {
                 // A capture refused because the device is gone means the
                 // designer closed the simulator under the session: the
@@ -420,6 +449,15 @@ final class AppModel {
                 throw error
             }
         }
+        return didCapture
+    }
+
+    /// The hotkey follows the same capture path as ⌘S, then only on
+    /// success brings Nitpick forward to the session window.
+    private func captureFromHotkey() async {
+        guard await captureScreen() else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.mainWindow?.makeKeyAndOrderFront(nil)
     }
 
     /// Files every remaining Finding in the tray — the moment their
