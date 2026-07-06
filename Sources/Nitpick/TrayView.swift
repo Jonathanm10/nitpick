@@ -10,13 +10,23 @@ struct TrayView: View {
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private struct TrayMotionKey: Equatable {
+        var id: UUID
+        var filedIssueID: String?
+    }
+
     var body: some View {
         List {
-            ForEach(tray) { item in
+            // Capture order is the core's truth (filing walks the tray in
+            // order, ADR-0004); the DISPLAY is newest-first so a fresh
+            // capture's row slides into the top of the Tray, where the
+            // designer's eye already is (PRD story 6).
+            ForEach(tray.reversed()) { item in
                 trayRow(item)
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
+                    .transition(trayRowTransition)
                     // The swipe is offered exactly where the discard rules
                     // allow the act (PRD story 18): a row filing has touched,
                     // a busy model, or a pending label draft gets no gesture
@@ -35,6 +45,21 @@ struct TrayView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .frame(maxHeight: .infinity, alignment: .topLeading)
+        .animation(MotionTokens.enter, value: trayAnimationKey)
+    }
+
+    // PRD story 19: the tray's view-side key follows row identity and the
+    // filed/not-filed boundary, so inserts, removals, and filing completion
+    // re-settle without teaching AppModel about motion.
+    private var trayAnimationKey: [TrayMotionKey] {
+        tray.map { TrayMotionKey(id: $0.id, filedIssueID: $0.filedIssue?.idReadable) }
+    }
+
+    private var trayRowTransition: AnyTransition {
+        MotionTokens.reducedMotionAware(
+            .move(edge: .top).combined(with: .opacity),
+            reduceMotion: reduceMotion
+        )
     }
 
     private func trayRow(_ item: TrayItem) -> some View {

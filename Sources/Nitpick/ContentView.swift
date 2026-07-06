@@ -14,6 +14,12 @@ struct ContentView: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Fresh captures alone earn the Editor's arrival beat. Selection churn
+    /// still changes `captureID`, so tray growth is the honest discriminator.
+    @State private var editorArrivalCaptureID = UUID()
+    @State private var observedTrayCount = 0
+    @State private var observedSessionStartedAt: Date?
+
     var body: some View {
         Group {
             if let session = model.displayedSession {
@@ -298,6 +304,9 @@ struct ContentView: View {
                 .frame(width: 320, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear { syncEditorArrivalState(for: session) }
+        .onChange(of: session.startedAt) { syncEditorArrivalState(for: session) }
+        .onChange(of: session.tray.count) { registerEditorArrivalIfNeeded(for: session) }
     }
 
     /// The full-size pane: the selected Finding under edit, or — once
@@ -307,24 +316,64 @@ struct ContentView: View {
     @ViewBuilder
     private var capturePane: some View {
         if let item = model.selectedItem {
-            if item.isEditable {
-                AnnotationSurface(model: model)
-            } else if let image = model.capturedImage {
-                // Frozen: the issue already exists — show the capture, no edits.
-                VStack(alignment: .leading, spacing: 8) {
-                    AnnotationToolbar(model: model)
-                        .hidden()
-                        .disabled(true)
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                }
-            }
+            capturePaneContent(for: item)
+                .id(editorArrivalCaptureID)
+                .transition(captureArrivalTransition)
         } else {
             capturePlaceholder
+        }
+    }
+
+    @ViewBuilder
+    private func capturePaneContent(for item: TrayItem) -> some View {
+        if item.isEditable {
+            AnnotationSurface(model: model)
+        } else if let image = model.capturedImage {
+            // Frozen: the issue already exists — show the capture, no edits.
+            VStack(alignment: .leading, spacing: 8) {
+                AnnotationToolbar(model: model)
+                    .hidden()
+                    .disabled(true)
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+
+    // PRD stories 5, 6, and 19: a fresh capture alone earns the arrival beat.
+    // The tray count is the discriminator because `captureID` also changes when
+    // a row is merely selected, but only a new Finding grows the tray.
+    private var captureArrivalTransition: AnyTransition {
+        MotionTokens.reducedMotionAware(
+            .offset(x: 0, y: -10)
+                .combined(with: .scale(scale: 0.985, anchor: .topLeading))
+                .combined(with: .opacity),
+            reduceMotion: reduceMotion
+        )
+    }
+
+    private func syncEditorArrivalState(for session: ReviewSession) {
+        observedSessionStartedAt = session.startedAt
+        observedTrayCount = session.tray.count
+        editorArrivalCaptureID = model.captureID
+    }
+
+    private func registerEditorArrivalIfNeeded(for session: ReviewSession) {
+        if observedSessionStartedAt != session.startedAt {
+            syncEditorArrivalState(for: session)
+            return
+        }
+        let trayCount = session.tray.count
+        defer { observedTrayCount = trayCount }
+        guard trayCount > observedTrayCount else { return }
+        // With successive captures, keep retargeting the same arrival lane
+        // instead of queueing transitions; selection changes never reach here.
+        withAnimation(MotionTokens.arrive) {
+            editorArrivalCaptureID = model.captureID
         }
     }
 
