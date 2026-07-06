@@ -60,11 +60,18 @@ final class AppModel {
     /// the selection it belongs to, ephemeral workspace state.
     private(set) var annotationDrag: AnnotationDrag?
     var annotationColor: AnnotationColor = .default
-    /// True while a placed text label awaits its text — set by the
-    /// annotation surface; filing is gated on it so a visible draft can
-    /// never be silently dropped from the filed image.
-    var hasPendingLabelDraft = false
+    /// True only while the shell is inside file-all's core call — a
+    /// dedicated run bit so the button phase can distinguish filing from
+    /// unrelated busy work like device switches.
+    private(set) var filingRunActive = false
+    /// Remembers that the most recent file-all run came back with a
+    /// failure, so the shell can say "File N remaining" until the next run
+    /// starts and clears the comeback label.
+    private(set) var filingStoppedByFailure = false
     private(set) var isBusy = false
+    /// True while a text label is waiting for commit; every editor-retarget
+    /// path keeps it intact so a visible draft never lands on the wrong row.
+    var hasPendingLabelDraft = false
     var errorMessage: String?
     /// Menu commands live outside ContentView, so the End Review confirmation
     /// flag sits on the model where both the window and the menu can drive it.
@@ -85,6 +92,11 @@ final class AppModel {
     private(set) var session: ReviewSession? {
         didSet { captureHotkey.setActive(session != nil) }
     }
+    /// The brief payoff snapshot shown after a successful file-all run:
+    /// the tray and filed issues stay on screen while the live session has
+    /// already ended and the hotkey has been unregistered.
+    private(set) var filingPayoff: ReviewSession?
+    var displayedSession: ReviewSession? { session ?? filingPayoff }
     /// The local history log: filed sessions with their issue links,
     /// newest first. Read-only, read from disk — never from YouTrack.
     private(set) var history: [HistoryEntry] = []
@@ -175,6 +187,7 @@ final class AppModel {
     var canStartReview: Bool {
         build != nil
             && !isReviewing
+            && filingPayoff == nil
             && selectedDevice?.isRuntimeAvailable == true
             && (session != nil || selectedProject != nil)
             && !isBusy
@@ -236,12 +249,12 @@ final class AppModel {
         await perform {
             guard let restored = try core.loadOpenSession() else { return }
             // Filing must never pair the session's pinned project with a
-            // connection that lacks it (an entity-id collision across
-            // instances could file into a stranger's project). The session
-            // stays on disk; reconnecting to the right instance revives it
-            // on the next launch. Not connected yet is fine — `connected`
-            // applies the same check later.
+            // connection that lacks it. A surviving payoff snapshot must be
+            // cleared before the restored session becomes live again, so the
+            // shell shows only one truth at a time.
             if let youTrack, !youTrack.projects.contains(restored.project) { return }
+            filingPayoff = nil
+            filingStoppedByFailure = false
             session = restored
             build = restored.build
             selectedProjectID = restored.project.id
@@ -339,6 +352,8 @@ final class AppModel {
             reviewDevice = device
             isReviewing = true
             if session == nil {
+                filingPayoff = nil
+                filingStoppedByFailure = false
                 session = ReviewSession(build: build, project: project)
                 clearSelection()
                 persistOpenSession()
@@ -484,23 +499,50 @@ final class AppModel {
     func fileAllFindings() async {
         guard canFileAll, let session else { return }
         await perform {
-            let outcome = await core.fileAll(in: session)
-            if outcome.failure == nil {
-                self.session = nil
-                isReviewing = false
-                reviewDevice = nil
-                clearSelection()
-            } else {
+            filingRunActive = true
+            filingStoppedByFailure = false
+            let outcome = await core.fileAll(in: session, onProgress: { self.session = $0 })
+            filingRunActive = false
+            if let failure = outcome.failure {
+                filingStoppedByFailure = true
                 self.session = outcome.session
+                refreshHistory()
+                throw failure
             }
+
+            // Presentation beat (PRD stories 20–23): the file-all run is
+            // already finished, so the tray can sit in its truthful,
+            // fully-acknowledged allFiled state for one last breath before
+            // the shell returns home. The payoff is a snapshot only — the
+            // live session is already over — and it clears itself on a
+            // short main-actor timer so the beat never becomes state.
+            filingPayoff = outcome.session
+            self.session = nil
+            isReviewing = false
+            reviewDevice = nil
+            clearSelection()
             refreshHistory()
-            if let failure = outcome.failure { throw failure }
+
+            let payoff = outcome.session
+            // The beat lives inside the still-busy perform block so every
+            // edit path stays frozen while the designer reads the honest
+            // payoff. Nothing new happens here — the tray has already
+            // finished filing — this just gives the eye one breath to
+            // register the allFiled state before the window clears it.
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            if filingPayoff == payoff {
+                filingPayoff = nil
+            }
         }
     }
     private func endSession(clearingPersisted: Bool) throws {
         session = nil
         isReviewing = false
         reviewDevice = nil
+        // The comeback label belongs to the run that failed — a session
+        // ending takes it along, or the next session would open on a
+        // stale "File N remaining".
+        filingStoppedByFailure = false
         if clearingPersisted {
             try core.clearOpenSession()
         }
@@ -521,6 +563,16 @@ final class AppModel {
     /// guard's confirmation names.
     var unfiledFindingCount: Int {
         session?.unfiledFindingCount ?? 0
+    }
+    /// The session the shell currently renders, including the brief
+    /// payoff snapshot after a successful file-all run. Done still means
+    /// the tray has no unfiled Findings — the snapshot merely keeps that
+    /// honest fact visible for one beat before the window returns home.
+    var filingPhase: FilingPhase? {
+        displayedSession?.filingPhase(
+            isRunning: filingRunActive,
+            stoppedByFailure: filingStoppedByFailure
+        )
     }
 
     /// Sessions persist as they are created (issue 07): every mutation
@@ -581,7 +633,7 @@ extension AppModel {
     /// pending: the surface still owns the typed text, and retargeting
     /// first would land its commit on the wrong Finding.
     func selectItem(_ id: TrayItem.ID) {
-        guard selectedItemID != id, !hasPendingLabelDraft else { return }
+        guard session != nil, selectedItemID != id, !hasPendingLabelDraft else { return }
         selectedItemID = id
         captureID = UUID()
         selectedAnnotationIndex = nil

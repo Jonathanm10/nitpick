@@ -6,11 +6,13 @@ import SwiftUI
 /// also stretch to consume the control column's spare height; otherwise it only
 /// sizes to its contents and never becomes a proper scroll region.
 struct TrayView: View {
+    let tray: [TrayItem]
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         List {
-            ForEach(model.session?.tray ?? []) { item in
+            ForEach(tray) { item in
                 trayRow(item)
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     .listRowSeparator(.hidden)
@@ -44,7 +46,19 @@ struct TrayView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             if let filed = item.filedIssue {
-                Link(filed.idReadable, destination: filed.url)
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.green)
+                    Link(filed.idReadable, destination: filed.url)
+                }
+                .font(.callout)
+                .transition(
+                    MotionTokens.reducedMotionAware(
+                        .scale.combined(with: .opacity),
+                        reduceMotion: reduceMotion
+                    )
+                )
             } else if item.isEditable {
                 Button("Discard") { model.discardFinding(id: item.id) }
                     .buttonStyle(.borderless)
@@ -52,13 +66,26 @@ struct TrayView: View {
                     .motionPressFeedback()
             } else {
                 // Mid-ladder: its issue exists but is incomplete — a File all
-                // retry finishes it without re-creating anything.
-                Text(model.isBusy ? "Filing…" : "Filing interrupted — retry")
-                    .foregroundStyle(.orange)
+                // retry finishes it without re-creating anything. After a
+                // failed run this frozen row is where the failure lives, so
+                // it carries the error itself (PRD story 22).
+                if model.isBusy {
+                    Text("Filing…")
+                        .foregroundStyle(.orange)
+                } else if model.filingStoppedByFailure, let message = model.errorMessage {
+                    Text(message)
+                        .foregroundStyle(.red)
+                        .lineLimit(1)
+                        .help(message)
+                } else {
+                    Text("Filing interrupted — retry")
+                        .foregroundStyle(.orange)
+                }
             }
         }
         .padding(.vertical, 3)
         .padding(.horizontal, 6)
+        .animation(MotionTokens.pop, value: item.filedIssue)
         .contentShape(Rectangle())
         .onTapGesture { model.selectItem(item.id) }
         .background(

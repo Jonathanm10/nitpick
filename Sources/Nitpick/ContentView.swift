@@ -12,12 +12,13 @@ struct ContentView: View {
     /// Opens the Settings window — the connection's home (issue 01);
     /// the hint row is the only way home points at it.
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if let session = model.session {
+            if let session = model.displayedSession {
                 NavigationStack {
-                    sessionScreen
+                    sessionScreen(session)
                 }
                 .navigationTitle(session.build.appBundleURL.deletingPathExtension().lastPathComponent)
                 .navigationSubtitle("\(session.build.identity.version) (\(session.build.identity.buildNumber)) · \(session.project.name)")
@@ -49,6 +50,7 @@ struct ContentView: View {
         // session's closed→open edge — nothing mid-loop reopens a session.
         .background(SessionWindowGrowth(isSessionOpen: model.session != nil))
         .dropDestination(for: URL.self) { urls, _ in
+            guard model.filingPayoff == nil else { return false }
             guard let url = urls.first else { return false }
             // Ingesting ends the open session (one Build per Review
             // Session) — and with it every unfiled Finding. A session
@@ -228,7 +230,7 @@ struct ContentView: View {
             }
     }
 
-    private var sessionScreen: some View {
+    private func sessionScreen(_ session: ReviewSession) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             if let guidance = model.setupGuidance {
                 setupGuidanceSection(guidance)
@@ -237,8 +239,11 @@ struct ContentView: View {
                     DeviceContextChip(model: model)
                     // A restored session's one next step must stay in
                     // sight, exactly as the old device row kept it — a
-                    // primary action never hides behind the popover.
-                    if !model.isReviewing {
+                    // primary action never hides behind the popover. The
+                    // payoff snapshot is the one exception: the session is
+                    // already over, so the resume/start affordance would
+                    // race the beat.
+                    if !model.isReviewing && model.filingPayoff == nil {
                         Button(model.startReviewTitle) {
                             Task { await model.startReview() }
                         }
@@ -249,7 +254,7 @@ struct ContentView: View {
                     }
                 }
             }
-            sessionSplit
+            sessionSplit(session)
             if let message = model.errorMessage {
                 errorLine(message)
             }
@@ -285,11 +290,11 @@ struct ContentView: View {
     /// fixed-width column on the right. Shown whenever a session exists —
     /// including one restored after a relaunch, before its Build is
     /// launched again.
-    private var sessionSplit: some View {
+    private func sessionSplit(_ session: ReviewSession) -> some View {
         HStack(alignment: .top, spacing: 16) {
             capturePane
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            controlColumn
+            controlColumn(session)
                 .frame(width: 320, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -323,6 +328,12 @@ struct ContentView: View {
         }
     }
 
+    /// A portrait phone outline (9:19.5 — every current iPhone). The pane
+    /// is device-aspect, not device-exact: the selected simulator device
+    /// carries no point-size metadata, and the PRD (Q5) rejects a lookup
+    /// table for marginal gain.
+    private static let placeholderDeviceAspect = CGSize(width: 9, height: 19.5)
+
     /// The empty pane (issue 04): between Start review and the first
     /// capture — and whenever a discard clears the selection — a subdued
     /// device-aspect outline holds the capture's slot with the next step
@@ -347,16 +358,10 @@ struct ContentView: View {
         }
     }
 
-    /// A portrait phone outline (9:19.5 — every current iPhone). The pane
-    /// is device-aspect, not device-exact: the selected simulator device
-    /// carries no point-size metadata, and the PRD (Q5) rejects a lookup
-    /// table for marginal gain.
-    private static let placeholderDeviceAspect = CGSize(width: 9, height: 19.5)
-
     /// The control column, ordered by use: Capture (once the Build is
     /// running), the session-wide Design Reference, the tray, the compose
     /// fields for the selected Finding, and End Review at the foot.
-    private var controlColumn: some View {
+    private func controlColumn(_ session: ReviewSession) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             if model.isReviewing {
                 Button("Capture") {
@@ -368,12 +373,16 @@ struct ContentView: View {
 
             // Session-level Design Reference: one Figma URL for every
             // Finding of this session (a per-Finding override lives in the
-            // compose fields). A link, never a rendering (ADR-0003).
-            TextField("Design Reference (Figma URL, all Findings)", text: $model.sessionDesignReferenceField)
-                .disabled(model.isBusy)
+            // compose fields). A link, never a rendering (ADR-0003). The
+            // payoff snapshot is read-only, so this chrome disappears once
+            // the live session has ended.
+            if model.session != nil {
+                TextField("Design Reference (Figma URL, all Findings)", text: $model.sessionDesignReferenceField)
+                    .disabled(model.isBusy)
+            }
 
-            if model.session?.tray.isEmpty == false {
-                traySection
+            if session.tray.isEmpty == false {
+                traySection(session.tray)
             }
 
             if model.selectedItem?.isEditable == true {
@@ -382,13 +391,15 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
 
-            Button("End Review") {
-                model.requestEndReview()
+            if model.session != nil {
+                Button("End Review") {
+                    model.requestEndReview()
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .disabled(!model.canEndReview)
+                .motionPressFeedback()
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .disabled(!model.canEndReview)
-            .motionPressFeedback()
         }
         // The column gets the session's full height so the tray can claim the
         // spare space and scroll inside a fixed-width shell instead of growing
@@ -400,13 +411,68 @@ struct ContentView: View {
     /// native physics and full-swipe behavior, while File all stays as the
     /// explicit end-of-section action beneath them.
     @ViewBuilder
-    private var traySection: some View {
-        TrayView(model: model)
-        Button("File all (\(model.unfiledFindingCount))") {
-            Task { await model.fileAllFindings() }
+    private func traySection(_ tray: [TrayItem]) -> some View {
+        TrayView(tray: tray, model: model)
+        if let phase = model.filingPhase {
+            Button {
+                Task { await model.fileAllFindings() }
+            } label: {
+                filingButtonLabel(phase)
+            }
+            .disabled(!model.canFileAll)
+            .tint(isAllFiled(phase) ? .green : .accentColor)
+            .animation(reduceMotion ? nil : MotionTokens.enter, value: phase)
+            .motionPressFeedback()
         }
-        .disabled(!model.canFileAll)
-        .motionPressFeedback()
+    }
+    private func filingButtonLabel(_ phase: FilingPhase) -> some View {
+        HStack(spacing: 6) {
+            filingCheckmark(isAllFiled: isAllFiled(phase))
+            Text(filingButtonText(for: phase))
+                .contentTransition(.opacity)
+        }
+        .font(.callout)
+        .foregroundStyle(isAllFiled(phase) ? .green : .primary)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(height: 30)
+    }
+
+    private func filingButtonText(for phase: FilingPhase) -> String {
+        switch phase {
+        case .idle(let unfiled):
+            return "File all (\(unfiled))"
+        case .filing(let completed, let of):
+            return "Filing \(completed) of \(of)…"
+        case .remaining(let unfiled):
+            return "File \(unfiled) remaining"
+        case .allFiled(let count):
+            return "Filed \(count)"
+        }
+    }
+
+    private func isAllFiled(_ phase: FilingPhase) -> Bool {
+        if case .allFiled = phase { return true }
+        return false
+    }
+
+    @ViewBuilder
+    private func filingCheckmark(isAllFiled: Bool) -> some View {
+        ZStack {
+            if isAllFiled {
+                Image(systemName: "checkmark")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.green)
+                    .transition(
+                        MotionTokens.reducedMotionAware(
+                            .scale.combined(with: .opacity),
+                            reduceMotion: reduceMotion
+                        )
+                    )
+            }
+        }
+        .frame(width: isAllFiled ? 14 : 0)
+        .animation(MotionTokens.pop, value: isAllFiled)
     }
 
     @ViewBuilder
