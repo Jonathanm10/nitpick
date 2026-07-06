@@ -32,11 +32,11 @@ struct ContentView: View {
         }
         .padding(20)
         .frame(minWidth: 520, minHeight: 640)
-        // Esc routes through the model's one editor-escape rule — but the
-        // handler is installed only when the rule would act: an installed
-        // no-op would still consume the command, and a Finding the
-        // designer has invested in must keep standard field behavior.
-        .onExitCommand(perform: model.editorEscapeWouldAct ? { model.handleEditorEscape() } : nil)
+        // Esc at the editor scope claims the key only for the pristine
+        // mis-capture discard — an installed no-op would still consume the
+        // command, and a Finding the designer has invested in (or a mere
+        // Annotation selection) must keep standard field behavior here.
+        .onExitCommand(perform: model.editorEscapeWouldDiscard ? { model.handleEditorEscape() } : nil)
         // Command-Return is the one keystroke back to the Build; a hidden
         // default-action button keeps the shortcut live no matter which
         // editor field is focused.

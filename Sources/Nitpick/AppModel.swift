@@ -614,14 +614,21 @@ extension AppModel {
         }
     }
 
-    /// Whether Esc would act right now. The shell installs its Esc handler
-    /// only when true — installing one that no-ops would still consume the
-    /// command, and a Finding the designer has invested in must fall
-    /// through to standard field behavior (PRD story 11). Mirrors
-    /// `handleEditorEscape` and `discardFinding`'s guards exactly.
+    /// Whether Esc would act from the annotation surface's own focus
+    /// scope: release an in-flight or selected Annotation first, else the
+    /// pristine discard. The shell installs its Esc handler only when
+    /// true — an installed no-op would still consume the command.
     var editorEscapeWouldAct: Bool {
-        annotationDrag != nil || selectedAnnotationIndex != nil
-            || (!isBusy && !hasPendingLabelDraft && selectedItem?.isPristine == true)
+        annotationDrag != nil || selectedAnnotationIndex != nil || editorEscapeWouldDiscard
+    }
+
+    /// Whether Esc would act from the editor scope at large, where a text
+    /// field may hold focus: only the pristine mis-capture discard.
+    /// Releasing an Annotation selection belongs to the surface's focus
+    /// scope — Esc in Summary or Description must keep standard field
+    /// behavior (PRD story 11). Mirrors `discardFinding`'s guards.
+    var editorEscapeWouldDiscard: Bool {
+        !isBusy && !hasPendingLabelDraft && selectedItem?.isPristine == true
     }
 
     func addAnnotation(_ shape: Annotation.Shape) {
