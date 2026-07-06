@@ -14,18 +14,13 @@ struct ContentView: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        Group {
             if let session = model.session {
-                sessionHeader(session)
-                if let guidance = model.setupGuidance {
-                    setupGuidanceSection(guidance)
-                } else {
-                    deviceRow
+                NavigationStack {
+                    sessionScreen
                 }
-                sessionSplit
-                if let message = model.errorMessage {
-                    errorLine(message)
-                }
+                .navigationTitle(session.build.appBundleURL.deletingPathExtension().lastPathComponent)
+                .navigationSubtitle("\(session.build.identity.version) (\(session.build.identity.buildNumber)) · \(session.project.name)")
             } else {
                 heroHome
             }
@@ -152,10 +147,7 @@ struct ContentView: View {
         if let guidance = model.setupGuidance {
             setupGuidanceSection(guidance)
         } else {
-            Picker("Device", selection: deviceSelection) {
-                devicePickerContent
-            }
-            .disabled(model.isBusy)
+            DeviceContextPickerControls(model: model)
         }
         projectSlot
         Button(model.startReviewTitle) {
@@ -236,78 +228,31 @@ struct ContentView: View {
             }
     }
 
-    /// The collapsed setup chrome (issue 02): while a session is open, one
-    /// line names what is under review and where its Findings will file —
-    /// app, version, build number, project. Nothing interactive is lost:
-    /// the project is pinned at Start review and the picker is disabled
-    /// mid-session anyway. The full block and drop zone return with the
-    /// next session-less state.
-    private func sessionHeader(_ session: ReviewSession) -> some View {
-        HStack(spacing: 6) {
-            Text(session.build.appBundleURL.deletingPathExtension().lastPathComponent)
-                .font(.headline)
-            Text("\(session.build.identity.version) (\(session.build.identity.buildNumber)) · \(session.project.name)")
-                .foregroundStyle(.secondary)
-        }
-        .lineLimit(1)
-    }
-
-    /// The open session's Device Context row: the device picker switches
-    /// the running Build to another device, and the Dynamic Type and
-    /// appearance controls set what the next capture is stamped with. A
-    /// restored session shows Resume review here until its Build runs.
-    private var deviceRow: some View {
-        HStack(spacing: 12) {
-            Picker("Device", selection: deviceSelection) {
-                devicePickerContent
-            }
-            .labelsHidden()
-            .disabled(model.isBusy)
-
-            if model.isReviewing {
-                Picker("Dynamic Type", selection: dynamicTypeSelection) {
-                    ForEach(DeviceSettings.DynamicTypeSize.allCases, id: \.self) { size in
-                        Text(size.displayName).tag(size)
+    private var sessionScreen: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let guidance = model.setupGuidance {
+                setupGuidanceSection(guidance)
+            } else {
+                HStack(spacing: 12) {
+                    DeviceContextChip(model: model)
+                    // A restored session's one next step must stay in
+                    // sight, exactly as the old device row kept it — a
+                    // primary action never hides behind the popover.
+                    if !model.isReviewing {
+                        Button(model.startReviewTitle) {
+                            Task { await model.startReview() }
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!model.canStartReview)
+                        .help("Reviewing needs a device and a YouTrack project — the session files into it.")
+                        .motionPressFeedback()
                     }
                 }
-                .fixedSize()
-                .disabled(model.isBusy)
-                .help("The simulator's Dynamic Type size — stamped onto every capture.")
-
-                Picker("Appearance", selection: appearanceSelection) {
-                    Text("Light").tag(DeviceSettings.Appearance.light)
-                    Text("Dark").tag(DeviceSettings.Appearance.dark)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .disabled(model.isBusy)
-                .help("The simulator's appearance — stamped onto every capture.")
-            } else {
-                // A restored session resumes with its pinned project;
-                // a fresh start needs the picker's choice.
-                Button(model.startReviewTitle) {
-                    Task { await model.startReview() }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!model.canStartReview)
-                .help("Reviewing needs a device and a YouTrack project — the session files into it.")
-                .motionPressFeedback()
             }
-        }
-    }
-
-    /// Every pickable simulator device; a device whose runtime is missing
-    /// is flagged at pick time — visible but not selectable (issue 10).
-    private var devicePickerContent: some View {
-        ForEach(model.devices) { device in
-            Text(
-                device.isRuntimeAvailable
-                    ? "\(device.name) — \(device.osName)"
-                    : "\(device.name) — \(device.osName) (runtime missing)"
-            )
-            .tag(Optional(device.id))
-            .selectionDisabled(!device.isRuntimeAvailable)
+            sessionSplit
+            if let message = model.errorMessage {
+                errorLine(message)
+            }
         }
     }
 
@@ -332,35 +277,6 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(4)
         }
-    }
-
-    /// Mid-session, choosing a device is a switch: the model relaunches the
-    /// Build and reverts the selection if the switch fails.
-    private var deviceSelection: Binding<SimulatorDevice.ID?> {
-        Binding(
-            get: { model.selectedDeviceID },
-            set: { id in
-                if model.isReviewing {
-                    Task { await model.switchDevice(to: id) }
-                } else {
-                    model.selectedDeviceID = id
-                }
-            }
-        )
-    }
-
-    private var dynamicTypeSelection: Binding<DeviceSettings.DynamicTypeSize> {
-        Binding(
-            get: { model.deviceSettings.dynamicTypeSize },
-            set: { size in Task { await model.setDynamicTypeSize(size) } }
-        )
-    }
-
-    private var appearanceSelection: Binding<DeviceSettings.Appearance> {
-        Binding(
-            get: { model.deviceSettings.appearance },
-            set: { appearance in Task { await model.setAppearance(appearance) } }
-        )
     }
 
     /// The open session, split (issue 01): the capture pane fills the
