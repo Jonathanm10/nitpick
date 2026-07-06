@@ -2,9 +2,10 @@ import NitpickCore
 import SwiftUI
 
 /// The tray lives in a List so the platform owns the swipe physics, full-swipe
-/// commit, and reduced-motion behavior for PRD stories 17–18. The list must
-/// also stretch to consume the control column's spare height; otherwise it only
-/// sizes to its contents and never becomes a proper scroll region.
+/// commit, and reduced-motion behavior for PRD stories 17–18. The list sizes
+/// to its rows — the column reads top-down: tray, File all, compose — and
+/// only past the visible cap does it become a scroll region; an unbounded
+/// List would swallow the column's spare height and orphan everything below.
 struct TrayView: View {
     let tray: [TrayItem]
     @Bindable var model: AppModel
@@ -15,6 +16,13 @@ struct TrayView: View {
         var filedIssueID: String?
     }
 
+    /// Rows are single-line by construction (lineLimit(1) everywhere), so a
+    /// fixed height is honest and lets the List be content-sized: SwiftUI
+    /// can't otherwise measure a List's intrinsic height.
+    private static let rowHeight: CGFloat = 28
+    /// Past this many rows the tray scrolls instead of growing.
+    private static let visibleRowCap = 8
+
     var body: some View {
         List {
             // Capture order is the core's truth (filing walks the tray in
@@ -23,6 +31,7 @@ struct TrayView: View {
             // designer's eye already is (PRD story 6).
             ForEach(tray.reversed()) { item in
                 trayRow(item)
+                    .frame(height: Self.rowHeight)
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -44,7 +53,10 @@ struct TrayView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .environment(\.defaultMinListRowHeight, Self.rowHeight)
+        .contentMargins(.vertical, 0, for: .scrollContent)
+        .scrollDisabled(tray.count <= Self.visibleRowCap)
+        .frame(height: Self.rowHeight * CGFloat(min(tray.count, Self.visibleRowCap)))
         .animation(MotionTokens.enter, value: trayAnimationKey)
     }
 
@@ -109,7 +121,6 @@ struct TrayView: View {
                 }
             }
         }
-        .padding(.vertical, 3)
         .padding(.horizontal, 6)
         .animation(MotionTokens.pop, value: item.filedIssue)
         .contentShape(Rectangle())

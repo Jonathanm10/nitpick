@@ -450,9 +450,8 @@ struct ContentView: View {
                 .motionPressFeedback()
             }
         }
-        // The column gets the session's full height so the tray can claim the
-        // spare space and scroll inside a fixed-width shell instead of growing
-        // the whole control stack.
+        // Full height so the Spacer can pin End Review at the column's foot;
+        // the tray itself is content-sized (TrayView caps its own height).
         .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
