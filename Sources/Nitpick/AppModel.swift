@@ -92,11 +92,13 @@ final class AppModel {
     private(set) var session: ReviewSession? {
         didSet { captureHotkey.setActive(session != nil) }
     }
-    /// The brief payoff snapshot shown after a successful file-all run:
-    /// the tray and filed issues stay on screen while the live session has
-    /// already ended and the hotkey has been unregistered.
-    private(set) var filingPayoff: ReviewSession?
-    var displayedSession: ReviewSession? { session ?? filingPayoff }
+    /// The held result of a successful file-all run: the just-filed
+    /// session as History's newest entry, shown in place until the designer
+    /// chooses Done or drops the next Build. The live session has already
+    /// ended and the capture hotkey is unregistered; this is transient,
+    /// in-memory only, and never persisted (the session survives on disk as
+    /// the newest History entry regardless).
+    private(set) var filingResult: HistoryEntry?
     /// The local history log: filed sessions with their issue links,
     /// newest first. Read-only, read from disk — never from YouTrack.
     private(set) var history: [HistoryEntry] = []
@@ -187,7 +189,7 @@ final class AppModel {
     var canStartReview: Bool {
         build != nil
             && !isReviewing
-            && filingPayoff == nil
+            && filingResult == nil
             && selectedDevice?.isRuntimeAvailable == true
             && (session != nil || selectedProject != nil)
             && !isBusy
@@ -249,11 +251,11 @@ final class AppModel {
         await perform {
             guard let restored = try core.loadOpenSession() else { return }
             // Filing must never pair the session's pinned project with a
-            // connection that lacks it. A surviving payoff snapshot must be
-            // cleared before the restored session becomes live again, so the
-            // shell shows only one truth at a time.
+            // connection that lacks it. A held filing result must be cleared
+            // before the restored session becomes live again, so the shell
+            // shows only one truth at a time.
             if let youTrack, !youTrack.projects.contains(restored.project) { return }
-            filingPayoff = nil
+            filingResult = nil
             filingStoppedByFailure = false
             session = restored
             build = restored.build
@@ -320,6 +322,10 @@ final class AppModel {
             build = try await core.ingestBuild(at: url)
             isReviewing = false
             reviewDevice = nil
+            // A Build dropped onto the in-place filing result dismisses it:
+            // the next review starts from the plain home drop zone, exactly
+            // as a drop on home does (issue 03). Already nil on home.
+            filingResult = nil
             // A successful drag of a new Build ends any open session (a
             // Review Session reviews exactly one Build) — on disk too, or
             // a relaunch would resurrect what the designer deliberately
@@ -352,7 +358,7 @@ final class AppModel {
             reviewDevice = device
             isReviewing = true
             if session == nil {
-                filingPayoff = nil
+                filingResult = nil
                 filingStoppedByFailure = false
                 session = ReviewSession(build: build, project: project)
                 clearSelection()
@@ -510,29 +516,25 @@ final class AppModel {
                 throw failure
             }
 
-            // Presentation beat (PRD stories 20–23): the file-all run is
-            // already finished, so the tray can sit in its truthful,
-            // fully-acknowledged allFiled state for one last breath before
-            // the shell returns home. The payoff is a snapshot only — the
-            // live session is already over — and it clears itself on a
-            // short main-actor timer so the beat never becomes state.
-            filingPayoff = outcome.session
+            // The whole tray filed: the live Review Session is over. End it
+            // — the capture hotkey unregisters as `session` clears, the
+            // device is dropped — and hold the just-filed session as the
+            // in-place result: History's newest entry, shown read-only until
+            // the designer chooses Done or drops the next Build (PRD stories
+            // 1, 2, 25). No timer; nothing disappears on its own. The held
+            // result is transient and in-memory — the session survives on
+            // disk as the newest History entry regardless.
             self.session = nil
             isReviewing = false
             reviewDevice = nil
             clearSelection()
-            refreshHistory()
-
-            let payoff = outcome.session
-            // The beat lives inside the still-busy perform block so every
-            // edit path stays frozen while the designer reads the honest
-            // payoff. Nothing new happens here — the tray has already
-            // finished filing — this just gives the eye one breath to
-            // register the allFiled state before the window clears it.
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            if filingPayoff == payoff {
-                filingPayoff = nil
-            }
+            // Re-read History from disk and hold its newest entry — the
+            // session that just filed (its start moment is the latest, so it
+            // sorts to the head). A throwing read means a successful file-all
+            // never shows a stale or empty row: the error surfaces and the
+            // shell falls back to plain home, the session safe on disk.
+            history = try core.sessionHistory()
+            filingResult = history.first
         }
     }
     private func endSession(clearingPersisted: Bool) throws {
@@ -564,15 +566,22 @@ final class AppModel {
     var unfiledFindingCount: Int {
         session?.unfiledFindingCount ?? 0
     }
-    /// The session the shell currently renders, including the brief
-    /// payoff snapshot after a successful file-all run. Done still means
-    /// the tray has no unfiled Findings — the snapshot merely keeps that
-    /// honest fact visible for one beat before the window returns home.
+    /// The live session's filing phase — what the File all button shows.
+    /// Only a live session has a File all button; the held filing result is
+    /// a read-only History row, so it needs no phase.
     var filingPhase: FilingPhase? {
-        displayedSession?.filingPhase(
+        session?.filingPhase(
             isRunning: filingRunActive,
             stoppedByFailure: filingStoppedByFailure
         )
+    }
+
+    /// Done on the in-place filing result: clear the held result and return
+    /// to the plain home drop zone. The Build stays loaded, so starting the
+    /// next review is the normal home entry point; the just-filed session is
+    /// untouched on disk as History's newest entry.
+    func dismissFilingResult() {
+        filingResult = nil
     }
 
     /// Sessions persist as they are created (issue 07): every mutation

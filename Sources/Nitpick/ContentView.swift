@@ -22,12 +22,14 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if let session = model.displayedSession {
+            if let session = model.session {
                 NavigationStack {
                     sessionScreen(session)
                 }
                 .navigationTitle(session.build.appBundleURL.deletingPathExtension().lastPathComponent)
                 .navigationSubtitle("\(session.build.identity.version) (\(session.build.identity.buildNumber)) · \(session.project.name)")
+            } else if let result = model.filingResult {
+                FilingResultView(entry: result, onDone: model.dismissFilingResult)
             } else {
                 heroHome
             }
@@ -58,7 +60,11 @@ struct ContentView: View {
         // session's closed→open edge — nothing mid-loop reopens a session.
         .background(SessionWindowGrowth(isSessionOpen: model.session != nil))
         .dropDestination(for: URL.self) { urls, _ in
-            guard model.filingPayoff == nil else { return false }
+            // A drop is accepted in every state — home, a live session, and
+            // the in-place filing result (issue 03): dropping onto the
+            // result ingests exactly as home does, dismissing it for the
+            // next review. Only a live session's unfiled work stages a
+            // confirmation below.
             guard let url = urls.first else { return false }
             // Ingesting ends the open session (one Build per Review
             // Session) — and with it every unfiled Finding. A session
@@ -266,7 +272,7 @@ struct ContentView: View {
             // A restored session's one next step must stay in sight — a primary
             // action never hides behind the popover.
             Spacer(minLength: 8)
-            if !model.isReviewing && model.filingPayoff == nil {
+            if !model.isReviewing {
                 Button(model.startReviewTitle) {
                     Task { await model.startReview() }
                 }
@@ -275,7 +281,7 @@ struct ContentView: View {
                 .disabled(!model.canStartReview)
                 .help("Reviewing needs a device and a YouTrack project — the session files into it.")
                 .motionPressFeedback()
-            } else if model.isReviewing {
+            } else {
                 HStack(spacing: 8) {
                     KeyCapHint("⌘S")
                     Button {
@@ -466,19 +472,15 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 14) {
             // Session-level Design Reference: one Figma URL for every
             // Finding of this session (a per-Finding override lives in the
-            // compose fields). A link, never a rendering (ADR-0003). The
-            // payoff snapshot is read-only, so this chrome disappears once
-            // the live session has ended.
-            if model.session != nil {
-                HStack(spacing: 8) {
-                    Image(systemName: "link")
-                        .foregroundStyle(NitpickTheme.secondaryText)
-                    TextField("Design Reference (Figma URL, all Findings)", text: $model.sessionDesignReferenceField)
-                        .textFieldStyle(.plain)
-                }
-                    .nitpickField(minHeight: 32)
-                    .disabled(model.isBusy)
+            // compose fields). A link, never a rendering (ADR-0003).
+            HStack(spacing: 8) {
+                Image(systemName: "link")
+                    .foregroundStyle(NitpickTheme.secondaryText)
+                TextField("Design Reference (Figma URL, all Findings)", text: $model.sessionDesignReferenceField)
+                    .textFieldStyle(.plain)
             }
+                .nitpickField(minHeight: 32)
+                .disabled(model.isBusy)
 
             if session.tray.isEmpty == false {
                 traySection(session.tray)
@@ -490,15 +492,13 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
 
-            if model.session != nil {
-                Button("End Review") {
-                    model.requestEndReview()
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                .disabled(!model.canEndReview)
-                .motionPressFeedback()
+            Button("End Review") {
+                model.requestEndReview()
             }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .disabled(!model.canEndReview)
+            .motionPressFeedback()
         }
         // Full height so the Spacer can pin End Review at the column's foot;
         // the tray itself is content-sized (TrayView caps its own height).
