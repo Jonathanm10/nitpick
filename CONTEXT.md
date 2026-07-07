@@ -29,15 +29,19 @@ The pane where the selected Finding is annotated and described. A Finding stays 
 _Avoid_: canvas, surface, compose area
 
 **Finding**:
-A single discrepancy captured during a Review Session: one annotated screenshot plus the designer's description. Files as exactly one YouTrack issue.
-_Avoid_: disparity, nitpick, issue (reserved for the YouTrack artifact)
+A single discrepancy captured during a Review Session: one annotated screenshot plus the designer's description. Files as exactly one YouTrack Issue.
+_Avoid_: disparity, nitpick, issue (reserved — the artifact is an Issue)
+
+**Issue**:
+The YouTrack artifact a filed Finding becomes, referenced locally only by its readable ID and URL — never a live mirror of its later YouTrack state.
+_Avoid_: ticket, bug, card
 
 **Tray**:
 The Review Session's Findings in capture order, awaiting filing. A Finding leaves the Tray only by being filed or discarded.
 _Avoid_: queue, basket, list
 
 **History**:
-The designer's own record of filed Review Sessions and the issues their Findings became. Written only at filing — a discarded session leaves no trace — and never reflects later changes in YouTrack.
+The designer's own record of filed Review Sessions and the Issues their Findings became. Written only at filing — a discarded session leaves no trace — and never reflects later changes in YouTrack.
 _Avoid_: log, archive, recents
 
 **Design Reference**:
