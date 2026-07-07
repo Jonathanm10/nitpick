@@ -508,9 +508,8 @@ check "feed + download URLs configured (https)" check_urls
 say ""
 if (( OK )); then
   say "Ready. Cut and publish a release:"
-  note "  scripts/release/release.sh 1.0.0 1"
-  note "  gh release upload updates dist/releases/Nitpick-1.0.0-1.zip \\"
-  note "      dist/releases/appcast.xml --clobber"
+  note "  make release VERSION=1.0.0 BUILD=1"
+  note "  make publish VERSION=1.0.0 BUILD=1"
   say ""
   say "release.env changed — commit it so the config is versioned."
 else

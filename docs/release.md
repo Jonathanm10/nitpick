@@ -39,50 +39,63 @@ The steps, for reference:
 ## Cutting a release
 
 ```sh
-scripts/release/release.sh <version> <build>    # e.g. release.sh 1.0.1 2
+make release VERSION=1.1.0 BUILD=3
 ```
 
-`<version>` is the marketing version; `<build>` is a monotonically increasing
+`VERSION` is the marketing version; `BUILD` is a monotonically increasing
 integer — Sparkle compares **build numbers** to decide what counts as an
-update, so never reuse or decrease one.
+update, so never reuse or decrease one. (`scripts/release/release.sh <version>
+<build>` still works — it forwards to `make release`.)
 
-The script runs the whole ladder and stops on the first failure:
+`make release` runs the whole ladder through the per-stage scripts under
+`scripts/release/` and stops on the first failure. Each stage is also a
+target you can run on its own (`make bundle`, `make sign`, `make verify`, …):
 
-1. `bundle.sh` — universal release build, assembles `dist/Nitpick.app`
-   (Info.plist from the template, Sparkle.framework embedded, rpaths fixed).
-2. `sign.sh` — codesigns inside-out (Sparkle XPC services → Autoupdate →
-   Updater.app → framework → app) with the hardened runtime and **no
-   entitlements**: the app must never declare a sandbox.
-3. `verify.sh` — structural checks: signature, no
+1. `make bundle` (`bundle.sh`) — universal release build, assembles
+   `dist/Nitpick.app` (Info.plist from the template, Sparkle.framework
+   embedded, rpaths fixed).
+2. `make sign` (`sign.sh`) — codesigns inside-out (Sparkle XPC services →
+   Autoupdate → Updater.app → framework → app) with the hardened runtime and
+   **no entitlements**: the app must never declare a sandbox.
+3. `make verify` (`verify.sh`) — structural checks: signature, no
    `com.apple.security.app-sandbox` on the app, required Info.plist keys,
    Sparkle embedded and reachable via rpath, no build-machine paths.
-4. `notarize.sh` — zips, submits via `notarytool --wait`, staples the ticket.
-5. `verify.sh --notarized --launch` — Gatekeeper assessment (`spctl`),
-   staple validation, and a launch smoke test.
-6. Packages the **stapled** app as `dist/releases/Nitpick-<version>-<build>.zip`
-   (the zip is both the download and Sparkle's update enclosure; the build
-   number keeps a re-release from overwriting a published archive). The zip
-   carries no AppleDouble (`._*`) metadata entries (`ditto --norsrc
-   --noextattr --noqtn`): Archive Utility merges those back into xattrs, but
-   CLI `unzip` materializes them as files inside the sealed bundle — breaking
-   the signature and making Gatekeeper reject the app as unverifiable.
-   `verify.sh --zip` then re-extracts the zip with CLI `unzip` and runs the
-   full notarized ladder on that copy, so a metadata regression can't ship.
-7. `appcast.sh` — updates `dist/releases/appcast.xml`, EdDSA-signs the new
-   enclosure, and re-verifies every signature against `NITPICK_ED_PUBLIC_KEY`
-   so a mismatched private key can never ship.
+4. `make notarize` (`notarize.sh`) — zips, submits via `notarytool --wait`,
+   staples the ticket.
+5. `make verify-release` (`verify.sh --notarized --launch`) — Gatekeeper
+   assessment (`spctl`), staple validation, and a launch smoke test.
+6. `make package` — packages the **stapled** app as
+   `dist/releases/Nitpick-<version>-<build>.zip` (the zip is both the
+   download and Sparkle's update enclosure; the build number keeps a
+   re-release from overwriting a published archive). The zip carries no
+   AppleDouble (`._*`) metadata entries (`ditto --norsrc --noextattr
+   --noqtn`): Archive Utility merges those back into xattrs, but CLI `unzip`
+   materializes them as files inside the sealed bundle — breaking the
+   signature and making Gatekeeper reject the app as unverifiable. `verify.sh
+   --zip` then re-extracts the zip with CLI `unzip` and runs the full
+   notarized ladder on that copy, so a metadata regression can't ship.
+7. `make appcast` (`appcast.sh`) — updates `dist/releases/appcast.xml`,
+   EdDSA-signs the new enclosure, and re-verifies every signature against
+   `NITPICK_ED_PUBLIC_KEY` so a mismatched private key can never ship.
 
-Then upload `Nitpick-<version>-<build>.zip` and `appcast.xml` so the
-enclosure URLs resolve — with the GitHub hosting the wizard sets up:
+Then publish the zip and `appcast.xml` so the enclosure URLs resolve — onto
+the fixed `updates` release the wizard sets up:
 
 ```sh
-gh release upload updates dist/releases/Nitpick-<version>-<build>.zip \
+make publish VERSION=1.1.0 BUILD=3
+```
+
+which runs:
+
+```sh
+gh release upload updates \
+    dist/releases/Nitpick-<version>-<build>.zip \
     dist/releases/appcast.xml --clobber
 ```
 
 Keep `dist/releases/` around between releases:
 `generate_appcast` extends the existing appcast and keeps the previous
-entries.
+entries. (`make clean` deliberately leaves `dist/releases/` intact.)
 
 If notarization is rejected, ask why:
 `xcrun notarytool log <submission-id> --keychain-profile nitpick-notary`.
