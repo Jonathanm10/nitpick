@@ -76,7 +76,7 @@ struct AnnotationSurface: View {
     @State private var selectGesture = SelectGesture.undecided
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             AnnotationToolbar(model: model)
             if let image = model.capturedImage, let pixelSize = model.capturePixelSize {
                 surface(image: image, pixelSize: pixelSize)
@@ -122,7 +122,9 @@ struct AnnotationSurface: View {
                 labelEditor(scale: scale)
             }
             .frame(width: pixelSize.width * scale, height: pixelSize.height * scale)
+            .position(x: proxy.size.width / 2, y: pixelSize.height * scale / 2)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .shadow(color: .black.opacity(0.12), radius: 18, x: 0, y: 8)
             .gesture(drawGesture(scale: scale, pixelSize: pixelSize))
             .focusable()
             .focusEffectDisabled()
@@ -167,7 +169,7 @@ struct AnnotationSurface: View {
             }
         }
         .aspectRatio(pixelSize, contentMode: .fit)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func drawGesture(scale: CGFloat, pixelSize: CGSize) -> some Gesture {

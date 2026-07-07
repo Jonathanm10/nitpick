@@ -10,6 +10,10 @@ struct TrayView: View {
     let tray: [TrayItem]
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Hover reveals the unfiled row's Discard affordance (design handoff:
+    /// "unfiled: 'Discard' on hover"); selection keeps it reachable without
+    /// a pointer, and the swipe action stays for full-swipe discard.
+    @State private var hoveredItemID: UUID?
 
     private struct TrayMotionKey: Equatable {
         var id: UUID
@@ -19,7 +23,7 @@ struct TrayView: View {
     /// Rows are single-line by construction (lineLimit(1) everywhere), so a
     /// fixed height is honest and lets the List be content-sized: SwiftUI
     /// can't otherwise measure a List's intrinsic height.
-    private static let rowHeight: CGFloat = 28
+    private static let rowHeight: CGFloat = 32
     /// Past this many rows the tray scrolls instead of growing.
     private static let visibleRowCap = 8
 
@@ -75,22 +79,29 @@ struct TrayView: View {
     }
 
     private func trayRow(_ item: TrayItem) -> some View {
-        HStack(spacing: 8) {
+        let isSelected = model.selectedItemID == item.id
+        let isHovered = hoveredItemID == item.id
+        return HStack(spacing: 8) {
             let summary = item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
             Text(summary.isEmpty ? "Untitled Finding" : summary)
+                .font(.system(size: 13, weight: isSelected ? .medium : .regular))
                 .lineLimit(1)
+                .layoutPriority(3)
             Text(item.finding.deviceContext.deviceModel)
-                .foregroundStyle(.secondary)
-            Spacer()
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(NitpickTheme.secondaryText)
+                .lineLimit(1)
+                .layoutPriority(1)
+            Spacer(minLength: 4)
             if let filed = item.filedIssue {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark")
-                        .font(.callout.weight(.semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.green)
                     Link(filed.idReadable, destination: filed.url)
                         .motionPressFeedback()
                 }
-                .font(.callout)
+                .font(.system(size: 13))
                 .transition(
                     MotionTokens.reducedMotionAware(
                         .scale.combined(with: .opacity),
@@ -98,10 +109,13 @@ struct TrayView: View {
                     )
                 )
             } else if item.isEditable {
-                Button("Discard") { model.discardFinding(id: item.id) }
-                    .buttonStyle(.borderless)
-                    .disabled(model.isBusy || model.hasPendingLabelDraft)
-                    .motionPressFeedback()
+                if isHovered || isSelected {
+                    Button("Discard") { model.discardFinding(id: item.id) }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 13))
+                        .disabled(model.isBusy || model.hasPendingLabelDraft)
+                        .motionPressFeedback()
+                }
             } else {
                 // Mid-ladder: its issue exists but is incomplete — a File all
                 // retry finishes it without re-creating anything. After a
@@ -109,26 +123,49 @@ struct TrayView: View {
                 // it carries the error itself (PRD story 22).
                 if model.isBusy {
                     Text("Filing…")
+                        .font(.system(size: 13))
                         .foregroundStyle(.orange)
                 } else if model.filingStoppedByFailure, let message = model.errorMessage {
                     Text(message)
+                        .font(.system(size: 13))
                         .foregroundStyle(.red)
                         .lineLimit(1)
                         .help(message)
                 } else {
                     Text("Filing interrupted — retry")
+                        .font(.system(size: 13))
                         .foregroundStyle(.orange)
                 }
             }
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 10)
         .animation(MotionTokens.pop, value: item.filedIssue)
         .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering {
+                hoveredItemID = item.id
+            } else if hoveredItemID == item.id {
+                hoveredItemID = nil
+            }
+        }
         .onTapGesture { model.selectItem(item.id) }
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(model.selectedItemID == item.id ? Color.accentColor.opacity(0.15) : .clear)
+            RoundedRectangle(cornerRadius: NitpickTheme.radiusMedium)
+                .fill(rowBackground(isSelected: isSelected, isHovered: isHovered))
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: NitpickTheme.radiusMedium)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.16) : .clear, lineWidth: 1)
+        }
+    }
+
+    private func rowBackground(isSelected: Bool, isHovered: Bool) -> Color {
+        if isSelected {
+            return Color.accentColor.opacity(0.10)
+        }
+        if isHovered {
+            return NitpickTheme.hover.opacity(0.65)
+        }
+        return Color.clear
     }
 }
-

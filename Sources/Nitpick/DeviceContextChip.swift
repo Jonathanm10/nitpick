@@ -13,29 +13,27 @@ struct DeviceContextChip: View {
         Button {
             isPopoverPresented = true
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "iphone")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(deviceName)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(accessibilitySummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(NitpickTheme.secondaryText)
+                Text("\(deviceName) — \(osName)")
+                    .font(.system(size: 17, weight: .semibold))
+                    .lineLimit(1)
+                Text(accessibilitySummary)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(NitpickTheme.secondaryText)
+                    .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(NitpickTheme.secondaryText)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .background(.quaternary.opacity(0.35), in: Capsule())
+        .background(NitpickTheme.hover, in: Capsule())
         .accessibilityLabel(accessibilityLabel)
         .popover(isPresented: $isPopoverPresented) {
             popoverContent
@@ -45,6 +43,10 @@ struct DeviceContextChip: View {
 
     private var deviceName: String {
         model.selectedDevice?.name ?? model.reviewDevice?.name ?? "No device selected"
+    }
+
+    private var osName: String {
+        model.selectedDevice?.osName ?? model.reviewDevice?.osName ?? "runtime unknown"
     }
 
     private var accessibilitySummary: String {

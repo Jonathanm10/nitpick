@@ -32,8 +32,10 @@ struct ContentView: View {
                 heroHome
             }
         }
-        .padding(20)
-        .frame(minWidth: 520, minHeight: 640)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 22)
+        .frame(minWidth: 920, minHeight: 640)
+        .background(NitpickTheme.window)
         // Esc at the editor scope claims the key only for the pristine
         // mis-capture discard — an installed no-op would still consume the
         // command, and a Finding the designer has invested in (or a mere
@@ -237,34 +239,73 @@ struct ContentView: View {
     }
 
     private func sessionScreen(_ session: ReviewSession) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 8) {
             if let guidance = model.setupGuidance {
                 setupGuidanceSection(guidance)
             } else {
-                HStack(spacing: 12) {
-                    DeviceContextChip(model: model)
-                    // A restored session's one next step must stay in
-                    // sight, exactly as the old device row kept it — a
-                    // primary action never hides behind the popover. The
-                    // payoff snapshot is the one exception: the session is
-                    // already over, so the resume/start affordance would
-                    // race the beat.
-                    if !model.isReviewing && model.filingPayoff == nil {
-                        Button(model.startReviewTitle) {
-                            Task { await model.startReview() }
-                        }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(!model.canStartReview)
-                        .help("Reviewing needs a device and a YouTrack project — the session files into it.")
-                        .motionPressFeedback()
-                    }
-                }
+                sessionHeader(session)
             }
             sessionSplit(session)
             if let message = model.errorMessage {
                 errorLine(message)
             }
         }
+    }
+
+    private func sessionHeader(_ session: ReviewSession) -> some View {
+        HStack(spacing: 12) {
+            DeviceContextChip(model: model)
+            Divider()
+                .frame(height: 22)
+            Text("\(session.build.identity.version) (\(session.build.identity.buildNumber)) · \(session.project.name)")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(NitpickTheme.secondaryText)
+                .lineLimit(1)
+                .layoutPriority(1)
+            statusPill
+            // A restored session's one next step must stay in sight — a primary
+            // action never hides behind the popover.
+            Spacer(minLength: 8)
+            if !model.isReviewing && model.filingPayoff == nil {
+                Button(model.startReviewTitle) {
+                    Task { await model.startReview() }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!model.canStartReview)
+                .help("Reviewing needs a device and a YouTrack project — the session files into it.")
+                .motionPressFeedback()
+            } else if model.isReviewing {
+                HStack(spacing: 8) {
+                    KeyCapHint("⌘S")
+                    Button {
+                        Task { await model.captureScreen() }
+                    } label: {
+                        Label("Capture", systemImage: "camera")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!model.canCapture)
+                    .motionPressFeedback()
+                }
+            }
+        }
+        .frame(minHeight: 44, alignment: .center)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(NitpickTheme.border)
+                .frame(height: 1)
+        }
+    }
+
+    private var statusPill: some View {
+        Label(model.isReviewing ? "Review in progress" : "Ready to resume", systemImage: "circle.fill")
+            .font(.system(size: 13, weight: .medium))
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.accentColor.opacity(0.10), in: Capsule())
+            .lineLimit(1)
     }
 
     /// The guided-setup panel (issue 10): what's missing on this Mac and
@@ -290,18 +331,27 @@ struct ContentView: View {
         }
     }
 
-    /// The open session, split (issue 01): the capture pane fills the
-    /// left side at full height — the annotation toolbar directly above
-    /// the annotated capture — and every session control stacks in a
-    /// fixed-width column on the right. Shown whenever a session exists —
-    /// including one restored after a relaunch, before its Build is
-    /// launched again.
+    /// The open session, split (issue 01): the capture pane takes the
+    /// remaining width, while the inspector keeps adaptive min/ideal/max
+    /// bounds so the workspace can resize without a hard fixed column.
     private func sessionSplit(_ session: ReviewSession) -> some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: 0) {
             capturePane
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .layoutPriority(1)
             controlColumn(session)
-                .frame(width: 320, alignment: .topLeading)
+                .frame(
+                    minWidth: NitpickTheme.inspectorMinWidth,
+                    idealWidth: NitpickTheme.inspectorIdealWidth,
+                    maxWidth: NitpickTheme.inspectorMaxWidth,
+                    alignment: .topLeading
+                )
+                .padding(.leading, 24)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(NitpickTheme.border)
+                        .frame(width: 1)
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { syncEditorArrivalState(for: session) }
@@ -339,6 +389,7 @@ struct ContentView: View {
                     .interpolation(.high)
                     .scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .shadow(color: .black.opacity(0.08), radius: 18, x: 0, y: 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
@@ -396,12 +447,13 @@ struct ContentView: View {
                 .disabled(true)
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6]))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(NitpickTheme.strongBorder)
+                .background(NitpickTheme.inset, in: RoundedRectangle(cornerRadius: 8))
                 .aspectRatio(Self.placeholderDeviceAspect, contentMode: .fit)
                 .overlay {
                     Text("⌘S to capture")
                         .font(.title3)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(NitpickTheme.secondaryText)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
@@ -411,22 +463,20 @@ struct ContentView: View {
     /// running), the session-wide Design Reference, the tray, the compose
     /// fields for the selected Finding, and End Review at the foot.
     private func controlColumn(_ session: ReviewSession) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if model.isReviewing {
-                Button("Capture") {
-                    Task { await model.captureScreen() }
-                }
-                .disabled(!model.canCapture)
-                .motionPressFeedback()
-            }
-
+        VStack(alignment: .leading, spacing: 14) {
             // Session-level Design Reference: one Figma URL for every
             // Finding of this session (a per-Finding override lives in the
             // compose fields). A link, never a rendering (ADR-0003). The
             // payoff snapshot is read-only, so this chrome disappears once
             // the live session has ended.
             if model.session != nil {
-                TextField("Design Reference (Figma URL, all Findings)", text: $model.sessionDesignReferenceField)
+                HStack(spacing: 8) {
+                    Image(systemName: "link")
+                        .foregroundStyle(NitpickTheme.secondaryText)
+                    TextField("Design Reference (Figma URL, all Findings)", text: $model.sessionDesignReferenceField)
+                        .textFieldStyle(.plain)
+                }
+                    .nitpickField(minHeight: 32)
                     .disabled(model.isBusy)
             }
 
@@ -460,6 +510,14 @@ struct ContentView: View {
     /// explicit end-of-section action beneath them.
     @ViewBuilder
     private func traySection(_ tray: [TrayItem]) -> some View {
+        HStack {
+            Text("Tray")
+                .nitpickSectionLabel()
+            Spacer()
+            Text("\(model.unfiledFindingCount) unfiled")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(NitpickTheme.secondaryText)
+        }
         TrayView(tray: tray, model: model)
         if let phase = model.filingPhase {
             Button {
@@ -469,21 +527,26 @@ struct ContentView: View {
             }
             .disabled(!model.canFileAll)
             .tint(isAllFiled(phase) ? .green : .accentColor)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
             .animation(reduceMotion ? nil : MotionTokens.enter, value: phase)
             .motionPressFeedback()
         }
     }
     private func filingButtonLabel(_ phase: FilingPhase) -> some View {
         HStack(spacing: 6) {
+            if isFiling(phase) {
+                ProgressView()
+                    .controlSize(.small)
+            }
             filingCheckmark(isAllFiled: isAllFiled(phase))
             Text(filingButtonText(for: phase))
                 .contentTransition(.opacity)
         }
         .font(.callout)
-        .foregroundStyle(isAllFiled(phase) ? .green : .primary)
+        .foregroundStyle(.white)
         .lineLimit(1)
-        .fixedSize(horizontal: true, vertical: false)
-        .frame(height: 30)
+        .frame(maxWidth: .infinity, minHeight: 32)
     }
 
     private func filingButtonText(for phase: FilingPhase) -> String {
@@ -501,6 +564,11 @@ struct ContentView: View {
 
     private func isAllFiled(_ phase: FilingPhase) -> Bool {
         if case .allFiled = phase { return true }
+        return false
+    }
+
+    private func isFiling(_ phase: FilingPhase) -> Bool {
+        if case .filing = phase { return true }
         return false
     }
 
@@ -525,14 +593,50 @@ struct ContentView: View {
 
     @ViewBuilder
     private var composeSection: some View {
+        Text("Summary *")
+            .nitpickSectionLabel()
         TextField("Summary", text: $model.summaryField)
             .onSubmit { _ = model.returnToBuild() }
+            .nitpickField(minHeight: 34)
             .disabled(model.isBusy)
+        Text("Description")
+            .nitpickSectionLabel()
         TextField("Description", text: $model.descriptionField, axis: .vertical)
             .lineLimit(3...6)
+            .nitpickField(minHeight: 116)
             .disabled(model.isBusy)
+        Text("Design Reference")
+            .nitpickSectionLabel()
         TextField("Design Reference (Figma URL, this Finding only)", text: $model.findingDesignReferenceField)
+            .nitpickField(minHeight: 34)
             .disabled(model.isBusy)
     }
 }
 
+
+/// A keyboard-shortcut hint next to a control (design system `KeyCap`):
+/// mono glyphs in a hairline key outline, radius 3 per the chips/keys token.
+private struct KeyCapHint: View {
+    let key: String
+
+    init(_ key: String) {
+        self.key = key
+    }
+
+    var body: some View {
+        Text(key)
+            .font(.caption.monospaced())
+            .foregroundStyle(NitpickTheme.secondaryText)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(.white)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 3)
+                    .strokeBorder(NitpickTheme.strongBorder, lineWidth: 1)
+            }
+            .accessibilityHidden(true)
+    }
+}

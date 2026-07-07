@@ -11,7 +11,7 @@ struct NitpickApp: App {
         WindowGroup("nitpick") {
             ContentView(model: model)
         }
-        .defaultSize(width: 560, height: 760)
+        .defaultSize(width: 1140, height: 760)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { updater.checkForUpdates() }

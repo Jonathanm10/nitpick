@@ -9,7 +9,7 @@ struct AnnotationToolbar: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 14) {
             Picker("Tool", selection: $model.annotationTool) {
                 ForEach(AnnotationTool.allCases) { tool in
                     Image(systemName: tool.symbolName)
@@ -20,7 +20,7 @@ struct AnnotationToolbar: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 ForEach(AnnotationColor.allCases, id: \.self) { color in
                     Button {
                         model.annotationColor = color
@@ -38,6 +38,9 @@ struct AnnotationToolbar: View {
                     .motionPressFeedback()
                 }
             }
+            Rectangle()
+                .fill(NitpickTheme.border)
+                .frame(width: 1, height: 22)
             Spacer()
 
             Button {
@@ -59,5 +62,13 @@ struct AnnotationToolbar: View {
             .help("Redo")
             .motionPressFeedback()
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.white, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusMedium))
+        .overlay {
+            RoundedRectangle(cornerRadius: NitpickTheme.radiusMedium)
+                .strokeBorder(NitpickTheme.border, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.08), radius: 5, x: 0, y: 2)
     }
 }
