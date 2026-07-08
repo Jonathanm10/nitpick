@@ -53,7 +53,7 @@ struct TriagePriorityTests {
         #expect(request.httpMethod == "GET")
         #expect(request.httpBody == nil)
         #expect(request.url?.absoluteString
-            == "\(Self.base)/api/admin/projects/0-12/customFields?fields=field(name),bundle(values(name))&$top=100")
+            == "\(Self.base)/api/admin/projects/0-12/customFields?fields=field(name),bundle(values(name),aggregatedUsers(login,fullName))&$top=100")
     }
 
     @Test("a failed schema read is non-fatal: an empty scale, no error surfaced")

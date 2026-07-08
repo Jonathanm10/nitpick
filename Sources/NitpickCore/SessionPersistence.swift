@@ -120,7 +120,8 @@ extension AppCore {
                 // Absent in sessions persisted before Type shipped — those
                 // decode as nil and mean Bug, the always-set default.
                 type: item.type ?? .bug,
-                priority: item.priority
+                priority: item.priority,
+                assignee: item.assignee
             )
             finding.annotations = item.annotations
             return TrayItem(id: item.id, finding: finding, filingProgress: item.filingProgress)
@@ -302,6 +303,9 @@ private struct StoredTrayItem: Codable {
     /// Optional at rest too — a Finding may carry no Priority, and a
     /// manifest written before Priority shipped simply omits it.
     var priority: FindingPriority?
+    /// Optional at rest too — unassigned is valid, and a pre-Assignee
+    /// manifest simply omits it.
+    var assignee: FindingAssignee?
 
     init(_ item: TrayItem) {
         id = item.id
@@ -313,6 +317,7 @@ private struct StoredTrayItem: Codable {
         filingProgress = item.filingProgress
         type = item.finding.type
         priority = item.finding.priority
+        assignee = item.finding.assignee
     }
 }
 

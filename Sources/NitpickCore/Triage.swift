@@ -39,3 +39,19 @@ public struct FindingPriority: Equatable, Sendable, Codable, Hashable {
         self.name = name
     }
 }
+
+/// A project member a Finding is assigned to (glossary: Assignee), chosen
+/// from the target project's assignable users. Optional — unassigned is a
+/// valid state.
+public struct FindingAssignee: Equatable, Sendable, Codable, Hashable {
+    /// The user's login — what YouTrack's Assignee field is set by.
+    public var login: String
+    /// The display name shown in the people-picker and, if filing drops the
+    /// field, in the toast the designer relays by hand.
+    public var fullName: String
+
+    public init(login: String, fullName: String) {
+        self.login = login
+        self.fullName = fullName
+    }
+}

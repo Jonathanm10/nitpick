@@ -308,6 +308,12 @@ extension AppCore {
                 value: .enumValue(name: priority.name)
             ))
         }
+        if let assignee = finding.assignee {
+            fields.append(IssueCustomField(
+                type: "SingleUserIssueCustomField", name: "Assignee",
+                value: .user(login: assignee.login)
+            ))
+        }
         return fields
     }
 
@@ -317,6 +323,9 @@ extension AppCore {
         var dropped: [DroppedTriageField] = []
         if let priority = finding.priority {
             dropped.append(DroppedTriageField(field: .priority, intendedValue: priority.name))
+        }
+        if let assignee = finding.assignee {
+            dropped.append(DroppedTriageField(field: .assignee, intendedValue: assignee.fullName))
         }
         return dropped
     }

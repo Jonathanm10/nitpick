@@ -634,6 +634,17 @@ struct ContentView: View {
             .labelsHidden()
             .disabled(model.isBusy)
         }
+        // Assignee: shown only when the project has assignable users. A
+        // searchable people-picker; unassigned is a first-class choice.
+        if !model.sessionSchema.assignees.isEmpty {
+            Text("Assignee")
+                .nitpickSectionLabel()
+            AssigneePicker(
+                assignees: model.sessionSchema.assignees,
+                selection: $model.assigneeField,
+                disabled: model.isBusy
+            )
+        }
         Text("Summary *")
             .nitpickSectionLabel()
         TextField("Summary", text: $model.summaryField)

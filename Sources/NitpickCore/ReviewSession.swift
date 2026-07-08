@@ -220,6 +220,10 @@ public struct Finding: Equatable, Sendable {
     /// take the project's default. Drawn from the project's own scale, read
     /// at session setup; reset on each capture — no stickiness (ADR-0008).
     public var priority: FindingPriority?
+    /// The project member the designer assigned (glossary: Assignee), or
+    /// nil for unassigned — a valid state. Drawn from the project's
+    /// assignable users, read at session setup; reset on each capture.
+    public var assignee: FindingAssignee?
 
     public init(
         summary: String,
@@ -228,7 +232,8 @@ public struct Finding: Equatable, Sendable {
         deviceContext: DeviceContext,
         designReference: URL? = nil,
         type: FindingType = .bug,
-        priority: FindingPriority? = nil
+        priority: FindingPriority? = nil,
+        assignee: FindingAssignee? = nil
     ) {
         self.summary = summary
         self.description = description
@@ -237,6 +242,7 @@ public struct Finding: Equatable, Sendable {
         self.designReference = designReference
         self.type = type
         self.priority = priority
+        self.assignee = assignee
     }
 }
 
@@ -249,6 +255,7 @@ extension Finding {
             && lhs.designReference == rhs.designReference
             && lhs.type == rhs.type
             && lhs.priority == rhs.priority
+            && lhs.assignee == rhs.assignee
             && lhs.annotations == rhs.annotations
     }
 }

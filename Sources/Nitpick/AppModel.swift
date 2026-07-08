@@ -151,6 +151,13 @@ final class AppModel {
         set { editSelectedFinding { $0.priority = newValue } }
     }
 
+    /// The selected Finding's Assignee, bound to the Editor's people-picker
+    /// (glossary: Assignee). Optional — nil is unassigned, a valid state.
+    var assigneeField: FindingAssignee? {
+        get { selectedItem?.finding.assignee }
+        set { editSelectedFinding { $0.assignee = newValue } }
+    }
+
     /// The session-level Design Reference (issue 09), bound to the review
     /// section's field — the Figma URL every Finding files under unless it
     /// carries its own. Guarded like every Finding edit: filing works on a
