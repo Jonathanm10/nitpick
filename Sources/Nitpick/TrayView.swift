@@ -2,18 +2,29 @@ import NitpickCore
 import SwiftUI
 
 /// The tray lives in a List so the platform owns the swipe physics, full-swipe
-/// commit, and reduced-motion behavior for PRD stories 17–18. The list sizes
-/// to its rows — the column reads top-down: tray, File all, compose — and
-/// only past the visible cap does it become a scroll region; an unbounded
-/// List would swallow the column's spare height and orphan everything below.
+/// commit, and reduced-motion behavior for PRD stories 17–18. It is the
+/// control column's one scroll region: a flexible frame lets it sit at its
+/// row-count-capped natural height when there is room and compress toward a
+/// ~2-row floor when the fixed compose fields need the space, scrolling once
+/// rows are hidden. A lower layoutPriority than compose (set at the use site)
+/// makes the tray — not the whole column — yield and scroll; an unbounded
+/// List would instead swallow the column's spare height and orphan the fields
+/// below it.
 struct TrayView: View {
     let tray: [TrayItem]
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Hover reveals the unfiled row's Discard affordance (design handoff:
     /// "unfiled: 'Discard' on hover"); selection keeps it reachable without
-    /// a pointer, and the swipe action stays for full-swipe discard.
+    /// a pointer, and the swipe reveals the same Discard. Each of these
+    /// stages the confirmation below rather than acting — a Finding leaves
+    /// the tray only once the designer confirms.
     @State private var hoveredItemID: UUID?
+    /// The Finding a Discard affordance is asking to throw away, staged for
+    /// the confirmation. Discard is destructive and the tray keeps no undo,
+    /// so no path removes a Finding without this round-trip. Nil except
+    /// while the dialog is up.
+    @State private var pendingDiscardID: TrayItem.ID?
 
     private struct TrayMotionKey: Equatable {
         var id: UUID
@@ -21,11 +32,28 @@ struct TrayView: View {
     }
 
     /// Rows are single-line by construction (lineLimit(1) everywhere), so a
-    /// fixed height is honest and lets the List be content-sized: SwiftUI
+    /// fixed row height is honest and lets the List be content-sized: SwiftUI
     /// can't otherwise measure a List's intrinsic height.
     private static let rowHeight: CGFloat = 32
     /// Past this many rows the tray scrolls instead of growing.
     private static let visibleRowCap = 8
+
+    /// Every row laid end to end: what the tray would show with no cap and no
+    /// pressure. Scrolling engages exactly when the rendered height falls short
+    /// of this.
+    private var contentHeight: CGFloat { Self.rowHeight * CGFloat(tray.count) }
+    /// The tray's natural (uncompressed) height: its content, capped at the
+    /// visible row count. The column offers this when it has room to spare.
+    private var naturalHeight: CGFloat { Self.rowHeight * CGFloat(min(tray.count, Self.visibleRowCap)) }
+    /// The floor a compressed tray never sinks below — ~2 rows, or its whole
+    /// content when it holds fewer. Keeps a couple of Findings reachable while
+    /// the fixed compose fields hold their place above.
+    private var floorHeight: CGFloat { min(Self.rowHeight * 2, naturalHeight) }
+
+    /// The height the column actually granted the List this layout pass,
+    /// measured from a background reader. Drives `scrollDisabled`: below the
+    /// content height means rows are hidden, so the List must scroll.
+    @State private var renderedHeight: CGFloat = 0
 
     var body: some View {
         List {
@@ -43,11 +71,14 @@ struct TrayView: View {
                     // The swipe is offered exactly where the discard rules
                     // allow the act (PRD story 18): a row filing has touched,
                     // a busy model, or a pending label draft gets no gesture
-                    // at all — an empty builder removes the affordance.
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    // at all — an empty builder removes the affordance. No
+                    // full swipe: a one-gesture instant commit is exactly the
+                    // mistaken discard the confirmation guards, so the swipe
+                    // only reveals the button and the tap stages the dialog.
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         if item.isEditable, !model.isBusy, !model.hasPendingLabelDraft {
                             Button(role: .destructive) {
-                                model.discardFinding(id: item.id)
+                                pendingDiscardID = item.id
                             } label: {
                                 Label("Discard", systemImage: "trash")
                             }
@@ -59,9 +90,52 @@ struct TrayView: View {
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, Self.rowHeight)
         .contentMargins(.vertical, 0, for: .scrollContent)
-        .scrollDisabled(tray.count <= Self.visibleRowCap)
-        .frame(height: Self.rowHeight * CGFloat(min(tray.count, Self.visibleRowCap)))
+        // Scroll only when rows are actually hidden — past the visible cap, or
+        // when the column has compressed the tray below its content. A tray
+        // that shows everything stays inert so the trackpad can't rubber-band
+        // over nothing.
+        .scrollDisabled(renderedHeight + 0.5 >= contentHeight)
+        // Flexible, not fixed: the tray sits at its natural (capped) height
+        // when the column has room and shrinks toward a ~2-row floor when the
+        // fixed compose fields need the space. A lower layoutPriority than
+        // compose (set where TrayView is used) makes the tray — and only the
+        // tray — the column's scroll region.
+        .frame(minHeight: floorHeight, maxHeight: naturalHeight)
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { renderedHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { renderedHeight = proxy.size.height }
+            }
+        }
         .animation(MotionTokens.enter, value: trayAnimationKey)
+        .confirmationDialog(
+            "Discard this Finding?",
+            isPresented: Binding(
+                get: { pendingDiscardID != nil },
+                set: { if !$0 { pendingDiscardID = nil } }
+            ),
+            presenting: pendingDiscardID
+        ) { id in
+            Button("Discard", role: .destructive) {
+                model.discardFinding(id: id)
+            }
+            .motionPressFeedback()
+            Button("Cancel", role: .cancel) {}
+            .motionPressFeedback()
+        } message: { id in
+            Text(discardConfirmationMessage(for: id))
+        }
+    }
+
+    /// The confirmation's body: names the Finding when it carries a summary
+    /// so the designer can tell which row is about to go, and says the
+    /// discard is final — the tray keeps no undo.
+    private func discardConfirmationMessage(for id: TrayItem.ID) -> String {
+        let summary = tray.first { $0.id == id }?
+            .finding.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let subject = summary.isEmpty ? "this Finding" : "“\(summary)”"
+        return "Discarding \(subject) removes it from the tray for good."
     }
 
     // PRD story 19: the tray's view-side key follows row identity and the
@@ -110,7 +184,7 @@ struct TrayView: View {
                 )
             } else if item.isEditable {
                 if isHovered || isSelected {
-                    Button("Discard") { model.discardFinding(id: item.id) }
+                    Button("Discard") { pendingDiscardID = item.id }
                         .buttonStyle(.borderless)
                         .font(.system(size: 13))
                         .disabled(model.isBusy || model.hasPendingLabelDraft)

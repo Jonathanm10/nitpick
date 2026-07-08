@@ -503,7 +503,17 @@ struct ContentView: View {
                 composeSection
             }
 
+            // Only the tray scrolls (never the whole column). Design ref,
+            // compose, and End Review are rigid and keep default layout
+            // priority; the tray's List is the column's sole flexible
+            // absorber — it carries a flexible frame and a lower priority,
+            // so it, not this Spacer, yields first when space is tight.
+            // The Spacer sits lower still: it soaks only the slack left once
+            // the tray sits at its natural cap, pinning End Review at the
+            // foot with room to spare. As the column tightens the Spacer
+            // closes, then the tray shrinks and scrolls; compose never moves.
             Spacer(minLength: 0)
+                .layoutPriority(-2)
 
             Button("End Review") {
                 model.requestEndReview()
@@ -514,7 +524,7 @@ struct ContentView: View {
             .motionPressFeedback()
         }
         // Full height so the Spacer can pin End Review at the column's foot;
-        // the tray itself is content-sized (TrayView caps its own height).
+        // the tray flexes between its cap and a ~2-row floor within it.
         .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -531,7 +541,12 @@ struct ContentView: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(NitpickTheme.secondaryText)
         }
+        // The one flexible child of the column: a lower priority than the
+        // rigid compose fields so it yields space first, but higher than the
+        // foot Spacer so it reaches its cap before the Spacer opens (see
+        // controlColumn). It shrinks and scrolls internally under pressure.
         TrayView(tray: tray, model: model)
+            .layoutPriority(-1)
         if let phase = model.filingPhase {
             Button {
                 Task { await model.fileAllFindings() }
