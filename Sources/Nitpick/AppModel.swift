@@ -549,16 +549,17 @@ final class AppModel {
             droppedFieldNotice = nil
             let outcome = await core.fileAll(in: session, onProgress: { self.session = $0 })
             filingRunActive = false
+            // Report any triage fields the run had to drop (PRD story 28,
+            // ADR-0008) before anything else: a field dropped on an
+            // already-filed Finding must still surface even when a later
+            // Finding stops the run — the drop won't recur on retry.
+            presentDroppedFieldNotice(from: outcome.droppedFields)
             if let failure = outcome.failure {
                 filingStoppedByFailure = true
                 self.session = outcome.session
                 refreshHistory()
                 throw failure
             }
-
-            // Report any triage fields the run had to drop (PRD story 28):
-            // a transient toast with the intended value, nothing persisted.
-            presentDroppedFieldNotice(from: outcome.droppedFields)
 
             // The whole tray filed: the live Review Session is over. End it
             // — the capture hotkey unregisters as `session` clears, the
