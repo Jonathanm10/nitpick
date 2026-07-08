@@ -176,7 +176,7 @@ struct ContentView: View {
         if let guidance = model.setupGuidance {
             setupGuidanceSection(guidance)
         } else {
-            DeviceContextPickerControls(model: model)
+            DevicePicker(model: model)
         }
         projectSlot
         Button(model.startReviewTitle) {

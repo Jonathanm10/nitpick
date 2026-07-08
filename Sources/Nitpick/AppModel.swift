@@ -10,9 +10,15 @@ import Observation
 final class AppModel {
     private let core: AppCore
     private let captureHotkey: CaptureHotkey
+    private let recentDevicesStore = RecentDevicesStore()
 
     private(set) var build: Build?
     private(set) var devices: [SimulatorDevice] = []
+    /// The designer's most-recently-reviewed devices, newest first — the
+    /// picker's Recent section and the source of the launch preselection.
+    /// Loaded from persistence at init, updated after every successful
+    /// launch. Global across Builds (PRD out-of-scope: no per-Build MRU).
+    private(set) var recentDevices: RecentDevices
     /// What this Mac is missing before a review can run (issue 10):
     /// non-nil shows the guided-setup panel instead of the device picker.
     /// Refreshed at launch, on every Build drop, at session start, and by
@@ -192,6 +198,7 @@ final class AppModel {
     ) {
         self.core = core
         self.captureHotkey = captureHotkey
+        recentDevices = recentDevicesStore.load()
         captureHotkey.onPress = { [weak self] in
             Task { [weak self] in
                 guard let self else { return }
@@ -260,9 +267,12 @@ final class AppModel {
             setupGuidance = nil
             self.devices = devices
             // A selection whose runtime vanished would leave Start review
-            // dead with no explanation — move to the first usable device.
+            // dead with no explanation — reselect: the most-recent
+            // still-available device, else the first usable one (PRD
+            // preselection). A first launch (no selection yet) preselects
+            // the same way.
             if selectedDevice?.isRuntimeAvailable != true {
-                selectedDeviceID = devices.first { $0.isRuntimeAvailable }?.id
+                selectedDeviceID = recentDevices.preferredDevice(among: devices)?.id
             }
             return true
         case .needsSetup(let guidance):
@@ -386,6 +396,7 @@ final class AppModel {
             guard let device = selectedDevice, device.isRuntimeAvailable else { return }
             try await core.launch(build, on: device)
             reviewDevice = device
+            recordRecentDevice(device)
             isReviewing = true
             // Session-setup schema read (ADR-0008): learn the project's
             // Priority scale so the Editor's control is populated before the
@@ -436,11 +447,21 @@ final class AppModel {
             do {
                 try await core.launch(build, on: device)
                 reviewDevice = device
+                recordRecentDevice(device)
             } catch {
                 selectedDeviceID = reviewDevice?.id
                 throw error
             }
         }
+    }
+
+    /// Records a successful launch on `device` in the MRU and persists it
+    /// (PRD story 4/11): session start or a switch that succeeded. Never
+    /// called on mere selection or a reverted switch, so a stray click
+    /// cannot pollute Recent.
+    private func recordRecentDevice(_ device: SimulatorDevice) {
+        recentDevices.record(device.udid)
+        recentDevicesStore.save(recentDevices)
     }
 
     /// Runs the existing capture path and reports whether it actually
