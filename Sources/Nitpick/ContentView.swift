@@ -593,6 +593,19 @@ struct ContentView: View {
 
     @ViewBuilder
     private var composeSection: some View {
+        // Type first: always set, always shown (glossary: Type). A fresh
+        // capture is a Bug until the designer flips it — no stickiness.
+        Text("Type")
+            .nitpickSectionLabel()
+        Picker("Type", selection: $model.typeField) {
+            ForEach(FindingType.allCases, id: \.self) { type in
+                Text(type.label).tag(type)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .disabled(model.isBusy)
+        .motionPressFeedback()
         Text("Summary *")
             .nitpickSectionLabel()
         TextField("Summary", text: $model.summaryField)

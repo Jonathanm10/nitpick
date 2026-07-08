@@ -29,8 +29,20 @@ The pane where the selected Finding is annotated and described. A Finding stays 
 _Avoid_: canvas, surface, compose area
 
 **Finding**:
-A single discrepancy captured during a Review Session: one annotated screenshot plus the designer's description. Files as exactly one YouTrack Issue.
+A single point of design-review feedback on the Build — a Bug or an Improvement (see Type) — captured as one annotated screenshot plus the designer's description. Files as exactly one Issue.
 _Avoid_: disparity, nitpick, issue (reserved — the artifact is an Issue)
+
+**Type**:
+What kind of feedback a Finding is: a Bug (the build diverges from the design) or an Improvement (a change worth making beyond what was specced). Exactly one per Finding.
+_Avoid_: category, kind, bug/improvement (those are Type values, not the field)
+
+**Priority**:
+How soon a filed Finding should be addressed relative to others, in the target project's own priority scale.
+_Avoid_: severity, urgency, importance
+
+**Assignee**:
+The project member a filed Finding is assigned to, chosen from the target project's assignable users. Optional — a Finding may be unassigned.
+_Avoid_: owner, responsible, reviewer
 
 **Issue**:
 The YouTrack artifact a filed Finding becomes, referenced locally only by its readable ID and URL — never a live mirror of its later YouTrack state.

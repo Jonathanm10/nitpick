@@ -89,6 +89,43 @@ struct DurabilityTests {
         #expect(resumed.tray[0].finding.canUndo)
     }
 
+    @Test("a session persisted before Type shipped still decodes — its Findings default to Bug — and files to completion")
+    func preTypeSessionDecodesAndFiles() async throws {
+        let workspace = try Fixtures.makeTemporaryDirectory()
+        let credentials = FakeCredentialStore()
+        let transport = FakeHTTPTransport()
+        let core = try await Self.connectedCore(
+            transport: transport, workspace: workspace, credentials: credentials
+        )
+        var session = IssueFilingTests.session
+        session.addFinding(IssueFilingTests.finding(summary: "Filed by an older nitpick"))
+        try core.saveOpenSession(session)
+
+        // Rewrite the manifest to the pre-Type shape: drop the `type` key
+        // every tray item now carries, exactly as a build without Type wrote.
+        let manifests = try #require(FileManager.default.enumerator(at: workspace, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }
+            .filter { $0.lastPathComponent == "session.json" }
+        let manifest = try #require(manifests.first)
+        var stored = try #require(
+            JSONSerialization.jsonObject(with: try Data(contentsOf: manifest)) as? [String: Any]
+        )
+        let tray = try #require(stored["tray"] as? [[String: Any]])
+        stored["tray"] = tray.map { item in item.filter { $0.key != "type" } }
+        try JSONSerialization.data(withJSONObject: stored).write(to: manifest)
+
+        // It decodes, and the Finding is a Bug — the always-set default.
+        let reloaded = try #require(try core.loadOpenSession())
+        #expect(reloaded.tray[0].finding.type == .bug)
+
+        // And it files to completion: the Bug Type tag is resolved and applied.
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
+        SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue421)
+        let outcome = await core.fileAll(in: reloaded)
+        #expect(outcome.failure == nil)
+        #expect(outcome.session.filedIssues == [SessionTrayScenarioTests.filedIssue("RM-421")])
+    }
+
     @Test("nothing saved: loading the open session is nil, not an error")
     func nothingSaved() throws {
         let core = Self.relaunchedCore(workspace: try Fixtures.makeTemporaryDirectory())
@@ -198,7 +235,7 @@ struct DurabilityTests {
 
         // First files whole; Second's issue is created, then the network
         // dies at its attachments request — and the app dies with it.
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue421)
         transport.enqueue(json: SessionTrayScenarioTests.createdIssue422)
         transport.enqueue(error: URLError(.networkConnectionLost))
@@ -219,9 +256,10 @@ struct DurabilityTests {
 
         // Retry: Second resumes at its attachments — never a second issue —
         // and Third files fresh.
-        transport2.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport2)
         transport2.enqueue(json: IssueFilingTests.attachmentsJSON)
         transport2.enqueue(json: IssueFilingTests.appliedTagJSON)
+        transport2.enqueue(json: IssueFilingTests.appliedTypeTagJSON)
         SessionTrayScenarioTests.enqueueLadder(on: transport2, created: SessionTrayScenarioTests.createdIssue423)
         let retry = await relaunched.fileAll(in: resumed)
         #expect(retry.failure == nil)
@@ -233,10 +271,13 @@ struct DurabilityTests {
         let base = SessionTrayScenarioTests.base
         #expect(transport2.sentRequests.map(\.url?.absoluteString) == [
             "\(base)/api/tags?fields=id,name&query=design-review&$top=100",
+            "\(base)/api/tags?fields=id,name&query=nitpick-type:bug&$top=100",
             "\(base)/api/issues/3-506/attachments?fields=id,name",
+            "\(base)/api/issues/3-506/tags?fields=id,name",
             "\(base)/api/issues/3-506/tags?fields=id,name",
             "\(base)/api/issues?fields=id,idReadable",
             "\(base)/api/issues/3-507/attachments?fields=id,name",
+            "\(base)/api/issues/3-507/tags?fields=id,name",
             "\(base)/api/issues/3-507/tags?fields=id,name",
         ])
 
@@ -262,7 +303,7 @@ struct DurabilityTests {
         session.addFinding(IssueFilingTests.finding(summary: "Toolbar icon is misaligned"))
         session.addFinding(IssueFilingTests.finding(summary: "Label truncates"))
         try core.saveOpenSession(session)
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue421)
         SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue422)
         let outcome = await core.fileAll(in: session)
@@ -301,7 +342,7 @@ struct DurabilityTests {
         later.startedAt = session.startedAt.addingTimeInterval(3600)
         later.addFinding(IssueFilingTests.finding(summary: "Spacing is off"))
         try core.saveOpenSession(later)
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue423)
         #expect(await core.fileAll(in: later).failure == nil)
 
@@ -327,7 +368,7 @@ struct DurabilityTests {
 
         // First's issue is created under reference A, then the network dies
         // at its attachments request.
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         transport.enqueue(json: SessionTrayScenarioTests.createdIssue421)
         transport.enqueue(error: URLError(.networkConnectionLost))
         var outcome = await core.fileAll(in: session)
@@ -338,9 +379,10 @@ struct DurabilityTests {
         // The designer repoints the session before retrying: First's issue
         // already says A on the instance, Second files under B.
         outcome.session.designReference = referenceB
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         transport.enqueue(json: IssueFilingTests.attachmentsJSON)
         transport.enqueue(json: IssueFilingTests.appliedTagJSON)
+        transport.enqueue(json: IssueFilingTests.appliedTypeTagJSON)
         SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue422)
         let retry = await core.fileAll(in: outcome.session)
         #expect(retry.failure == nil)
@@ -371,7 +413,7 @@ struct DurabilityTests {
         var session = IssueFilingTests.session
         session.addFinding(IssueFilingTests.finding(summary: "First"))
         try core.saveOpenSession(session)
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue421)
         let outcome = await core.fileAll(in: session)
         #expect(outcome.failure == nil)
@@ -380,7 +422,7 @@ struct DurabilityTests {
         var again = outcome.session
         again.addFinding(IssueFilingTests.finding(summary: "One more"))
         try core.saveOpenSession(again)
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue422)
         #expect(await core.fileAll(in: again).failure == nil)
 
@@ -400,7 +442,7 @@ struct DurabilityTests {
 
         var session = IssueFilingTests.session
         session.addFinding(IssueFilingTests.finding(summary: "Solo"))
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue421)
         let outcome = await core.fileAll(in: session)
         #expect(outcome.failure == nil)

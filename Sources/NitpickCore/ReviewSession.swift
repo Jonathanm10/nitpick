@@ -97,9 +97,15 @@ public enum FilingProgress: Equatable, Sendable, Codable {
     /// `POST api/issues` succeeded: the issue exists but carries neither
     /// attachments nor tag.
     case issueCreated(issueID: String, idReadable: String)
-    /// Both screenshot variants are attached; only the design-review tag
-    /// is missing.
+    /// Both screenshot variants are attached; no tag is applied yet.
     case attachmentsUploaded(issueID: String, idReadable: String)
+    /// The `design-review` tag is applied; only the `nitpick-type:*` tag
+    /// (glossary: Type) remains. The endpoint applies one tag per request,
+    /// so each tag is its own recorded step (ADR-0008): a crash between the
+    /// two never double-applies or drops a tag. Absent in sessions
+    /// persisted before Type shipped — an additive case, so those decode
+    /// unchanged.
+    case reviewTagged(issueID: String, idReadable: String)
     /// The whole ladder ran: the Finding is exactly one filed issue.
     case filed(FiledIssue)
 }
@@ -179,8 +185,9 @@ public struct DeviceContext: Equatable, Sendable, Codable {
     }
 }
 
-/// A single discrepancy captured during a Review Session: one screenshot
-/// plus the designer's description. Files as exactly one YouTrack issue.
+/// A single point of design-review feedback on the Build — a Bug or an
+/// Improvement (see `type`) — captured as one screenshot plus the
+/// designer's description. Files as exactly one YouTrack issue.
 ///
 /// Equality covers observable state only — what filing would carry — never
 /// the Annotation edit history.
@@ -204,19 +211,26 @@ public struct Finding: Equatable, Sendable {
     /// Optional Finding-level Design Reference (ADR-0003: a link, never a
     /// rendering).
     public var designReference: URL?
+    /// What kind of feedback this is (glossary: Type). nitpick-owned,
+    /// always set, defaults to Bug — a fresh capture is a Bug until the
+    /// designer says otherwise. Filed as a namespaced tag, never the
+    /// project's native Type field (ADR-0008).
+    public var type: FindingType
 
     public init(
         summary: String,
         description: String,
         screenshotPNG: Data,
         deviceContext: DeviceContext,
-        designReference: URL? = nil
+        designReference: URL? = nil,
+        type: FindingType = .bug
     ) {
         self.summary = summary
         self.description = description
         self.screenshotPNG = screenshotPNG
         self.deviceContext = deviceContext
         self.designReference = designReference
+        self.type = type
     }
 }
 
@@ -227,6 +241,7 @@ extension Finding {
             && lhs.screenshotPNG == rhs.screenshotPNG
             && lhs.deviceContext == rhs.deviceContext
             && lhs.designReference == rhs.designReference
+            && lhs.type == rhs.type
             && lhs.annotations == rhs.annotations
     }
 }

@@ -33,9 +33,10 @@ extension AppCore {
     /// Files one Finding as exactly one YouTrack issue, authored by the
     /// token's user: the designer's summary, the designer's description with
     /// the metadata block appended, two attachments — the annotated
-    /// screenshot and the clean original — and the design-review tag
-    /// applied. The session supplies the project — chosen once at session
-    /// start, never re-asked.
+    /// screenshot and the clean original — and two tags applied:
+    /// `design-review` and the Finding's `nitpick-type:*` (ADR-0008). The
+    /// session supplies the project — chosen once at session start, never
+    /// re-asked.
     public func file(_ finding: Finding, in session: ReviewSession) async throws -> FiledIssue {
         guard !finding.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw YouTrackError.summaryRequired
@@ -47,16 +48,18 @@ extension AppCore {
         // ends — and a rendering failure leaves no orphan issue behind.
         let annotatedPNG = try finding.annotatedScreenshotPNG()
 
-        // Resolve the tag before creating anything: tag creation needs its
+        // Resolve both tags before creating anything: tag creation needs its
         // own permission, and a refusal here must not leave an orphan issue.
-        let tagID = try await designReviewTagID(with: credentials)
+        let designReviewTagID = try await tagID(named: Self.designReviewTagName, with: credentials)
+        let typeTagID = try await tagID(named: finding.type.tagName, with: credentials)
 
         var item = TrayItem(finding: finding)
         while true {
             if case .filed(let issue) = item.filingProgress { return issue }
             try await advanceFilingOneStep(
                 of: &item, in: session,
-                annotatedPNG: annotatedPNG, credentials: credentials, tagID: tagID
+                annotatedPNG: annotatedPNG, credentials: credentials,
+                designReviewTagID: designReviewTagID, typeTagID: typeTagID
             )
         }
     }
@@ -91,14 +94,23 @@ extension AppCore {
                 }
                 pending.append((index, try item.finding.annotatedScreenshotPNG()))
             }
-            // One tag resolution per run, before any issue exists — the
-            // same orphan-avoidance as single filing, shared by every item.
-            let tagID = try await designReviewTagID(with: credentials)
+            // Resolve every tag before any issue exists — the same
+            // orphan-avoidance as single filing. design-review is shared by
+            // every item; each distinct Finding Type contributes its own
+            // `nitpick-type:*` tag, resolved in a stable order so a mixed
+            // Bug/Improvement run emits deterministic requests (ADR-0008).
+            let designReviewTagID = try await tagID(named: Self.designReviewTagName, with: credentials)
+            var typeTagIDs: [String: String] = [:]
+            for name in Set(pending.map { updated.tray[$0.index].finding.type.tagName }).sorted() {
+                typeTagIDs[name] = try await tagID(named: name, with: credentials)
+            }
             for (index, annotatedPNG) in pending {
                 while updated.tray[index].filedIssue == nil {
                     try await advanceFilingOneStep(
                         of: &updated.tray[index], in: session,
-                        annotatedPNG: annotatedPNG, credentials: credentials, tagID: tagID
+                        annotatedPNG: annotatedPNG, credentials: credentials,
+                        designReviewTagID: designReviewTagID,
+                        typeTagID: typeTagIDs[updated.tray[index].finding.type.tagName]!
                     )
                     // Durability (issue 07): the mark hits disk before the
                     // next request fires — a crash mid-run resumes on
@@ -119,17 +131,20 @@ extension AppCore {
     }
 
     /// Advances one tray item's filing ladder by exactly one rung — create
-    /// the issue, attach both screenshot variants, or apply the
-    /// design-review tag — recording the server-acknowledged step on the
-    /// item. On a throw the item keeps the last recorded step, which is
-    /// what makes filing resumable: a retry repeats nothing the instance
-    /// already acknowledged. A no-op on an already-filed item.
+    /// the issue, attach both screenshot variants, apply the `design-review`
+    /// tag, or apply the `nitpick-type:*` tag — recording the
+    /// server-acknowledged step on the item. On a throw the item keeps the
+    /// last recorded step, which is what makes filing resumable: a retry
+    /// repeats nothing the instance already acknowledged. A no-op on an
+    /// already-filed item. Both tag IDs are resolved before the first rung,
+    /// so this step never creates a tag — it only applies one.
     private func advanceFilingOneStep(
         of item: inout TrayItem,
         in session: ReviewSession,
         annotatedPNG: Data,
         credentials: (instanceURL: URL, token: String),
-        tagID: String
+        designReviewTagID: String,
+        typeTagID: String
     ) async throws {
         switch item.filingProgress {
         case .notStarted:
@@ -171,12 +186,14 @@ extension AppCore {
             item.filingProgress = .attachmentsUploaded(issueID: issueID, idReadable: idReadable)
 
         case .attachmentsUploaded(let issueID, let idReadable):
-            let _: TagPayload = try await requestYouTrack(
-                instanceURL: credentials.instanceURL, token: credentials.token,
-                method: "POST", path: "api/issues/\(issueID)/tags", query: "fields=id,name",
-                body: try Self.jsonBody(TagReference(id: tagID)),
-                deniedAction: "apply the “\(Self.designReviewTagName)” tag"
-            )
+            try await applyTag(designReviewTagID, toIssue: issueID, named: Self.designReviewTagName, credentials: credentials)
+            item.filingProgress = .reviewTagged(issueID: issueID, idReadable: idReadable)
+
+        case .reviewTagged(let issueID, let idReadable):
+            // The Type tag rides last, one tag per request (ADR-0008): the
+            // issue is already review-tagged, so a failure here resumes at
+            // this rung alone and never re-applies design-review.
+            try await applyTag(typeTagID, toIssue: issueID, named: item.finding.type.tagName, credentials: credentials)
             item.filingProgress = .filed(FiledIssue(
                 idReadable: idReadable,
                 url: credentials.instanceURL
@@ -189,26 +206,46 @@ extension AppCore {
         }
     }
 
-    /// The instance-side ID of the design-review tag: found among the tags
-    /// visible to the designer, or created on first use.
-    private func designReviewTagID(
+    /// Applies one already-resolved tag to an issue — one tag per request,
+    /// so each application is its own recorded ladder step.
+    private func applyTag(
+        _ tagID: String,
+        toIssue issueID: String,
+        named name: String,
+        credentials: (instanceURL: URL, token: String)
+    ) async throws {
+        let _: TagPayload = try await requestYouTrack(
+            instanceURL: credentials.instanceURL, token: credentials.token,
+            method: "POST", path: "api/issues/\(issueID)/tags", query: "fields=id,name",
+            body: try Self.jsonBody(TagReference(id: tagID)),
+            deniedAction: "apply the “\(name)” tag"
+        )
+    }
+
+    /// The instance-side ID of a tag by exact name: found among the tags
+    /// visible to the designer, or created on first use. Used for both the
+    /// fixed `design-review` tag and each Finding's `nitpick-type:*` tag —
+    /// resolved before any issue is created, so a create-permission refusal
+    /// never leaves an orphan issue behind (ADR-0008).
+    private func tagID(
+        named name: String,
         with credentials: (instanceURL: URL, token: String)
     ) async throws -> String {
         // `query=` filters server-side by name; the exact-match check drops
-        // lookalikes ("design-review-old").
+        // lookalikes ("design-review-old", "nitpick-type:bugfix").
         let candidates: [TagPayload] = try await requestYouTrack(
             instanceURL: credentials.instanceURL, token: credentials.token,
-            path: "api/tags", query: "fields=id,name&query=\(Self.designReviewTagName)&$top=100",
+            path: "api/tags", query: "fields=id,name&query=\(name)&$top=100",
             deniedAction: "list tags"
         )
-        if let existing = candidates.first(where: { $0.name == Self.designReviewTagName }) {
+        if let existing = candidates.first(where: { $0.name == name }) {
             return existing.id
         }
         let created: TagPayload = try await requestYouTrack(
             instanceURL: credentials.instanceURL, token: credentials.token,
             method: "POST", path: "api/tags", query: "fields=id,name",
-            body: try Self.jsonBody(TagCreationPayload(name: Self.designReviewTagName)),
-            deniedAction: "create the “\(Self.designReviewTagName)” tag (it does not exist yet)"
+            body: try Self.jsonBody(TagCreationPayload(name: name)),
+            deniedAction: "create the “\(name)” tag (it does not exist yet)"
         )
         return created.id
     }

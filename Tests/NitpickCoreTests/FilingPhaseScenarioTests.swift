@@ -49,7 +49,7 @@ struct FilingPhaseScenarioTests {
         let session = Self.session(["First", "Second", "Third"])
         let progress = Mutex<[ReviewSession]>([])
 
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         Self.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue421)
         Self.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue422)
         transport.enqueue(error: URLError(.networkConnectionLost))
@@ -74,7 +74,7 @@ struct FilingPhaseScenarioTests {
         let core = try await Self.connectedCore(transport: transport)
         let session = Self.session(["First", "Second", "Third"])
 
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         Self.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue421)
         transport.enqueue(error: URLError(.timedOut))
 
@@ -94,7 +94,7 @@ struct FilingPhaseScenarioTests {
         let core = try await Self.connectedCore(transport: transport)
         let session = Self.session(["Solo"])
 
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         Self.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue421)
 
         let outcome = await core.fileAll(in: session)
@@ -111,7 +111,7 @@ struct FilingPhaseScenarioTests {
         let session = Self.session(["First", "Second", "Third"])
         let progress = Mutex<[Int]>([])
 
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
         Self.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue421)
         Self.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue422)
         transport.enqueue(error: URLError(.networkConnectionLost))

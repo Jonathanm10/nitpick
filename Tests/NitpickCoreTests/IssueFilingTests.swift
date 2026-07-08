@@ -42,6 +42,10 @@ struct IssueFilingTests {
     static let attachmentsJSON = #"[{"id":"134-31","name":"annotated.png","$type":"IssueAttachment"},"#
         + #"{"id":"134-32","name":"original.png","$type":"IssueAttachment"}]"#
     static let appliedTagJSON = #"{"id":"6-4","name":"design-review","$type":"Tag"}"#
+    /// The `nitpick-type:bug` tag (glossary: Type), looked up and applied
+    /// alongside `design-review` — every default finding here is a Bug.
+    static let existingTypeTagJSON = #"[{"id":"6-5","name":"nitpick-type:bug","$type":"Tag"}]"#
+    static let appliedTypeTagJSON = #"{"id":"6-5","name":"nitpick-type:bug","$type":"Tag"}"#
 
     /// A core with a saved connection, as the designer has after settings:
     /// the connect consumes the first two stubs and two requests.
@@ -74,14 +78,16 @@ struct IssueFilingTests {
         return body
     }
 
-    @Test("filing emits find-tag → create issue → attach both screenshots → apply tag, with exact bodies")
+    @Test("filing emits find-tag ×2 → create issue → attach both screenshots → apply both tags, with exact bodies")
     func filesOneIssue() async throws {
         let transport = FakeHTTPTransport()
         let core = try await Self.connectedCore(transport: transport)
         transport.enqueue(json: Self.existingTagJSON)
+        transport.enqueue(json: Self.existingTypeTagJSON)
         transport.enqueue(json: Self.createdIssueJSON)
         transport.enqueue(json: Self.attachmentsJSON)
         transport.enqueue(json: Self.appliedTagJSON)
+        transport.enqueue(json: Self.appliedTypeTagJSON)
 
         let filed = try await core.file(Self.finding(), in: Self.session)
         #expect(filed == FiledIssue(
@@ -90,22 +96,27 @@ struct IssueFilingTests {
         ))
 
         let requests = transport.sentRequests.dropFirst(2)
-        try #require(requests.count == 4)
+        try #require(requests.count == 6)
         let base = "https://youtrack.example.com/yt"
         for request in requests {
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer perm:designer-token")
             #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
         }
 
-        // 1. The tag is looked up by name.
+        // 1. Both tags are looked up by name, before any issue exists:
+        //    the fixed design-review tag, then the Finding's Type tag.
         let tagLookup = requests[requests.startIndex]
         #expect(tagLookup.httpMethod == "GET")
         #expect(tagLookup.url?.absoluteString == "\(base)/api/tags?fields=id,name&query=design-review&$top=100")
         #expect(tagLookup.httpBody == nil)
+        let typeTagLookup = requests[requests.startIndex + 1]
+        #expect(typeTagLookup.httpMethod == "GET")
+        #expect(typeTagLookup.url?.absoluteString == "\(base)/api/tags?fields=id,name&query=nitpick-type:bug&$top=100")
+        #expect(typeTagLookup.httpBody == nil)
 
         // 2. Exactly one issue is created: summary + description with the
         //    metadata block appended, in the session's project.
-        let creation = requests[requests.startIndex + 1]
+        let creation = requests[requests.startIndex + 2]
         #expect(creation.httpMethod == "POST")
         #expect(creation.url?.absoluteString == "\(base)/api/issues?fields=id,idReadable")
         #expect(creation.value(forHTTPHeaderField: "Content-Type") == "application/json")
@@ -114,7 +125,7 @@ struct IssueFilingTests {
         // 3. Both screenshots ride in one multipart request: the annotated
         //    variant first, the clean original second. Unannotated, the
         //    annotated variant is the original bytes.
-        let attach = requests[requests.startIndex + 2]
+        let attach = requests[requests.startIndex + 3]
         #expect(attach.httpMethod == "POST")
         #expect(attach.url?.absoluteString == "\(base)/api/issues/3-505/attachments?fields=id,name")
         let contentType = try #require(attach.value(forHTTPHeaderField: "Content-Type"))
@@ -124,12 +135,17 @@ struct IssueFilingTests {
             (fileName: "original.png", data: Self.pngBytes),
         ]))
 
-        // 4. The fixed design-review tag is applied by ID.
-        let tagging = requests[requests.startIndex + 3]
+        // 4. The design-review tag is applied first, then the Type tag —
+        //    each by ID, one tag per request.
+        let tagging = requests[requests.startIndex + 4]
         #expect(tagging.httpMethod == "POST")
         #expect(tagging.url?.absoluteString == "\(base)/api/issues/3-505/tags?fields=id,name")
         #expect(tagging.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(tagging.httpBody.map { String(decoding: $0, as: UTF8.self) } == #"{"id":"6-4"}"#)
+        let typeTagging = requests[requests.startIndex + 5]
+        #expect(typeTagging.httpMethod == "POST")
+        #expect(typeTagging.url?.absoluteString == "\(base)/api/issues/3-505/tags?fields=id,name")
+        #expect(typeTagging.httpBody.map { String(decoding: $0, as: UTF8.self) } == #"{"id":"6-5"}"#)
     }
 
     @Test("an annotated Finding attaches the flattened variant plus the untouched original")
@@ -137,9 +153,11 @@ struct IssueFilingTests {
         let transport = FakeHTTPTransport()
         let core = try await Self.connectedCore(transport: transport)
         transport.enqueue(json: Self.existingTagJSON)
+        transport.enqueue(json: Self.existingTypeTagJSON)
         transport.enqueue(json: Self.createdIssueJSON)
         transport.enqueue(json: Self.attachmentsJSON)
         transport.enqueue(json: Self.appliedTagJSON)
+        transport.enqueue(json: Self.appliedTypeTagJSON)
 
         let original = try ImageFixtures.solidPNG(width: 480, height: 960)
         var finding = Finding(
@@ -152,7 +170,7 @@ struct IssueFilingTests {
 
         _ = try await core.file(finding, in: Self.session)
 
-        let attach = transport.sentRequests[4]
+        let attach = transport.sentRequests[5]
         let contentType = try #require(attach.value(forHTTPHeaderField: "Content-Type"))
         let boundary = try #require(contentType.wholeMatch(of: /multipart\/form-data; boundary=(nitpick-[0-9A-F-]+)/)?.1)
         #expect(attach.httpBody == Self.multipartBody(boundary: boundary, files: [
@@ -181,23 +199,27 @@ struct IssueFilingTests {
     func createsMissingTag() async throws {
         let transport = FakeHTTPTransport()
         let core = try await Self.connectedCore(transport: transport)
-        // The lookup finds only a lookalike; exact-name matching rejects it.
+        // The lookup finds only a lookalike; exact-name matching rejects it
+        // and the tag is created before the issue. The Type tag already
+        // exists, so its lookup is a single GET.
         transport.enqueue(json: #"[{"id":"6-9","name":"design-review-2024","$type":"Tag"}]"#)
         transport.enqueue(json: #"{"id":"6-77","name":"design-review","$type":"Tag"}"#)
+        transport.enqueue(json: Self.existingTypeTagJSON)
         transport.enqueue(json: Self.createdIssueJSON)
         transport.enqueue(json: Self.attachmentsJSON)
         transport.enqueue(json: #"{"id":"6-77","name":"design-review","$type":"Tag"}"#)
+        transport.enqueue(json: Self.appliedTypeTagJSON)
 
         _ = try await core.file(Self.finding(), in: Self.session)
 
         let requests = transport.sentRequests.dropFirst(2)
-        try #require(requests.count == 5)
+        try #require(requests.count == 7)
         let creation = requests[requests.startIndex + 1]
         #expect(creation.httpMethod == "POST")
         #expect(creation.url?.absoluteString == "https://youtrack.example.com/yt/api/tags?fields=id,name")
         #expect(creation.httpBody.map { String(decoding: $0, as: UTF8.self) } == #"{"name":"design-review"}"#)
         // The freshly created tag's ID is the one applied.
-        let tagging = requests[requests.startIndex + 4]
+        let tagging = requests[requests.startIndex + 5]
         #expect(tagging.httpBody.map { String(decoding: $0, as: UTF8.self) } == #"{"id":"6-77"}"#)
     }
 
@@ -206,13 +228,15 @@ struct IssueFilingTests {
         let transport = FakeHTTPTransport()
         let core = try await Self.connectedCore(transport: transport)
         transport.enqueue(json: Self.existingTagJSON)
+        transport.enqueue(json: Self.existingTypeTagJSON)
         transport.enqueue(json: Self.createdIssueJSON)
         transport.enqueue(json: Self.attachmentsJSON)
         transport.enqueue(json: Self.appliedTagJSON)
+        transport.enqueue(json: Self.appliedTypeTagJSON)
 
         _ = try await core.file(Self.finding(description: "  \n"), in: Self.session)
 
-        let creation = transport.sentRequests[3]
+        let creation = transport.sentRequests[4]
         let expected = #"{"description":"---\nApp: ch.liip.reviewme 2.1.0 (421)\nDevice: iPhone 17 Pro — iOS 26.4\n"#
             + #"Filed with nitpick — session 2026-07-04T09:15:32Z","project":{"id":"0-12"},"summary":"Button color is off"}"#
         #expect(creation.httpBody.map { String(decoding: $0, as: UTF8.self) } == expected)
@@ -225,12 +249,14 @@ struct IssueFilingTests {
         var session = Self.session
         session.designReference = URL(string: "https://www.figma.com/file/sess42/ReviewMe")!
 
-        // One ladder per filing: find tag → create → attach → tag.
+        // One ladder per filing: find both tags → create → attach → tag ×2.
         for _ in 0..<2 {
             transport.enqueue(json: Self.existingTagJSON)
+            transport.enqueue(json: Self.existingTypeTagJSON)
             transport.enqueue(json: Self.createdIssueJSON)
             transport.enqueue(json: Self.attachmentsJSON)
             transport.enqueue(json: Self.appliedTagJSON)
+            transport.enqueue(json: Self.appliedTypeTagJSON)
         }
 
         _ = try await core.file(Self.finding(), in: session)
@@ -280,13 +306,14 @@ struct IssueFilingTests {
         let transport = FakeHTTPTransport()
         let core = try await Self.connectedCore(transport: transport)
         transport.enqueue(json: Self.existingTagJSON)
+        transport.enqueue(json: Self.existingTypeTagJSON)
         transport.enqueue(statusCode: 403, json: #"{"error":"Forbidden"}"#)
 
         await #expect(throws: YouTrackError.permissionDenied(action: "create an issue in Review Me")) {
             try await core.file(Self.finding(), in: Self.session)
         }
         // Nothing after the refused creation: no attach, no tagging.
-        #expect(transport.sentRequests.count == 4)
+        #expect(transport.sentRequests.count == 5)
     }
 
     @Test("a creation failure propagates — the required-custom-fields signal, not a crash")
@@ -294,12 +321,13 @@ struct IssueFilingTests {
         let transport = FakeHTTPTransport()
         let core = try await Self.connectedCore(transport: transport)
         transport.enqueue(json: Self.existingTagJSON)
+        transport.enqueue(json: Self.existingTypeTagJSON)
         transport.enqueue(statusCode: 400, json: #"{"error":"Bad Request"}"#)
 
         await #expect(throws: YouTrackError.unexpectedResponse(statusCode: 400)) {
             try await core.file(Self.finding(), in: Self.session)
         }
-        #expect(transport.sentRequests.count == 4)
+        #expect(transport.sentRequests.count == 5)
     }
 
     @Test("filing errors speak to the designer")

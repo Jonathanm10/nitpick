@@ -116,7 +116,10 @@ extension AppCore {
                 description: item.description,
                 screenshotPNG: try Data(contentsOf: captureFile(for: item.id)),
                 deviceContext: item.deviceContext,
-                designReference: item.designReference
+                designReference: item.designReference,
+                // Absent in sessions persisted before Type shipped — those
+                // decode as nil and mean Bug, the always-set default.
+                type: item.type ?? .bug
             )
             finding.annotations = item.annotations
             return TrayItem(id: item.id, finding: finding, filingProgress: item.filingProgress)
@@ -291,6 +294,10 @@ private struct StoredTrayItem: Codable {
     var annotations: [Annotation]
     var designReference: URL?
     var filingProgress: FilingProgress
+    /// Optional so a manifest written before Type shipped still decodes:
+    /// absent means Bug (see the load path). Additive, so schema version 1
+    /// stands.
+    var type: FindingType?
 
     init(_ item: TrayItem) {
         id = item.id
@@ -300,6 +307,7 @@ private struct StoredTrayItem: Codable {
         annotations = item.finding.annotations
         designReference = item.finding.designReference
         filingProgress = item.filingProgress
+        type = item.finding.type
     }
 }
 

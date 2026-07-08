@@ -124,6 +124,15 @@ final class AppModel {
         set { editSelectedFinding { $0.description = newValue } }
     }
 
+    /// The selected Finding's Type, bound to the Editor's Type control
+    /// (glossary: Type). Always set — a fresh capture is a Bug — so the
+    /// getter's fallback is only for the no-selection case the control is
+    /// hidden in.
+    var typeField: FindingType {
+        get { selectedItem?.finding.type ?? .bug }
+        set { editSelectedFinding { $0.type = newValue } }
+    }
+
     /// The session-level Design Reference (issue 09), bound to the review
     /// section's field — the Figma URL every Finding files under unless it
     /// carries its own. Guarded like every Finding edit: filing works on a

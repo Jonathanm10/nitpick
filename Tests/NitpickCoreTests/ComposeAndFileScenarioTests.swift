@@ -72,9 +72,11 @@ struct ComposeAndFileScenarioTests {
 
         // …files as exactly one issue, and the ID + link come back.
         transport.enqueue(json: #"[{"id":"6-4","name":"design-review","$type":"Tag"}]"#)
+        transport.enqueue(json: #"[{"id":"6-5","name":"nitpick-type:bug","$type":"Tag"}]"#)
         transport.enqueue(json: #"{"id":"3-505","idReadable":"RM-421","$type":"Issue"}"#)
         transport.enqueue(json: IssueFilingTests.attachmentsJSON)
         transport.enqueue(json: #"{"id":"6-4","name":"design-review","$type":"Tag"}"#)
+        transport.enqueue(json: #"{"id":"6-5","name":"nitpick-type:bug","$type":"Tag"}"#)
         let filed = try await core.file(finding, in: session)
         #expect(filed == FiledIssue(
             idReadable: "RM-421",
@@ -89,16 +91,18 @@ struct ComposeAndFileScenarioTests {
 
         // The exact filing requests, after the two connect requests.
         let base = "https://youtrack.example.com"
-        try #require(transport.sentRequests.count == 6)
+        try #require(transport.sentRequests.count == 8)
         let urls = transport.sentRequests.map(\.url?.absoluteString)
         #expect(urls[2] == "\(base)/api/tags?fields=id,name&query=design-review&$top=100")
-        #expect(urls[3] == "\(base)/api/issues?fields=id,idReadable")
-        #expect(urls[4] == "\(base)/api/issues/3-505/attachments?fields=id,name")
-        #expect(urls[5] == "\(base)/api/issues/3-505/tags?fields=id,name")
+        #expect(urls[3] == "\(base)/api/tags?fields=id,name&query=nitpick-type:bug&$top=100")
+        #expect(urls[4] == "\(base)/api/issues?fields=id,idReadable")
+        #expect(urls[5] == "\(base)/api/issues/3-505/attachments?fields=id,name")
+        #expect(urls[6] == "\(base)/api/issues/3-505/tags?fields=id,name")
+        #expect(urls[7] == "\(base)/api/issues/3-505/tags?fields=id,name")
 
         // Issue JSON: designer text + the metadata block stamped from the
         // ingested Build identity and the capture's Device Context.
-        let issueBody = transport.sentRequests[3].httpBody.map { String(decoding: $0, as: UTF8.self) }
+        let issueBody = transport.sentRequests[4].httpBody.map { String(decoding: $0, as: UTF8.self) }
         #expect(issueBody == #"{"description":"The share icon sits 2pt too low.\n\n"#
             + #"---\nApp: ch.liip.reviewme 2.1.0 (421)\nDevice: iPhone 17 Pro — iOS 26.4\n"#
             + #"Filed with nitpick — session 2026-07-04T09:15:32Z","project":{"id":"0-12"},"#
@@ -106,7 +110,7 @@ struct ComposeAndFileScenarioTests {
 
         // The multipart attachment carries both variants; unannotated, the
         // annotated variant is the captured bytes unchanged.
-        let attach = transport.sentRequests[4]
+        let attach = transport.sentRequests[5]
         let contentType = try #require(attach.value(forHTTPHeaderField: "Content-Type"))
         let boundary = try #require(contentType.wholeMatch(of: /multipart\/form-data; boundary=(nitpick-[0-9A-F-]+)/)?.1)
         #expect(attach.httpBody == IssueFilingTests.multipartBody(boundary: boundary, files: [
@@ -114,9 +118,9 @@ struct ComposeAndFileScenarioTests {
             (fileName: "original.png", data: pngBytes),
         ]))
 
-        // The tag lands by ID.
+        // The design-review tag lands by ID (the Type tag follows it).
         #expect(
-            transport.sentRequests[5].httpBody.map { String(decoding: $0, as: UTF8.self) }
+            transport.sentRequests[6].httpBody.map { String(decoding: $0, as: UTF8.self) }
                 == #"{"id":"6-4"}"#
         )
     }
@@ -176,12 +180,14 @@ struct ComposeAndFileScenarioTests {
         // Filing freezes exactly this state into the annotated attachment,
         // next to the untouched original.
         transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.existingTypeTagJSON)
         transport.enqueue(json: IssueFilingTests.createdIssueJSON)
         transport.enqueue(json: IssueFilingTests.attachmentsJSON)
         transport.enqueue(json: IssueFilingTests.appliedTagJSON)
+        transport.enqueue(json: IssueFilingTests.appliedTypeTagJSON)
         _ = try await core.file(finding, in: session)
 
-        let attach = transport.sentRequests[4]
+        let attach = transport.sentRequests[5]
         let contentType = try #require(attach.value(forHTTPHeaderField: "Content-Type"))
         let boundary = try #require(contentType.wholeMatch(of: /multipart\/form-data; boundary=(nitpick-[0-9A-F-]+)/)?.1)
         let flattened = try finding.annotatedScreenshotPNG()

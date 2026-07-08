@@ -21,11 +21,21 @@ struct SessionTrayScenarioTests {
         FiledIssue(idReadable: idReadable, url: URL(string: "\(base)/issue/\(idReadable)")!)
     }
 
-    /// The stub triple one Finding's happy filing ladder consumes.
+    /// The stubs one Finding's happy filing ladder consumes: create,
+    /// attach, apply design-review, apply the Type tag (ADR-0008).
     static func enqueueLadder(on transport: FakeHTTPTransport, created: String) {
         transport.enqueue(json: created)
         transport.enqueue(json: IssueFilingTests.attachmentsJSON)
         transport.enqueue(json: IssueFilingTests.appliedTagJSON)
+        transport.enqueue(json: IssueFilingTests.appliedTypeTagJSON)
+    }
+
+    /// The two up-front tag lookups every run makes before any issue
+    /// exists: the fixed design-review tag, then the Bug Type tag (every
+    /// default finding here is a Bug).
+    static func enqueueTagLookups(on transport: FakeHTTPTransport) {
+        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.existingTypeTagJSON)
     }
 
     // MARK: - The pristine predicate
@@ -69,7 +79,7 @@ struct SessionTrayScenarioTests {
         var session = IssueFilingTests.session
         session.addFinding(IssueFilingTests.finding(summary: "Ready to file"))
 
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        Self.enqueueTagLookups(on: transport)
         transport.enqueue(json: Self.createdIssue421)
         transport.enqueue(error: URLError(.timedOut))
 
@@ -188,6 +198,7 @@ struct SessionTrayScenarioTests {
         // The network dies right after issue creation: the item freezes
         // mid-ladder — no longer editable, not yet filed.
         transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.existingTypeTagJSON)
         transport.enqueue(json: Self.createdIssue421)
         transport.enqueue(error: URLError(.timedOut))
 
@@ -201,8 +212,10 @@ struct SessionTrayScenarioTests {
         #expect(interrupted.session.unfiledFindingCount == 1)
 
         transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.existingTypeTagJSON)
         transport.enqueue(json: IssueFilingTests.attachmentsJSON)
         transport.enqueue(json: IssueFilingTests.appliedTagJSON)
+        transport.enqueue(json: IssueFilingTests.appliedTypeTagJSON)
 
         let filed = await core.fileAll(in: interrupted.session)
 
@@ -223,7 +236,7 @@ struct SessionTrayScenarioTests {
         session.addFinding(IssueFilingTests.finding(summary: "Label truncates"))
         session.discardFinding(id: dropped)
 
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        Self.enqueueTagLookups(on: transport)
         Self.enqueueLadder(on: transport, created: Self.createdIssue421)
         Self.enqueueLadder(on: transport, created: Self.createdIssue422)
 
@@ -233,16 +246,19 @@ struct SessionTrayScenarioTests {
         #expect(outcome.session.filedIssues == [Self.filedIssue("RM-421"), Self.filedIssue("RM-422")])
         #expect(outcome.session.tray.map(\.filedIssue) == [Self.filedIssue("RM-421"), Self.filedIssue("RM-422")])
 
-        // One tag lookup for the whole run, then create → attach → tag per
-        // Finding, in tray order.
+        // Both tags resolved up front, then create → attach → design-review
+        // → Type tag per Finding, in tray order.
         let urls = transport.sentRequests.dropFirst(2).map(\.url?.absoluteString)
         #expect(Array(urls) == [
             "\(Self.base)/api/tags?fields=id,name&query=design-review&$top=100",
+            "\(Self.base)/api/tags?fields=id,name&query=nitpick-type:bug&$top=100",
             "\(Self.base)/api/issues?fields=id,idReadable",
             "\(Self.base)/api/issues/3-505/attachments?fields=id,name",
             "\(Self.base)/api/issues/3-505/tags?fields=id,name",
+            "\(Self.base)/api/issues/3-505/tags?fields=id,name",
             "\(Self.base)/api/issues?fields=id,idReadable",
             "\(Self.base)/api/issues/3-506/attachments?fields=id,name",
+            "\(Self.base)/api/issues/3-506/tags?fields=id,name",
             "\(Self.base)/api/issues/3-506/tags?fields=id,name",
         ])
         // Each created issue carries its own Finding's summary — the
@@ -271,7 +287,7 @@ struct SessionTrayScenarioTests {
         session.addFinding(IssueFilingTests.finding(summary: "Third"))
 
         // The network dies on the second Finding's creation request.
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        Self.enqueueTagLookups(on: transport)
         Self.enqueueLadder(on: transport, created: Self.createdIssue421)
         transport.enqueue(error: URLError(.networkConnectionLost))
 
@@ -281,15 +297,15 @@ struct SessionTrayScenarioTests {
         #expect(outcome.session.tray[0].filedIssue == Self.filedIssue("RM-421"))
         #expect(outcome.session.tray[1].isEditable)
         #expect(outcome.session.tray[2].isEditable)
-        // connect (2) + tag lookup + first ladder (3) + failed creation.
-        #expect(transport.sentRequests.count == 7)
+        // connect (2) + two tag lookups + first ladder (4) + failed creation.
+        #expect(transport.sentRequests.count == 9)
 
         // The still-editable second Finding is sharpened before retrying…
         var retried = outcome.session
         retried.updateFinding(id: retried.tray[1].id) { $0.summary = "Second — sharpened" }
 
         // …and the retry files only the remainder.
-        transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        Self.enqueueTagLookups(on: transport)
         Self.enqueueLadder(on: transport, created: Self.createdIssue422)
         Self.enqueueLadder(on: transport, created: Self.createdIssue423)
 
@@ -319,6 +335,7 @@ struct SessionTrayScenarioTests {
         session.addFinding(IssueFilingTests.finding(summary: "Solo"))
 
         transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.existingTypeTagJSON)
         transport.enqueue(json: Self.createdIssue421)
         transport.enqueue(error: URLError(.timedOut))
 
@@ -337,8 +354,10 @@ struct SessionTrayScenarioTests {
         #expect(frozen == outcome.session)
 
         transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.existingTypeTagJSON)
         transport.enqueue(json: IssueFilingTests.attachmentsJSON)
         transport.enqueue(json: IssueFilingTests.appliedTagJSON)
+        transport.enqueue(json: IssueFilingTests.appliedTypeTagJSON)
 
         let second = await core.fileAll(in: outcome.session)
 
@@ -347,10 +366,13 @@ struct SessionTrayScenarioTests {
         let urls = transport.sentRequests.dropFirst(2).map(\.url?.absoluteString)
         #expect(Array(urls) == [
             "\(Self.base)/api/tags?fields=id,name&query=design-review&$top=100",
+            "\(Self.base)/api/tags?fields=id,name&query=nitpick-type:bug&$top=100",
             "\(Self.base)/api/issues?fields=id,idReadable",
             "\(Self.base)/api/issues/3-505/attachments?fields=id,name",  // failed
             "\(Self.base)/api/tags?fields=id,name&query=design-review&$top=100",
+            "\(Self.base)/api/tags?fields=id,name&query=nitpick-type:bug&$top=100",
             "\(Self.base)/api/issues/3-505/attachments?fields=id,name",
+            "\(Self.base)/api/issues/3-505/tags?fields=id,name",
             "\(Self.base)/api/issues/3-505/tags?fields=id,name",
         ])
     }
@@ -363,6 +385,7 @@ struct SessionTrayScenarioTests {
         session.addFinding(IssueFilingTests.finding(summary: "Solo"))
 
         transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.existingTypeTagJSON)
         transport.enqueue(json: Self.createdIssue421)
         transport.enqueue(json: IssueFilingTests.attachmentsJSON)
         transport.enqueue(error: URLError(.networkConnectionLost))
@@ -374,7 +397,9 @@ struct SessionTrayScenarioTests {
             == .attachmentsUploaded(issueID: "3-505", idReadable: "RM-421"))
 
         transport.enqueue(json: IssueFilingTests.existingTagJSON)
+        transport.enqueue(json: IssueFilingTests.existingTypeTagJSON)
         transport.enqueue(json: IssueFilingTests.appliedTagJSON)
+        transport.enqueue(json: IssueFilingTests.appliedTypeTagJSON)
 
         let second = await core.fileAll(in: outcome.session)
 
@@ -383,11 +408,59 @@ struct SessionTrayScenarioTests {
         let urls = transport.sentRequests.dropFirst(2).map(\.url?.absoluteString)
         #expect(Array(urls) == [
             "\(Self.base)/api/tags?fields=id,name&query=design-review&$top=100",
+            "\(Self.base)/api/tags?fields=id,name&query=nitpick-type:bug&$top=100",
             "\(Self.base)/api/issues?fields=id,idReadable",
             "\(Self.base)/api/issues/3-505/attachments?fields=id,name",
-            "\(Self.base)/api/issues/3-505/tags?fields=id,name",  // failed
+            "\(Self.base)/api/issues/3-505/tags?fields=id,name",  // design-review, failed
             "\(Self.base)/api/tags?fields=id,name&query=design-review&$top=100",
-            "\(Self.base)/api/issues/3-505/tags?fields=id,name",
+            "\(Self.base)/api/tags?fields=id,name&query=nitpick-type:bug&$top=100",
+            "\(Self.base)/api/issues/3-505/tags?fields=id,name",  // design-review
+            "\(Self.base)/api/issues/3-505/tags?fields=id,name",  // Type
+        ])
+    }
+
+    @Test("a failure at the Type tag resumes at that tag alone — the issue, attachments, and design-review tag are never redone")
+    func resumesAtTypeTagApplication() async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await IssueFilingTests.connectedCore(transport: transport)
+        var session = IssueFilingTests.session
+        session.addFinding(IssueFilingTests.finding(summary: "Solo"))
+
+        // Everything through the design-review tag succeeds; the Type tag
+        // POST dies — the item rests at .reviewTagged, one rung short.
+        Self.enqueueTagLookups(on: transport)
+        transport.enqueue(json: Self.createdIssue421)
+        transport.enqueue(json: IssueFilingTests.attachmentsJSON)
+        transport.enqueue(json: IssueFilingTests.appliedTagJSON)
+        transport.enqueue(error: URLError(.networkConnectionLost))
+
+        let outcome = await core.fileAll(in: session)
+
+        #expect(outcome.failure is URLError)
+        #expect(outcome.session.tray[0].filingProgress
+            == .reviewTagged(issueID: "3-505", idReadable: "RM-421"))
+        #expect(outcome.session.tray[0].filedIssue == nil)
+
+        // Retry applies the Type tag alone: no re-created issue, no
+        // re-uploaded attachments, no re-applied design-review tag.
+        Self.enqueueTagLookups(on: transport)
+        transport.enqueue(json: IssueFilingTests.appliedTypeTagJSON)
+
+        let second = await core.fileAll(in: outcome.session)
+
+        #expect(second.failure == nil)
+        #expect(second.session.filedIssues == [Self.filedIssue("RM-421")])
+        let urls = transport.sentRequests.dropFirst(2).map(\.url?.absoluteString)
+        #expect(Array(urls) == [
+            "\(Self.base)/api/tags?fields=id,name&query=design-review&$top=100",
+            "\(Self.base)/api/tags?fields=id,name&query=nitpick-type:bug&$top=100",
+            "\(Self.base)/api/issues?fields=id,idReadable",
+            "\(Self.base)/api/issues/3-505/attachments?fields=id,name",
+            "\(Self.base)/api/issues/3-505/tags?fields=id,name",  // design-review
+            "\(Self.base)/api/issues/3-505/tags?fields=id,name",  // Type, failed
+            "\(Self.base)/api/tags?fields=id,name&query=design-review&$top=100",
+            "\(Self.base)/api/tags?fields=id,name&query=nitpick-type:bug&$top=100",
+            "\(Self.base)/api/issues/3-505/tags?fields=id,name",  // Type
         ])
     }
 

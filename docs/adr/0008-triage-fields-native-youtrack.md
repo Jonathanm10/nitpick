@@ -1,0 +1,17 @@
+# Triage fields: native YouTrack for Priority/Assignee, a tag for Type
+
+A Finding now carries three triage attributes — **Type** (Bug/Improvement), **Priority**, and **Assignee** — so the dev team can order and route the review backlog ("prendre les choses dans l'ordre"). That value only exists if devs can sort and assign in YouTrack itself, so nitpick abandons its schema-agnostic stance (until now a single fixed `design-review` tag) and reads the chosen project's schema — its `Priority` values and its assignable users — once at session setup, then sets the native `Priority`/`Assignee` fields in the issue-creation body. We trade a fatter, project-schema-dependent integration for the backlog triage the reviewing designer actually asked for.
+
+**Type** is handled differently from the other two. It is nitpick-owned — it gates the planned v2 verify pass (ADR-0004), which re-checks only Bugs — so it is stored as a namespaced tag (`nitpick-type:bug` / `nitpick-type:improvement`), queried alongside `design-review`. It is never written to the native `Type` field.
+
+## Considered Options
+
+- **Tags/metadata only (stay schema-agnostic).** Rejected: a tag can't sort a prioritized backlog or land in an assignee's queue, so it would not deliver the Priority/Assignee request.
+- **Best-effort native `Type` field as well as the tag.** Rejected: YouTrack's `Type` bundle has "Bug" but no honest "Improvement" value; guessing "Feature"/"Cosmetics" actively mislabels issues for devs, and the tag already filters and groups fine.
+
+## Consequences
+
+- **The schema read is non-fatal.** Offline, no permission, no `Priority` field, or no assignable users → hide that control; capture and filing still work. Type is unaffected (nitpick-owned).
+- **Priority/Assignee are best-effort at write time too.** Filing can resume long after setup — even across a relaunch — so a value can be rejected if the project changed in between. On a custom-field rejection, only the issue-creation request is retried once *without* the optional custom fields (summary, description, and project preserved); the later ladder steps — attachments, then the `design-review` and `nitpick-type:*` tags — run unchanged. Core filing never aborts over triage metadata. Genuine failures (auth, network, project gone) still propagate. A dropped field raises a **transient toast** (with the intended value) so the designer can relay it by hand — nothing is persisted to History.
+- **Priority/Assignee add no filing-ladder rung; Type adds one.** Priority/Assignee ride the issue-creation body, finalized before `.issueCreated`. Type's `nitpick-type:*` tag is a *second* tag POST after the existing `design-review` one, and the endpoint applies one tag per request. The ladder's invariant is to record every server-acknowledged step before firing the next request — it deliberately does not assume idempotency — so the second tag gets its own `FilingProgress` state (`.attachmentsUploaded` → apply `design-review` → new `.reviewTagged` → apply `nitpick-type:*` → `.filed`); collapsing both tags into one step would rely on unproven duplicate-tag idempotency and break resume on a crash between the two POSTs. The metadata block (ADR-0004) is untouched — no field goes through it — so this is *not* a versioned schema change.
+- **The filing gate is unchanged:** `summary` stays the only required field. Type always carries a value (defaults to Bug); Priority and Assignee are optional and reset on each capture (no stickiness).
