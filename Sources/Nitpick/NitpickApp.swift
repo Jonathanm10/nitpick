@@ -71,5 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        // nitpick's palette is a bespoke light theme (near-white window, white
+        // fields). Its text leans on adaptive semantic colors, so under system
+        // Dark Mode every label resolves light and vanishes on the light
+        // surfaces. Pin the whole app to aqua so appearance matches the design.
+        NSApp.appearance = NSAppearance(named: .aqua)
     }
 }
