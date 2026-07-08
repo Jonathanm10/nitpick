@@ -119,7 +119,8 @@ extension AppCore {
                 designReference: item.designReference,
                 // Absent in sessions persisted before Type shipped — those
                 // decode as nil and mean Bug, the always-set default.
-                type: item.type ?? .bug
+                type: item.type ?? .bug,
+                priority: item.priority
             )
             finding.annotations = item.annotations
             return TrayItem(id: item.id, finding: finding, filingProgress: item.filingProgress)
@@ -298,6 +299,9 @@ private struct StoredTrayItem: Codable {
     /// absent means Bug (see the load path). Additive, so schema version 1
     /// stands.
     var type: FindingType?
+    /// Optional at rest too — a Finding may carry no Priority, and a
+    /// manifest written before Priority shipped simply omits it.
+    var priority: FindingPriority?
 
     init(_ item: TrayItem) {
         id = item.id
@@ -308,6 +312,7 @@ private struct StoredTrayItem: Codable {
         designReference = item.finding.designReference
         filingProgress = item.filingProgress
         type = item.finding.type
+        priority = item.finding.priority
     }
 }
 

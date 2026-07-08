@@ -121,6 +121,19 @@ struct ContentView: View {
                     .padding(24)
             }
         }
+        .overlay(alignment: .bottom) {
+            if let notice = model.droppedFieldNotice {
+                DroppedFieldToast(message: notice, onDismiss: model.dismissDroppedFieldNotice)
+                    .padding(.bottom, 18)
+                    .transition(
+                        MotionTokens.reducedMotionAware(
+                            .move(edge: .bottom).combined(with: .opacity),
+                            reduceMotion: reduceMotion
+                        )
+                    )
+            }
+        }
+        .animation(reduceMotion ? nil : MotionTokens.enter, value: model.droppedFieldNotice)
     }
 
     /// The confirmation's count, in the domain's words (PRD story 20):
@@ -606,6 +619,21 @@ struct ContentView: View {
         .labelsHidden()
         .disabled(model.isBusy)
         .motionPressFeedback()
+        // Priority: shown only when the project's schema offered a scale
+        // (hidden otherwise — never offer a choice that can't be filed).
+        // None is a first-class choice: the Issue takes the project default.
+        if !model.sessionSchema.priorities.isEmpty {
+            Text("Priority")
+                .nitpickSectionLabel()
+            Picker("Priority", selection: $model.priorityField) {
+                Text("No priority").tag(FindingPriority?.none)
+                ForEach(model.sessionSchema.priorities, id: \.self) { priority in
+                    Text(priority.name).tag(FindingPriority?.some(priority))
+                }
+            }
+            .labelsHidden()
+            .disabled(model.isBusy)
+        }
         Text("Summary *")
             .nitpickSectionLabel()
         TextField("Summary", text: $model.summaryField)

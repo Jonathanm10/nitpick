@@ -26,3 +26,16 @@ public enum FindingType: String, Equatable, Sendable, Codable, CaseIterable {
         }
     }
 }
+
+/// A Priority the designer assigns to a Finding (glossary: Priority),
+/// drawn from the target project's own Priority scale. Optional — a Finding
+/// may carry none, and the Issue then takes the project's default.
+public struct FindingPriority: Equatable, Sendable, Codable, Hashable {
+    /// The Priority value's name, exactly as the project defines it — what
+    /// the Editor shows and what filing sends as the custom-field value.
+    public var name: String
+
+    public init(name: String) {
+        self.name = name
+    }
+}

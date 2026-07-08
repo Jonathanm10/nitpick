@@ -93,7 +93,7 @@ struct YouTrackLiveTests {
         finding.add(Annotation(.rectangle(CGRect(x: 80, y: 300, width: 200, height: 120))))
         finding.add(Annotation(.label("live smoke", at: CGPoint(x: 90, y: 440)), color: .blue))
 
-        let filed = try await core.file(finding, in: session)
+        let filed = try await core.file(finding, in: session).issue
         #expect(!filed.idReadable.isEmpty)
         print("live file: \(filed.idReadable) at \(filed.url.absoluteString)")
     }

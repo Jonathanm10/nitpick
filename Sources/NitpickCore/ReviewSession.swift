@@ -216,6 +216,10 @@ public struct Finding: Equatable, Sendable {
     /// designer says otherwise. Filed as a namespaced tag, never the
     /// project's native Type field (ADR-0008).
     public var type: FindingType
+    /// The Priority the designer assigned (glossary: Priority), or nil to
+    /// take the project's default. Drawn from the project's own scale, read
+    /// at session setup; reset on each capture — no stickiness (ADR-0008).
+    public var priority: FindingPriority?
 
     public init(
         summary: String,
@@ -223,7 +227,8 @@ public struct Finding: Equatable, Sendable {
         screenshotPNG: Data,
         deviceContext: DeviceContext,
         designReference: URL? = nil,
-        type: FindingType = .bug
+        type: FindingType = .bug,
+        priority: FindingPriority? = nil
     ) {
         self.summary = summary
         self.description = description
@@ -231,6 +236,7 @@ public struct Finding: Equatable, Sendable {
         self.deviceContext = deviceContext
         self.designReference = designReference
         self.type = type
+        self.priority = priority
     }
 }
 
@@ -242,6 +248,7 @@ extension Finding {
             && lhs.deviceContext == rhs.deviceContext
             && lhs.designReference == rhs.designReference
             && lhs.type == rhs.type
+            && lhs.priority == rhs.priority
             && lhs.annotations == rhs.annotations
     }
 }

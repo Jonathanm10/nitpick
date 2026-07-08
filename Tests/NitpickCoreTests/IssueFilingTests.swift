@@ -90,10 +90,10 @@ struct IssueFilingTests {
         transport.enqueue(json: Self.appliedTypeTagJSON)
 
         let filed = try await core.file(Self.finding(), in: Self.session)
-        #expect(filed == FiledIssue(
+        #expect(filed == FilingResult(issue: FiledIssue(
             idReadable: "RM-421",
             url: URL(string: "https://youtrack.example.com/yt/issue/RM-421")!
-        ))
+        )))
 
         let requests = transport.sentRequests.dropFirst(2)
         try #require(requests.count == 6)

@@ -78,10 +78,10 @@ struct ComposeAndFileScenarioTests {
         transport.enqueue(json: #"{"id":"6-4","name":"design-review","$type":"Tag"}"#)
         transport.enqueue(json: #"{"id":"6-5","name":"nitpick-type:bug","$type":"Tag"}"#)
         let filed = try await core.file(finding, in: session)
-        #expect(filed == FiledIssue(
+        #expect(filed == FilingResult(issue: FiledIssue(
             idReadable: "RM-421",
             url: URL(string: "https://youtrack.example.com/issue/RM-421")!
-        ))
+        )))
 
         // The whole subprocess side ran: list, boot, bootstatus, open,
         // the two Device Settings applications, install, launch, the

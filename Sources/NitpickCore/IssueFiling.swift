@@ -13,6 +13,46 @@ public struct FiledIssue: Equatable, Sendable, Codable {
     }
 }
 
+/// A triage field the create step could not set (glossary: Priority,
+/// Assignee) — reported so the shell can toast the designer the value to
+/// relay by hand (ADR-0008). Best-effort: the Finding still files. Never
+/// persisted — History and `FiledIssue` are unchanged.
+public struct DroppedTriageField: Equatable, Sendable {
+    public enum Field: String, Equatable, Sendable, CaseIterable {
+        case priority
+        case assignee
+
+        /// The designer-facing field name, for the toast.
+        public var label: String {
+            switch self {
+            case .priority: "Priority"
+            case .assignee: "Assignee"
+            }
+        }
+    }
+
+    public var field: Field
+    /// The value the designer intended, in human-readable form.
+    public var intendedValue: String
+
+    public init(field: Field, intendedValue: String) {
+        self.field = field
+        self.intendedValue = intendedValue
+    }
+}
+
+/// What single filing left behind: the filed issue, plus any optional
+/// triage fields the create had to drop.
+public struct FilingResult: Equatable, Sendable {
+    public var issue: FiledIssue
+    public var droppedFields: [DroppedTriageField]
+
+    public init(issue: FiledIssue, droppedFields: [DroppedTriageField] = []) {
+        self.issue = issue
+        self.droppedFields = droppedFields
+    }
+}
+
 /// What a file-all run left behind. Progress is never thrown away: the
 /// returned session carries every mark the run made, finished or not.
 public struct FileAllOutcome: Sendable {
@@ -22,6 +62,10 @@ public struct FileAllOutcome: Sendable {
     /// stopped the run. Retrying `fileAll` with the returned session files
     /// only what is still missing.
     public var failure: (any Error)?
+    /// Per tray item (keyed by its identity, never the Finding — byte-equal
+    /// captures stay distinct), the optional triage fields the create had to
+    /// drop. Empty for a clean run; transient, never persisted.
+    public var droppedFields: [TrayItem.ID: [DroppedTriageField]] = [:]
 }
 
 extension AppCore {
@@ -37,7 +81,7 @@ extension AppCore {
     /// `design-review` and the Finding's `nitpick-type:*` (ADR-0008). The
     /// session supplies the project — chosen once at session start, never
     /// re-asked.
-    public func file(_ finding: Finding, in session: ReviewSession) async throws -> FiledIssue {
+    public func file(_ finding: Finding, in session: ReviewSession) async throws -> FilingResult {
         guard !finding.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw YouTrackError.summaryRequired
         }
@@ -54,9 +98,12 @@ extension AppCore {
         let typeTagID = try await tagID(named: finding.type.tagName, with: credentials)
 
         var item = TrayItem(finding: finding)
+        var dropped: [DroppedTriageField] = []
         while true {
-            if case .filed(let issue) = item.filingProgress { return issue }
-            try await advanceFilingOneStep(
+            if case .filed(let issue) = item.filingProgress {
+                return FilingResult(issue: issue, droppedFields: dropped)
+            }
+            dropped += try await advanceFilingOneStep(
                 of: &item, in: session,
                 annotatedPNG: annotatedPNG, credentials: credentials,
                 designReviewTagID: designReviewTagID, typeTagID: typeTagID
@@ -78,6 +125,7 @@ extension AppCore {
         onProgress: (@MainActor @Sendable (ReviewSession) -> Void)? = nil
     ) async -> FileAllOutcome {
         var updated = session
+        var droppedFields: [TrayItem.ID: [DroppedTriageField]] = [:]
         let remaining = updated.tray.indices.filter { updated.tray[$0].filedIssue == nil }
         guard !remaining.isEmpty else { return FileAllOutcome(session: updated, failure: nil) }
         do {
@@ -106,12 +154,15 @@ extension AppCore {
             }
             for (index, annotatedPNG) in pending {
                 while updated.tray[index].filedIssue == nil {
-                    try await advanceFilingOneStep(
+                    let stepDropped = try await advanceFilingOneStep(
                         of: &updated.tray[index], in: session,
                         annotatedPNG: annotatedPNG, credentials: credentials,
                         designReviewTagID: designReviewTagID,
                         typeTagID: typeTagIDs[updated.tray[index].finding.type.tagName]!
                     )
+                    if !stepDropped.isEmpty {
+                        droppedFields[updated.tray[index].id, default: []] += stepDropped
+                    }
                     // Durability (issue 07): the mark hits disk before the
                     // next request fires — a crash mid-run resumes on
                     // relaunch, never re-files.
@@ -124,9 +175,9 @@ extension AppCore {
             // Every tray item is filed: freeze the session into history
             // and clear the open slot.
             try recordInHistory(updated)
-            return FileAllOutcome(session: updated, failure: nil)
+            return FileAllOutcome(session: updated, failure: nil, droppedFields: droppedFields)
         } catch {
-            return FileAllOutcome(session: updated, failure: error)
+            return FileAllOutcome(session: updated, failure: error, droppedFields: droppedFields)
         }
     }
 
@@ -145,19 +196,10 @@ extension AppCore {
         credentials: (instanceURL: URL, token: String),
         designReviewTagID: String,
         typeTagID: String
-    ) async throws {
+    ) async throws -> [DroppedTriageField] {
         switch item.filingProgress {
         case .notStarted:
-            let issue: CreatedIssuePayload = try await requestYouTrack(
-                instanceURL: credentials.instanceURL, token: credentials.token,
-                method: "POST", path: "api/issues", query: "fields=id,idReadable",
-                body: try Self.jsonBody(IssueCreationPayload(
-                    project: .init(id: session.project.id),
-                    summary: item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines),
-                    description: session.issueDescription(for: item.finding)
-                )),
-                deniedAction: "create an issue in \(session.project.name)"
-            )
+            let created = try await createIssue(item.finding, in: session, credentials: credentials)
             // The description just rendered used the effective Design
             // Reference (Finding override, else session-level). Freeze it
             // onto the Finding now that the issue exists: the tray record —
@@ -166,7 +208,8 @@ extension AppCore {
             // changes before a retry files the remainder. On a throw the
             // Finding stays untouched and editable.
             item.finding.designReference = session.effectiveDesignReference(for: item.finding)
-            item.filingProgress = .issueCreated(issueID: issue.id, idReadable: issue.idReadable)
+            item.filingProgress = .issueCreated(issueID: created.issue.id, idReadable: created.issue.idReadable)
+            return created.droppedFields
 
         case .issueCreated(let issueID, let idReadable):
             // Attach before tagging: if attaching fails, the issue stays
@@ -184,10 +227,12 @@ extension AppCore {
                 deniedAction: "attach the screenshots"
             )
             item.filingProgress = .attachmentsUploaded(issueID: issueID, idReadable: idReadable)
+            return []
 
         case .attachmentsUploaded(let issueID, let idReadable):
             try await applyTag(designReviewTagID, toIssue: issueID, named: Self.designReviewTagName, credentials: credentials)
             item.filingProgress = .reviewTagged(issueID: issueID, idReadable: idReadable)
+            return []
 
         case .reviewTagged(let issueID, let idReadable):
             // The Type tag rides last, one tag per request (ADR-0008): the
@@ -200,10 +245,80 @@ extension AppCore {
                     .appendingPathComponent("issue")
                     .appendingPathComponent(idReadable)
             ))
+            return []
 
         case .filed:
-            break
+            return []
         }
+    }
+
+    /// Creates the issue, carrying the Finding's optional triage custom
+    /// fields (Priority/Assignee) in the body — finalized before
+    /// `.issueCreated`, so no new ladder rung. Best-effort on those fields:
+    /// summary and project are already validated, so a 400 rejection while
+    /// custom fields were sent is attributable to them — the create is
+    /// retried exactly once *without* the optional fields (summary,
+    /// description, project preserved), the Finding still files, and the
+    /// dropped fields are reported. If the retry-without-fields still fails,
+    /// that error propagates: a genuine failure is never masked. Auth (401/
+    /// 403), network, and project-gone (404) failures are never retried
+    /// (ADR-0008).
+    private func createIssue(
+        _ finding: Finding,
+        in session: ReviewSession,
+        credentials: (instanceURL: URL, token: String)
+    ) async throws -> (issue: CreatedIssuePayload, droppedFields: [DroppedTriageField]) {
+        let customFields = Self.customFields(for: finding)
+        let summary = finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let description = session.issueDescription(for: finding)
+        func create(withCustomFields fields: [IssueCustomField]?) async throws -> CreatedIssuePayload {
+            try await requestYouTrack(
+                instanceURL: credentials.instanceURL, token: credentials.token,
+                method: "POST", path: "api/issues", query: "fields=id,idReadable",
+                body: try Self.jsonBody(IssueCreationPayload(
+                    customFields: fields, project: .init(id: session.project.id),
+                    summary: summary, description: description
+                )),
+                deniedAction: "create an issue in \(session.project.name)"
+            )
+        }
+        do {
+            return (try await create(withCustomFields: customFields.isEmpty ? nil : customFields), [])
+        } catch {
+            guard !customFields.isEmpty, Self.isCustomFieldRejection(error) else { throw error }
+            return (try await create(withCustomFields: nil), Self.droppedFields(for: finding))
+        }
+    }
+
+    /// A create rejection the optional custom fields could be responsible
+    /// for: a 400. Auth (401/403 → tokenRejected/permissionDenied), network
+    /// (URLError), and project-gone (404 → unexpectedResponse) never match.
+    private static func isCustomFieldRejection(_ error: any Error) -> Bool {
+        if case YouTrackError.unexpectedResponse(let statusCode) = error { return statusCode == 400 }
+        return false
+    }
+
+    /// The Finding's optional triage custom fields, in a fixed order
+    /// (Priority before Assignee) so create bodies stay byte-stable.
+    private static func customFields(for finding: Finding) -> [IssueCustomField] {
+        var fields: [IssueCustomField] = []
+        if let priority = finding.priority {
+            fields.append(IssueCustomField(
+                type: "SingleEnumIssueCustomField", name: "Priority",
+                value: .enumValue(name: priority.name)
+            ))
+        }
+        return fields
+    }
+
+    /// The triage fields a create dropped, paired with the values the
+    /// designer intended — what the shell toasts.
+    private static func droppedFields(for finding: Finding) -> [DroppedTriageField] {
+        var dropped: [DroppedTriageField] = []
+        if let priority = finding.priority {
+            dropped.append(DroppedTriageField(field: .priority, intendedValue: priority.name))
+        }
+        return dropped
     }
 
     /// Applies one already-resolved tag to an issue — one tag per request,
@@ -292,9 +407,46 @@ private struct IssueCreationPayload: Encodable {
         var id: String
     }
 
+    /// Optional triage custom fields (Priority/Assignee). Nil omits the key
+    /// entirely — a Finding with no triage fields files exactly the body it
+    /// always did, byte-for-byte (ADR-0008).
+    var customFields: [IssueCustomField]?
     var project: ProjectReference
     var summary: String
     var description: String
+}
+
+/// A custom field on the issue-creation body: Priority as an enum value
+/// name, Assignee as a user login. `$type` names the YouTrack field kind;
+/// with sorted keys this encodes as {"$type":…,"name":…,"value":{…}}.
+private struct IssueCustomField: Encodable {
+    enum Value: Encodable {
+        case enumValue(name: String)
+        case user(login: String)
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CustomFieldValueKey.self)
+            switch self {
+            case .enumValue(let name): try container.encode(name, forKey: .name)
+            case .user(let login): try container.encode(login, forKey: .login)
+            }
+        }
+    }
+
+    var type: String
+    var name: String
+    var value: Value
+
+    enum CodingKeys: String, CodingKey {
+        case type = "$type"
+        case name
+        case value
+    }
+}
+
+private enum CustomFieldValueKey: String, CodingKey {
+    case name
+    case login
 }
 
 private struct TagCreationPayload: Encodable {

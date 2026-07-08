@@ -102,6 +102,16 @@ final class AppModel {
     /// The local history log: filed sessions with their issue links,
     /// newest first. Read-only, read from disk — never from YouTrack.
     private(set) var history: [HistoryEntry] = []
+    /// The chosen project's triage schema — its Priority scale — read once
+    /// at Start review (glossary: Priority; ADR-0008). Held in memory for
+    /// the session; the Editor's Priority control is populated from it, and
+    /// an empty scale hides that control. Non-fatal to load.
+    private(set) var sessionSchema = ProjectSchema()
+    /// A transient toast naming any triage field filing had to drop and the
+    /// value the designer intended, so it can be relayed by hand (PRD story
+    /// 28). Set on a file-all that dropped a field; auto-clears. Never
+    /// persisted — History stays a clean record.
+    private(set) var droppedFieldNotice: String?
 
     var historyTrace: HistoryTrace? {
         HistoryTrace(history: history)
@@ -131,6 +141,14 @@ final class AppModel {
     var typeField: FindingType {
         get { selectedItem?.finding.type ?? .bug }
         set { editSelectedFinding { $0.type = newValue } }
+    }
+
+    /// The selected Finding's Priority, bound to the Editor's Priority
+    /// picker (glossary: Priority). Optional — nil is "no Priority", a
+    /// first-class choice that lets the Issue take the project's default.
+    var priorityField: FindingPriority? {
+        get { selectedItem?.finding.priority }
+        set { editSelectedFinding { $0.priority = newValue } }
     }
 
     /// The session-level Design Reference (issue 09), bound to the review
@@ -366,6 +384,11 @@ final class AppModel {
             deviceSettings = settings
             reviewDevice = device
             isReviewing = true
+            // Session-setup schema read (ADR-0008): learn the project's
+            // Priority scale so the Editor's control is populated before the
+            // first capture. Non-fatal — an empty schema hides the control,
+            // and capture and filing proceed regardless (PRD story 22).
+            sessionSchema = await core.loadProjectSchema(for: project)
             if session == nil {
                 filingResult = nil
                 filingStoppedByFailure = false
@@ -516,6 +539,7 @@ final class AppModel {
         await perform {
             filingRunActive = true
             filingStoppedByFailure = false
+            droppedFieldNotice = nil
             let outcome = await core.fileAll(in: session, onProgress: { self.session = $0 })
             filingRunActive = false
             if let failure = outcome.failure {
@@ -524,6 +548,10 @@ final class AppModel {
                 refreshHistory()
                 throw failure
             }
+
+            // Report any triage fields the run had to drop (PRD story 28):
+            // a transient toast with the intended value, nothing persisted.
+            presentDroppedFieldNotice(from: outcome.droppedFields)
 
             // The whole tray filed: the live Review Session is over. End it
             // — the capture hotkey unregisters as `session` clears, the
@@ -536,6 +564,7 @@ final class AppModel {
             self.session = nil
             isReviewing = false
             reviewDevice = nil
+            sessionSchema = ProjectSchema()
             clearSelection()
             // Re-read History from disk and hold its newest entry — the
             // session that just filed (its start moment is the latest, so it
@@ -550,6 +579,10 @@ final class AppModel {
         session = nil
         isReviewing = false
         reviewDevice = nil
+        // The session's triage schema and any dropped-field notice belong
+        // to this session; the next one reads a fresh schema at Start review.
+        sessionSchema = ProjectSchema()
+        droppedFieldNotice = nil
         // The comeback label belongs to the run that failed — a session
         // ending takes it along, or the next session would open on a
         // stale "File N remaining".
@@ -591,6 +624,25 @@ final class AppModel {
     /// untouched on disk as History's newest entry.
     func dismissFilingResult() {
         filingResult = nil
+    }
+
+    /// The toast's own dismissal (its auto-hide timer, or a click): clears
+    /// the notice. Presentation only — nothing else depends on it.
+    func dismissDroppedFieldNotice() {
+        droppedFieldNotice = nil
+    }
+
+    /// Builds the dropped-field toast from a file-all outcome: names each
+    /// distinct field + intended value once, so the designer can relay them
+    /// by hand. No dropped fields leaves the notice clear.
+    private func presentDroppedFieldNotice(from dropped: [TrayItem.ID: [DroppedTriageField]]) {
+        let all = dropped.values.flatMap { $0 }
+        guard !all.isEmpty else { return }
+        let phrases = Set(all.map { "\($0.field.label) “\($0.intendedValue)”" }).sorted()
+        let list = phrases.joined(separator: ", ")
+        droppedFieldNotice = all.count == 1
+            ? "Couldn’t set \(list) — set it in YouTrack by hand."
+            : "Couldn’t set some triage fields (\(list)) — set them in YouTrack by hand."
     }
 
     /// Sessions persist as they are created (issue 07): every mutation
