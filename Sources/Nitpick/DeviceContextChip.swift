@@ -1,9 +1,8 @@
 import NitpickCore
 import SwiftUI
 
-/// The session's Device Context at a glance: one compact chip that keeps the
-/// active device and any non-default accessibility state visible, while the
-/// popover holds the same device and settings controls that already govern the
+/// The session's Device Context at a glance: one compact chip showing the
+/// active device, whose popover holds the device picker that governs the
 /// review.
 struct DeviceContextChip: View {
     @Bindable var model: AppModel
@@ -19,10 +18,6 @@ struct DeviceContextChip: View {
                     .foregroundStyle(NitpickTheme.secondaryText)
                 Text("\(deviceName) — \(osName)")
                     .font(.system(size: 17, weight: .semibold))
-                    .lineLimit(1)
-                Text(accessibilitySummary)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(NitpickTheme.secondaryText)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.caption.weight(.semibold))
@@ -49,57 +44,14 @@ struct DeviceContextChip: View {
         model.selectedDevice?.osName ?? model.reviewDevice?.osName ?? "runtime unknown"
     }
 
-    private var accessibilitySummary: String {
-        let descriptions = model.deviceSettings.accessibilityDescriptions
-        return descriptions.isEmpty ? "Default" : descriptions.joined(separator: " · ")
-    }
-
     private var accessibilityLabel: Text {
-        Text("Device Context, \(deviceName), \(accessibilitySummary)")
+        Text("Device Context, \(deviceName) — \(osName)")
     }
 
-    @ViewBuilder
     private var popoverContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            DeviceContextPickerControls(model: model)
-
-            if model.isReviewing {
-                Picker("Dynamic Type", selection: dynamicTypeSelection) {
-                    ForEach(DeviceSettings.DynamicTypeSize.allCases, id: \.self) { size in
-                        Text(size.displayName).tag(size)
-                    }
-                }
-                .fixedSize()
-                .disabled(model.isBusy)
-                .help("The simulator's Dynamic Type size — stamped onto every capture.")
-
-                Picker("Appearance", selection: appearanceSelection) {
-                    Text("Light").tag(DeviceSettings.Appearance.light)
-                    Text("Dark").tag(DeviceSettings.Appearance.dark)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .disabled(model.isBusy)
-                .help("The simulator's appearance — stamped onto every capture.")
-            }
-        }
-        .frame(width: 320, alignment: .leading)
-        .padding(12)
-    }
-
-    private var dynamicTypeSelection: Binding<DeviceSettings.DynamicTypeSize> {
-        Binding(
-            get: { model.deviceSettings.dynamicTypeSize },
-            set: { size in Task { await model.setDynamicTypeSize(size) } }
-        )
-    }
-
-    private var appearanceSelection: Binding<DeviceSettings.Appearance> {
-        Binding(
-            get: { model.deviceSettings.appearance },
-            set: { appearance in Task { await model.setAppearance(appearance) } }
-        )
+        DeviceContextPickerControls(model: model)
+            .frame(width: 320, alignment: .leading)
+            .padding(12)
     }
 }
 

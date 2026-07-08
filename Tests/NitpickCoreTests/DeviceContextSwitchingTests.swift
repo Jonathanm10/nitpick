@@ -2,12 +2,12 @@ import Foundation
 import NitpickCore
 import Testing
 
-/// The size/accessibility matrix inside one Review Session (issue 06):
-/// Dynamic Type and appearance are set from nitpick, a device switch
-/// relaunches the same Build under the session's current Device Settings,
-/// and every Finding is stamped with the Device Context in effect at its
-/// capture moment.
-@Suite("Device Context switching")
+/// Accessibility is observed, not owned (ADR-0009): nitpick reads the
+/// simulator's live accessibility state at capture time and stamps it,
+/// `launch` touches no accessibility setting, and a mid-session device
+/// switch relaunches the same Build while each Finding carries the state
+/// read at its own capture moment.
+@Suite("Device Context observation and switching")
 struct DeviceContextSwitchingTests {
     let workspace: URL
     let runner = FakeSubprocessRunner()
@@ -29,122 +29,124 @@ struct DeviceContextSwitchingTests {
         )
     }
 
-    // MARK: - Settings changes
+    // MARK: - Observing the live accessibility state
 
-    @Test("changing the Dynamic Type size emits exactly one content_size command")
-    func dynamicTypeCommand() async throws {
-        runner.enqueue(SubprocessResult(exitCode: 0))
+    @Test("observedSettings issues the three no-argument ui reads and parses their output")
+    func observedSettingsReadsAndParses() async throws {
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("accessibility-large\n".utf8)))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("dark\n".utf8)))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("enabled\n".utf8)))
 
-        try await core.setDynamicTypeSize(.accessibilityLarge, on: iPhone)
+        let settings = try await core.observedSettings(of: iPhone)
 
+        #expect(settings == DeviceSettings(dynamicTypeSize: .accessibilityLarge, appearance: .dark, increaseContrast: true))
+        let xcrun = "/usr/bin/xcrun"
         #expect(runner.executedCommands == [
-            SubprocessCommand(
-                executablePath: "/usr/bin/xcrun",
-                arguments: ["simctl", "ui", "AAAA-1111", "content_size", "accessibility-large"]
-            )
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "content_size"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "appearance"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "increase_contrast"]),
         ])
     }
 
-    @Test("changing the appearance emits exactly one appearance command")
-    func appearanceCommand() async throws {
-        runner.enqueue(SubprocessResult(exitCode: 0))
+    @Test("unsupported, unknown, and unparseable reads each map to the dimension's default")
+    func observedSettingsMapsUnreadableToDefault() async throws {
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("unsupported\n".utf8)))  // content_size
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("unknown\n".utf8)))       // appearance
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("wobble\n".utf8)))        // increase_contrast
 
-        try await core.setAppearance(.dark, on: iPhone)
+        let settings = try await core.observedSettings(of: iPhone)
 
-        #expect(runner.executedCommands == [
-            SubprocessCommand(
-                executablePath: "/usr/bin/xcrun",
-                arguments: ["simctl", "ui", "AAAA-1111", "appearance", "dark"]
-            )
-        ])
+        #expect(settings == DeviceSettings())
+        // Everything default: the composed Device Context carries no
+        // Accessibility line, so no garbage token can reach a filed Issue.
+        #expect(DeviceContext(device: iPhone, settings: settings).accessibilitySettings.isEmpty)
     }
 
-    @Test("a failed settings change surfaces the subprocess failure")
-    func settingsFailure() async {
-        runner.enqueue(SubprocessResult(exitCode: 1, standardError: Data("Invalid device: AAAA-1111".utf8)))
+    @Test("an unreadable dimension defaults independently — its valid siblings are still stamped")
+    func observedSettingsDefaultsPerDimension() async throws {
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("extra-large\n".utf8)))  // content_size, valid
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("unsupported\n".utf8)))  // appearance, unreadable
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("enabled\n".utf8)))       // increase_contrast, valid
 
-        await #expect(throws: SubprocessFailure.self) {
-            try await core.setAppearance(.dark, on: iPhone)
-        }
+        let settings = try await core.observedSettings(of: iPhone)
+
+        // Only appearance falls back to its default; the readable dimensions stand.
+        #expect(settings == DeviceSettings(dynamicTypeSize: .extraLarge, appearance: .default, increaseContrast: true))
     }
 
     // MARK: - The whole matrix, mid-session
 
-    @Test("a mid-session switch relaunches the same Build under the session's settings; each Finding carries its capture-moment stamp")
+    @Test("a mid-session switch relaunches the Build without touching accessibility; each Finding carries the state observed at its capture")
     func deviceSwitchScenario() async throws {
         var session = ReviewSession(
             build: build,
             project: YouTrackProject(id: "0-12", shortName: "RM", name: "Review Me"),
             startedAt: Date(timeIntervalSince1970: 1_783_156_532)  // 2026-07-04T09:15:32Z
         )
-        var settings = DeviceSettings()
         let capturePath = workspace.appendingPathComponent("captures/capture.png")
+        let xcrun = "/usr/bin/xcrun"
 
-        // Reviewing on the iPhone under default settings: the first capture
-        // is stamped with that Device Context.
+        // Reviewing on the iPhone: the capture reads back default
+        // accessibility, so the Finding carries no Accessibility line.
         let iPhonePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
         runner.enqueue(SubprocessResult(
             exitCode: 0,
             standardOutput: Data(Fixtures.deviceListJSON(udid: iPhone.udid, name: iPhone.name, state: "Booted").utf8)
         ))
         runner.enqueue(SubprocessResult(exitCode: 0)) { _ in try iPhonePNG.write(to: capturePath) }
+        let iPhoneScreenshot = try await core.captureScreen(of: iPhone)
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("large\n".utf8)))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("light\n".utf8)))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("disabled\n".utf8)))
         session.addFinding(Finding(
             summary: "Toolbar icons misaligned", description: "",
-            screenshotPNG: try await core.captureScreen(of: iPhone),
-            deviceContext: DeviceContext(device: iPhone, settings: settings)
+            screenshotPNG: iPhoneScreenshot,
+            deviceContext: DeviceContext(device: iPhone, settings: try await core.observedSettings(of: iPhone))
         ))
 
-        // The designer bumps Dynamic Type and switches to dark…
-        runner.enqueue(SubprocessResult(exitCode: 0))
-        try await core.setDynamicTypeSize(.accessibilityLarge, on: iPhone)
-        settings.dynamicTypeSize = .accessibilityLarge
-        runner.enqueue(SubprocessResult(exitCode: 0))
-        try await core.setAppearance(.dark, on: iPhone)
-        settings.appearance = .dark
+        // The designer switches to the iPad — the same Build relaunches, no
+        // session setup redone and no accessibility command issued…
+        for _ in 0..<5 { runner.enqueue(SubprocessResult(exitCode: 0)) }
+        try await core.launch(build, on: iPad)
 
-        // …switches to the iPad — the same Build relaunches under the
-        // session's current settings, no session setup redone…
-        for _ in 0..<7 { runner.enqueue(SubprocessResult(exitCode: 0)) }
-        try await core.launch(build, on: iPad, settings: settings)
-
-        // …and captures again under the new Device Context.
+        // …then, having bumped Dynamic Type, dark mode, and Increase Contrast
+        // in the simulator, captures again — the read-back stamps all three.
         let iPadPNG = Data([0x89, 0x50, 0x4E, 0x47, 0x02])
         runner.enqueue(SubprocessResult(
             exitCode: 0,
             standardOutput: Data(Fixtures.deviceListJSON(udid: iPad.udid, name: iPad.name, state: "Booted").utf8)
         ))
         runner.enqueue(SubprocessResult(exitCode: 0)) { _ in try iPadPNG.write(to: capturePath) }
+        let iPadScreenshot = try await core.captureScreen(of: iPad)
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("accessibility-large\n".utf8)))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("dark\n".utf8)))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("enabled\n".utf8)))
         session.addFinding(Finding(
             summary: "Sidebar overlaps content", description: "",
-            screenshotPNG: try await core.captureScreen(of: iPad),
-            deviceContext: DeviceContext(device: iPad, settings: settings)
+            screenshotPNG: iPadScreenshot,
+            deviceContext: DeviceContext(device: iPad, settings: try await core.observedSettings(of: iPad))
         ))
 
-        // The exact wire story: each capture's booted re-check + capture,
-        // two settings changes, the switch's full relaunch under the
-        // session's settings.
-        let xcrun = "/usr/bin/xcrun"
+        // The exact wire story: each capture's booted re-check + screenshot +
+        // three no-argument accessibility reads, and the switch's relaunch —
+        // with no content_size / appearance set command anywhere.
         let listCommand = SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "list", "devices", "--json"])
         #expect(runner.executedCommands == [
             listCommand,
-            SubprocessCommand(
-                executablePath: xcrun,
-                arguments: ["simctl", "io", "AAAA-1111", "screenshot", "--type=png", capturePath.path]
-            ),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "content_size", "accessibility-large"]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "appearance", "dark"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "io", "AAAA-1111", "screenshot", "--type=png", capturePath.path]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "content_size"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "appearance"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "increase_contrast"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "boot", "BBBB-2222"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "bootstatus", "BBBB-2222", "-b"]),
             SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", "Simulator"]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "BBBB-2222", "content_size", "accessibility-large"]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "BBBB-2222", "appearance", "dark"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "install", "BBBB-2222", build.appBundleURL.path]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "launch", "BBBB-2222", "ch.liip.reviewme"]),
             listCommand,
-            SubprocessCommand(
-                executablePath: xcrun,
-                arguments: ["simctl", "io", "BBBB-2222", "screenshot", "--type=png", capturePath.path]
-            ),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "io", "BBBB-2222", "screenshot", "--type=png", capturePath.path]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "BBBB-2222", "content_size"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "BBBB-2222", "appearance"]),
+            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "BBBB-2222", "increase_contrast"]),
         ])
 
         // The session survived the switch: both Findings in one tray,
@@ -165,7 +167,7 @@ struct DeviceContextSwitchingTests {
             ---
             App: ch.liip.reviewme 2.1.0 (421)
             Device: iPad Pro 13-inch (M4) — iOS 26.4
-            Accessibility: Dynamic Type AX2, Dark Mode
+            Accessibility: Dynamic Type AX2, Dark Mode, Increase Contrast
             Filed with nitpick — session 2026-07-04T09:15:32Z
             """
         )

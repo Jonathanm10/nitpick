@@ -26,9 +26,10 @@ final class AppModel {
     /// in-flight switch can never stamp a Finding with a device the Build
     /// isn't running on.
     private(set) var reviewDevice: SimulatorDevice?
-    /// The Device Settings currently applied to the review device — the
-    /// settings half of the stamp. Advances only after the core confirms
-    /// the simulator accepted the change.
+    /// The Device Settings last observed at capture — the accessibility
+    /// state read back from the simulator when the most recent Finding was
+    /// stamped. nitpick no longer pushes these (ADR-0009); the designer
+    /// drives accessibility in the simulator.
     private(set) var deviceSettings = DeviceSettings()
     /// The core-rendered annotated capture — what the designer sees while
     /// editing, and exactly what filing flattens.
@@ -383,12 +384,7 @@ final class AppModel {
             // or runtime surfaces as guidance before any boot is attempted.
             guard try await refreshSetup() else { return }
             guard let device = selectedDevice, device.isRuntimeAvailable else { return }
-            // Every session starts from default Device Settings; launch
-            // applies them, so the stamp matches the simulator from the
-            // first capture on.
-            let settings = DeviceSettings()
-            try await core.launch(build, on: device, settings: settings)
-            deviceSettings = settings
+            try await core.launch(build, on: device)
             reviewDevice = device
             isReviewing = true
             // Session-setup schema read (ADR-0008): learn the project's
@@ -426,9 +422,9 @@ final class AppModel {
         }
     }
     /// Mid-session device switch (PRD story 7): relaunches the session's
-    /// Build on the new device under the session's current Device Settings.
-    /// The session — Build, project, tray — is untouched. On failure the
-    /// picker reverts to the device still running the Build.
+    /// Build on the new device. The session — Build, project, tray — is
+    /// untouched. On failure the picker reverts to the device still running
+    /// the Build.
     func switchDevice(to id: SimulatorDevice.ID?) async {
         guard isReviewing, !isBusy, let build,
               let id, id != reviewDevice?.id,
@@ -438,28 +434,12 @@ final class AppModel {
         selectedDeviceID = id
         await perform {
             do {
-                try await core.launch(build, on: device, settings: deviceSettings)
+                try await core.launch(build, on: device)
                 reviewDevice = device
             } catch {
                 selectedDeviceID = reviewDevice?.id
                 throw error
             }
-        }
-    }
-
-    func setDynamicTypeSize(_ size: DeviceSettings.DynamicTypeSize) async {
-        guard !isBusy, let device = reviewDevice, size != deviceSettings.dynamicTypeSize else { return }
-        await perform {
-            try await core.setDynamicTypeSize(size, on: device)
-            deviceSettings.dynamicTypeSize = size
-        }
-    }
-
-    func setAppearance(_ appearance: DeviceSettings.Appearance) async {
-        guard !isBusy, let device = reviewDevice, appearance != deviceSettings.appearance else { return }
-        await perform {
-            try await core.setAppearance(appearance, on: device)
-            deviceSettings.appearance = appearance
         }
     }
 
@@ -471,13 +451,17 @@ final class AppModel {
         // A pending label draft pins the editor: retargeting before the
         // surface resolves it would drop the visible note or commit it to
         // the wrong Finding — same invariant as the filing gate. Busy means
-        // a switch or settings change may be in flight — capturing then
+        // a device switch may be in flight — capturing then
         // could stamp a Device Context the screenshot wasn't taken under.
         guard canCapture, let device = reviewDevice else { return false }
         var didCapture = false
         await perform {
             do {
                 let png = try await core.captureScreen(of: device)
+                // Read the simulator's live accessibility state now, so the
+                // Finding is stamped with exactly the conditions the
+                // screenshot was taken under (ADR-0009).
+                deviceSettings = try await core.observedSettings(of: device)
                 // The capture drops straight into the tray as a Finding — no
                 // filing dialog (PRD story 22) — and opens in the editor,
                 // stamped with the Device Context in effect right now.

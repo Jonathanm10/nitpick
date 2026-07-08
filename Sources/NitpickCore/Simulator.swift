@@ -98,15 +98,14 @@ extension AppCore {
             }
     }
 
-    /// Boots the device, brings Simulator.app forward, applies the Device
-    /// Settings, installs the Build, and launches it (ADR-0002). Settings
-    /// are applied on every launch — session start and mid-session device
-    /// switch alike — so the simulator is never in a state nitpick didn't
-    /// put it in and a Finding's Accessibility stamp can never lie.
+    /// Boots the device, brings Simulator.app forward, installs the Build,
+    /// and launches it (ADR-0002). nitpick owns this Build lifecycle only;
+    /// it no longer touches the device's accessibility state (ADR-0009) —
+    /// the designer sets that in the simulator and the core reads it back
+    /// at capture time.
     public func launch(
         _ build: Build,
-        on device: SimulatorDevice,
-        settings: DeviceSettings = DeviceSettings()
+        on device: SimulatorDevice
     ) async throws {
         // The picker already flags such a device; refusing here keeps the
         // invariant even if a stale selection slips through — and fails
@@ -129,10 +128,6 @@ extension AppCore {
         try await runRequiringSuccess(
             SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", "Simulator"])
         )
-        // Before install/launch, so the Build never draws a frame under
-        // settings the session doesn't know about.
-        try await setDynamicTypeSize(settings.dynamicTypeSize, on: device)
-        try await setAppearance(settings.appearance, on: device)
         try await runRequiringSuccess(
             SubprocessCommand(
                 executablePath: "/usr/bin/xcrun",
@@ -178,32 +173,38 @@ extension AppCore {
         return png
     }
 
-    /// Sets the device's Dynamic Type size — one command, applied live to
-    /// the running Build.
-    public func setDynamicTypeSize(
-        _ size: DeviceSettings.DynamicTypeSize,
-        on device: SimulatorDevice
-    ) async throws {
-        try await runRequiringSuccess(
-            SubprocessCommand(
-                executablePath: "/usr/bin/xcrun",
-                arguments: ["simctl", "ui", device.udid, "content_size", size.rawValue]
-            )
+    /// Reads the simulator's live accessibility state — the settings half
+    /// of a Device Context — for stamping onto a Finding at capture time
+    /// (ADR-0009). Each `simctl ui <device> <option>` invoked with no value
+    /// prints the option's current value; the reads run for content_size,
+    /// appearance, and increase_contrast. A read that comes back
+    /// `unsupported`, `unknown`, or otherwise unparseable maps to that
+    /// dimension's default — the Accessibility line then simply omits it,
+    /// never carrying a raw token.
+    public func observedSettings(of device: SimulatorDevice) async throws -> DeviceSettings {
+        let contentSize = try await readUISetting("content_size", of: device)
+        let appearance = try await readUISetting("appearance", of: device)
+        let increaseContrast = try await readUISetting("increase_contrast", of: device)
+        return DeviceSettings(
+            dynamicTypeSize: DeviceSettings.DynamicTypeSize(rawValue: contentSize) ?? .default,
+            appearance: DeviceSettings.Appearance(rawValue: appearance) ?? .default,
+            increaseContrast: increaseContrast == "enabled"
         )
     }
 
-    /// Sets the device's light/dark appearance — one command, applied live
-    /// to the running Build.
-    public func setAppearance(
-        _ appearance: DeviceSettings.Appearance,
-        on device: SimulatorDevice
-    ) async throws {
-        try await runRequiringSuccess(
+    /// Reads one `simctl ui` option's current value, trimmed of the
+    /// trailing newline simctl prints. A non-zero exit is a real subprocess
+    /// failure and throws; an unreadable value is left to the caller to map
+    /// to a default.
+    private func readUISetting(_ option: String, of device: SimulatorDevice) async throws -> String {
+        let result = try await runRequiringSuccess(
             SubprocessCommand(
                 executablePath: "/usr/bin/xcrun",
-                arguments: ["simctl", "ui", device.udid, "appearance", appearance.rawValue]
+                arguments: ["simctl", "ui", device.udid, option]
             )
         )
+        return String(decoding: result.standardOutput, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Runs a command through the subprocess seam and turns a disallowed

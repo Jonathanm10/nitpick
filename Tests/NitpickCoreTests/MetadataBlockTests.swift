@@ -126,7 +126,7 @@ struct MetadataBlockTests {
         )
     }
 
-    // MARK: - The Accessibility line fed by real Device Settings (issue 06)
+    // MARK: - The Accessibility line fed by observed Device Settings (ADR-0009)
 
     static let device = SimulatorDevice(udid: "AAAA-1111", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: true)
 
@@ -175,6 +175,39 @@ struct MetadataBlockTests {
             App: ch.liip.reviewme 2.1.0 (421)
             Device: iPhone 17 Pro — iOS 26.4
             Accessibility: Dynamic Type XL
+            Filed with nitpick — session 2026-07-04T09:15:32Z
+            """
+        )
+    }
+
+    @Test("Increase Contrast renders after Dynamic Type and Dark Mode")
+    func increaseContrastStamp() {
+        var finding = Self.finding()
+        finding.deviceContext = DeviceContext(
+            device: Self.device,
+            settings: DeviceSettings(dynamicTypeSize: .accessibilityLarge, appearance: .dark, increaseContrast: true)
+        )
+        #expect(
+            Self.session.metadataBlock(for: finding) == """
+            ---
+            App: ch.liip.reviewme 2.1.0 (421)
+            Device: iPhone 17 Pro — iOS 26.4
+            Accessibility: Dynamic Type AX2, Dark Mode, Increase Contrast
+            Filed with nitpick — session 2026-07-04T09:15:32Z
+            """
+        )
+    }
+
+    @Test("Increase Contrast alone renders without Dynamic Type or Dark Mode")
+    func increaseContrastAlone() {
+        var finding = Self.finding()
+        finding.deviceContext = DeviceContext(device: Self.device, settings: DeviceSettings(increaseContrast: true))
+        #expect(
+            Self.session.metadataBlock(for: finding) == """
+            ---
+            App: ch.liip.reviewme 2.1.0 (421)
+            Device: iPhone 17 Pro — iOS 26.4
+            Accessibility: Increase Contrast
             Filed with nitpick — session 2026-07-04T09:15:32Z
             """
         )

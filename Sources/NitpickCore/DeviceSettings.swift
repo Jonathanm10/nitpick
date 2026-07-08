@@ -1,11 +1,11 @@
 import Foundation
 
-/// The settings half of a Device Context: the accessibility state nitpick
-/// itself puts the simulator in — Dynamic Type size and appearance. nitpick
-/// owns these (ADR-0002): it applies them on every launch and changes them
-/// only through the core, which is what makes each Finding's Accessibility
-/// stamp trustworthy — the simulator is never in a state nitpick didn't put
-/// it in.
+/// The settings half of a Device Context: the simulator's accessibility
+/// state — Dynamic Type size, appearance, and Increase Contrast. nitpick
+/// no longer owns these (ADR-0009): the designer drives them in the
+/// simulator, and the core reads the live state at capture time to stamp
+/// each Finding's Accessibility line, so the stamp reflects exactly the
+/// conditions the screenshot was taken under.
 public struct DeviceSettings: Equatable, Sendable {
     /// The simulator's preferred content size category. Raw values are the
     /// exact `simctl ui <device> content_size` arguments.
@@ -61,16 +61,25 @@ public struct DeviceSettings: Equatable, Sendable {
 
     public var dynamicTypeSize: DynamicTypeSize
     public var appearance: Appearance
+    /// Whether the simulator's Increase Contrast accessibility setting is
+    /// on. Read back from `simctl ui <device> increase_contrast`; defaults
+    /// off, the iOS default.
+    public var increaseContrast: Bool
 
-    public init(dynamicTypeSize: DynamicTypeSize = .default, appearance: Appearance = .default) {
+    public init(
+        dynamicTypeSize: DynamicTypeSize = .default,
+        appearance: Appearance = .default,
+        increaseContrast: Bool = false
+    ) {
         self.dynamicTypeSize = dynamicTypeSize
         self.appearance = appearance
+        self.increaseContrast = increaseContrast
     }
 
     /// The human-readable non-default settings, in the metadata block's
-    /// display order — Dynamic Type first, then Dark Mode. Empty when
-    /// everything is default: the Accessibility line is then omitted
-    /// (ADR-0004).
+    /// display order — Dynamic Type, then Dark Mode, then Increase
+    /// Contrast. Empty when everything is default: the Accessibility line
+    /// is then omitted (ADR-0004).
     public var accessibilityDescriptions: [String] {
         var descriptions: [String] = []
         if dynamicTypeSize != .default {
@@ -78,6 +87,9 @@ public struct DeviceSettings: Equatable, Sendable {
         }
         if appearance == .dark {
             descriptions.append("Dark Mode")
+        }
+        if increaseContrast {
+            descriptions.append("Increase Contrast")
         }
         return descriptions
     }

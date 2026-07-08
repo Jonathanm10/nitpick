@@ -41,7 +41,7 @@ struct ComposeAndFileScenarioTests {
         runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data(SimulatorDeviceTests.deviceListJSON.utf8)))
         let devices = try await core.simulatorDevices()
         let device = try #require(devices.first { $0.name == "iPhone 17 Pro" })
-        for _ in 0..<7 { runner.enqueue(SubprocessResult(exitCode: 0)) }
+        for _ in 0..<5 { runner.enqueue(SubprocessResult(exitCode: 0)) }
         try await core.launch(build, on: device)
 
         // …and starts the Review Session by choosing the project — once.
@@ -84,10 +84,10 @@ struct ComposeAndFileScenarioTests {
         )))
 
         // The whole subprocess side ran: list, boot, bootstatus, open,
-        // the two Device Settings applications, install, launch, the
-        // capture's booted re-check, capture (pinned command-exactly by
-        // the walking skeleton scenario).
-        #expect(runner.executedCommands.count == 10)
+        // install, launch, the capture's booted re-check, capture (pinned
+        // command-exactly by the walking skeleton scenario). No accessibility
+        // commands — nitpick observes, it does not set (ADR-0009).
+        #expect(runner.executedCommands.count == 8)
 
         // The exact filing requests, after the two connect requests.
         let base = "https://youtrack.example.com"
