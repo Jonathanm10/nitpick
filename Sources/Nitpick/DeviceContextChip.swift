@@ -1,35 +1,47 @@
 import NitpickCore
 import SwiftUI
 
-/// The session's Device Context at a glance: one compact chip showing the
-/// active device. Its tap opens the searchable device list directly — with
-/// accessibility gone from the popover (ADR-0009), there is nothing left to
-/// nest, so the chip and the no-session setup group share one list.
+/// The session's Device Context at a glance: the active device, shown as the
+/// leading control of the `SessionTopBar` pill. Sized to the pill's own type
+/// scale (13pt), so it carries no capsule fill of its own — the pill is the
+/// surface — just a subtle hover highlight. Its tap opens the searchable
+/// device list directly: with accessibility gone from the popover (ADR-0009)
+/// there is nothing left to nest, so the chip and the no-session setup group
+/// share one list.
 struct DeviceContextChip: View {
     @Bindable var model: AppModel
     @State private var isPopoverPresented = false
+    @State private var isHovering = false
 
     var body: some View {
         Button {
             isPopoverPresented = true
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: "iphone")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 13))
                     .foregroundStyle(NitpickTheme.secondaryText)
-                Text("\(deviceName) — \(osName)")
-                    .font(.system(size: 17, weight: .semibold))
+                Text(deviceName)
+                    .font(NitpickTheme.emphasis)
+                    .lineLimit(1)
+                Text("· \(osName)")
+                    .font(NitpickTheme.secondary)
+                    .foregroundStyle(NitpickTheme.secondaryText)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(NitpickTheme.secondaryText)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .contentShape(Capsule())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .contentShape(RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall))
         }
         .buttonStyle(.plain)
-        .background(NitpickTheme.hover, in: Capsule())
+        .background(
+            isHovering ? NitpickTheme.hover : .clear,
+            in: RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall)
+        )
+        .onHover { isHovering = $0 }
         .accessibilityLabel(accessibilityLabel)
         .popover(isPresented: $isPopoverPresented, arrowEdge: .bottom) {
             DeviceList(model: model, isPresented: $isPopoverPresented)

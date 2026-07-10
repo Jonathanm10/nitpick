@@ -14,6 +14,13 @@ enum NitpickTheme {
     static let inspectorMinWidth: CGFloat = 300
     static let inspectorIdealWidth: CGFloat = 380
     static let inspectorMaxWidth: CGFloat = 460
+
+    // Type scale. macOS control text is 13pt (`NSFont.systemFontSize`); the
+    // session screen aligns to it rather than sitting oversized above it. Three
+    // steps — the genuinely app-wide-portable bit of the visual language.
+    static let emphasis = Font.system(size: 13, weight: .semibold)
+    static let body = Font.system(size: 13)
+    static let secondary = Font.system(size: 12)
 }
 
 private struct NitpickFieldModifier: ViewModifier {
@@ -22,7 +29,7 @@ private struct NitpickFieldModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .textFieldStyle(.plain)
-            .font(.system(size: 14))
+            .font(NitpickTheme.body)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .frame(minHeight: minHeight, alignment: .leading)
@@ -37,7 +44,7 @@ private struct NitpickFieldModifier: ViewModifier {
 private struct NitpickSectionLabelModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 12, weight: .semibold))
             .textCase(.uppercase)
             .kerning(0.6)
             .foregroundStyle(NitpickTheme.secondaryText)

@@ -1,24 +1,22 @@
 import NitpickCore
 import SwiftUI
 
-/// The tray lives in a List so the platform owns the swipe physics, full-swipe
-/// commit, and reduced-motion behavior for PRD stories 17–18. It is the
-/// control column's one scroll region: a flexible frame lets it sit at its
+/// The tray lives in a List for its content-sized scrolling: it is the control
+/// column's one scroll region — a flexible frame lets it sit at its
 /// row-count-capped natural height when there is room and compress toward a
 /// ~2-row floor when the fixed compose fields need the space, scrolling once
 /// rows are hidden. A lower layoutPriority than compose (set at the use site)
 /// makes the tray — not the whole column — yield and scroll; an unbounded
 /// List would instead swallow the column's spare height and orphan the fields
-/// below it.
+/// below it. Discard is a hover/selection × per row, not a swipe (ADR-0010):
+/// swipe-to-act is a touch idiom, undiscoverable on a pointer-driven Mac list.
 struct TrayView: View {
     let tray: [TrayItem]
     @Bindable var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Hover reveals the unfiled row's Discard affordance (design handoff:
-    /// "unfiled: 'Discard' on hover"); selection keeps it reachable without
-    /// a pointer, and the swipe reveals the same Discard. Each of these
-    /// stages the confirmation below rather than acting — a Finding leaves
-    /// the tray only once the designer confirms.
+    /// Hover reveals the unfiled row's Discard ×; selection keeps it reachable
+    /// without a pointer. Either way the × stages the confirmation below rather
+    /// than acting — a Finding leaves the tray only once the designer confirms.
     @State private var hoveredItemID: UUID?
     /// The Finding a Discard affordance is asking to throw away, staged for
     /// the confirmation. Discard is destructive and the tray keeps no undo,
@@ -68,22 +66,6 @@ struct TrayView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                     .transition(trayRowTransition)
-                    // The swipe is offered exactly where the discard rules
-                    // allow the act (PRD story 18): a row filing has touched,
-                    // a busy model, or a pending label draft gets no gesture
-                    // at all — an empty builder removes the affordance. No
-                    // full swipe: a one-gesture instant commit is exactly the
-                    // mistaken discard the confirmation guards, so the swipe
-                    // only reveals the button and the tap stages the dialog.
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        if item.isEditable, !model.isBusy, !model.hasPendingLabelDraft {
-                            Button(role: .destructive) {
-                                pendingDiscardID = item.id
-                            } label: {
-                                Label("Discard", systemImage: "trash")
-                            }
-                        }
-                    }
             }
         }
         .listStyle(.plain)
@@ -183,12 +165,16 @@ struct TrayView: View {
                     )
                 )
             } else if item.isEditable {
+                // Discard is a hover/selection × (ADR-0010) that stages the
+                // confirmation — never a one-click destroy. Gated exactly as
+                // the old swipe was: no × while a File all run is busy or a
+                // label draft is pending.
                 if isHovered || isSelected {
-                    Button("Discard") { pendingDiscardID = item.id }
-                        .buttonStyle(.borderless)
-                        .font(.system(size: 13))
-                        .disabled(model.isBusy || model.hasPendingLabelDraft)
-                        .motionPressFeedback()
+                    TrayDiscardButton(
+                        disabled: model.isBusy || model.hasPendingLabelDraft
+                    ) {
+                        pendingDiscardID = item.id
+                    }
                 }
             } else {
                 // Mid-ladder: its issue exists but is incomplete — a File all
@@ -241,5 +227,34 @@ struct TrayView: View {
             return NitpickTheme.hover.opacity(0.65)
         }
         return Color.clear
+    }
+}
+
+/// The per-row Discard control (ADR-0010): a small × that picks up a faint
+/// circular hover background. It owns its own hover state so it darkens under
+/// the pointer independent of the row highlight, and stages the tray's
+/// confirmation — it never discards on the click itself.
+private struct TrayDiscardButton: View {
+    let disabled: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(NitpickTheme.secondaryText)
+                .frame(width: 18, height: 18)
+                .background(hovering ? NitpickTheme.hover : .clear, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .onHover { hovering = $0 }
+        .help("Discard Finding")
+        // The glyph carries no text, so name the destructive action for
+        // VoiceOver — .help alone is only a pointer tooltip.
+        .accessibilityLabel("Discard Finding")
+        .motionPressFeedback()
     }
 }

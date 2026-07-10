@@ -262,69 +262,13 @@ struct ContentView: View {
             if let guidance = model.setupGuidance {
                 setupGuidanceSection(guidance)
             } else {
-                sessionHeader(session)
+                SessionTopBar(model: model)
             }
             sessionSplit(session)
             if let message = model.errorMessage {
                 errorLine(message)
             }
         }
-    }
-
-    private func sessionHeader(_ session: ReviewSession) -> some View {
-        HStack(spacing: 12) {
-            DeviceContextChip(model: model)
-            Divider()
-                .frame(height: 22)
-            Text("\(session.build.identity.version) (\(session.build.identity.buildNumber)) · \(session.project.name)")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(NitpickTheme.secondaryText)
-                .lineLimit(1)
-                .layoutPriority(1)
-            statusPill
-            // A restored session's one next step must stay in sight — a primary
-            // action never hides behind the popover.
-            Spacer(minLength: 8)
-            if !model.isReviewing {
-                Button(model.startReviewTitle) {
-                    Task { await model.startReview() }
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(!model.canStartReview)
-                .help("Reviewing needs a device and a YouTrack project — the session files into it.")
-                .motionPressFeedback()
-            } else {
-                HStack(spacing: 8) {
-                    KeyCapHint("⌘S")
-                    Button {
-                        Task { await model.captureScreen() }
-                    } label: {
-                        Label("Capture", systemImage: "camera")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(!model.canCapture)
-                    .motionPressFeedback()
-                }
-            }
-        }
-        .frame(minHeight: 44, alignment: .center)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(NitpickTheme.border)
-                .frame(height: 1)
-        }
-    }
-
-    private var statusPill: some View {
-        Label(model.isReviewing ? "Review in progress" : "Ready to resume", systemImage: "circle.fill")
-            .font(.system(size: 13, weight: .medium))
-            .labelStyle(.titleAndIcon)
-            .foregroundStyle(Color.accentColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Color.accentColor.opacity(0.10), in: Capsule())
-            .lineLimit(1)
     }
 
     /// The guided-setup panel (issue 10): what's missing on this Mac and
@@ -538,7 +482,7 @@ struct ContentView: View {
                 .nitpickSectionLabel()
             Spacer()
             Text("\(model.unfiledFindingCount) unfiled")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(NitpickTheme.secondaryText)
         }
         // The one flexible child of the column: a lower priority than the
@@ -677,33 +621,5 @@ struct ContentView: View {
         TextField("Design Reference (Figma URL, this Finding only)", text: $model.findingDesignReferenceField)
             .nitpickField(minHeight: 34)
             .disabled(model.isBusy)
-    }
-}
-
-
-/// A keyboard-shortcut hint next to a control (design system `KeyCap`):
-/// mono glyphs in a hairline key outline, radius 3 per the chips/keys token.
-private struct KeyCapHint: View {
-    let key: String
-
-    init(_ key: String) {
-        self.key = key
-    }
-
-    var body: some View {
-        Text(key)
-            .font(.caption.monospaced())
-            .foregroundStyle(NitpickTheme.secondaryText)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(.white)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 3)
-                    .strokeBorder(NitpickTheme.strongBorder, lineWidth: 1)
-            }
-            .accessibilityHidden(true)
     }
 }
