@@ -621,5 +621,6 @@ struct ContentView: View {
         TextField("Design Reference (Figma URL, this Finding only)", text: $model.findingDesignReferenceField)
             .nitpickField(minHeight: 34)
             .disabled(model.isBusy)
+        DesignSnapshotsSection(model: model)
     }
 }

@@ -80,6 +80,7 @@ final class AppModel {
     /// path keeps it intact so a visible draft never lands on the wrong row.
     var hasPendingLabelDraft = false
     var errorMessage: String?
+    private(set) var designSnapshotErrorMessage: String?
     /// Menu commands live outside ContentView, so the End Review confirmation
     /// flag sits on the model where both the window and the menu can drive it.
     var endReviewConfirmationRequested = false
@@ -183,6 +184,94 @@ final class AppModel {
     var findingDesignReferenceField: String {
         get { selectedItem?.finding.designReference?.absoluteString ?? "" }
         set { editSelectedFinding { $0.designReference = Self.designReference(from: newValue) } }
+    }
+
+    var designSnapshots: [DesignSnapshot] {
+        selectedItem?.finding.designSnapshots ?? []
+    }
+
+    func addDesignSnapshots(from urls: [URL]) {
+        guard !isBusy, let selectedItemID else { return }
+        var files: [DesignSnapshotFile] = []
+        var messages: [String] = []
+        for url in urls {
+            let accessed = url.startAccessingSecurityScopedResource()
+            do {
+                files.append(DesignSnapshotFile(name: url.lastPathComponent, data: try Data(contentsOf: url)))
+            } catch {
+                messages.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+            if accessed { url.stopAccessingSecurityScopedResource() }
+        }
+        do {
+            let result = try session?.addDesignSnapshotFiles(files, to: selectedItemID)
+            if result?.added.isEmpty == false { persistOpenSession() }
+            messages += result?.rejected.map { "\($0.name): \($0.error.localizedDescription)" } ?? []
+            designSnapshotErrorMessage = messages.isEmpty ? nil : messages.joined(separator: "\n")
+        } catch {
+            designSnapshotErrorMessage = error.localizedDescription
+        }
+    }
+
+    func addPastedDesignSnapshot(_ png: Data) {
+        guard !isBusy, let selectedItemID else { return }
+        do {
+            _ = try session?.addDesignSnapshot(
+                to: selectedItemID,
+                name: "Pasted Design \(designSnapshots.count + 1).png",
+                mediaType: .png,
+                data: png
+            )
+            persistOpenSession()
+            designSnapshotErrorMessage = nil
+        } catch {
+            designSnapshotErrorMessage = error.localizedDescription
+        }
+    }
+
+    func reportDesignSnapshotError(_ message: String) {
+        designSnapshotErrorMessage = message
+    }
+
+    func renameDesignSnapshot(_ id: DesignSnapshot.ID, to name: String) {
+        guard !isBusy, let selectedItemID else { return }
+        do {
+            try session?.renameDesignSnapshot(id, in: selectedItemID, to: name)
+            persistOpenSession()
+            designSnapshotErrorMessage = nil
+        } catch {
+            designSnapshotErrorMessage = error.localizedDescription
+        }
+    }
+
+    func replaceDesignSnapshot(_ id: DesignSnapshot.ID, from url: URL) {
+        guard !isBusy, let selectedItemID else { return }
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let mediaType = try DesignSnapshotMediaType(fileExtension: url.pathExtension)
+            try session?.replaceDesignSnapshot(
+                id,
+                in: selectedItemID,
+                mediaType: mediaType,
+                data: Data(contentsOf: url)
+            )
+            persistOpenSession()
+            designSnapshotErrorMessage = nil
+        } catch {
+            designSnapshotErrorMessage = error.localizedDescription
+        }
+    }
+
+    func removeDesignSnapshot(_ id: DesignSnapshot.ID) {
+        guard !isBusy, let selectedItemID else { return }
+        do {
+            try session?.removeDesignSnapshot(id, from: selectedItemID)
+            persistOpenSession()
+            designSnapshotErrorMessage = nil
+        } catch {
+            designSnapshotErrorMessage = error.localizedDescription
+        }
     }
 
     /// A pasted Figma URL, or nil when the field is blank — absent is a
@@ -685,6 +774,7 @@ final class AppModel {
         selectedAnnotationIndex = nil
         annotationDrag = nil
         hasPendingLabelDraft = false
+        designSnapshotErrorMessage = nil
     }
 
     private func perform(
@@ -722,6 +812,7 @@ extension AppModel {
         selectedAnnotationIndex = nil
         annotationDrag = nil
         hasPendingLabelDraft = false
+        designSnapshotErrorMessage = nil
         refreshAnnotatedImage()
     }
 

@@ -78,6 +78,16 @@ extension AppCore {
             if !fileManager.fileExists(atPath: file.path) {
                 try item.finding.screenshotPNG.write(to: file, options: .atomic)
             }
+            for snapshot in item.finding.designSnapshots {
+                let file = designSnapshotFile(for: snapshot.id, in: item.id, mediaType: snapshot.mediaType)
+                try fileManager.createDirectory(
+                    at: file.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if (try? Data(contentsOf: file)) != snapshot.data {
+                    try snapshot.data.write(to: file, options: .atomic)
+                }
+            }
         }
         let data = try Self.storageEncoder().encode(StoredSession(session))
         // Atomic: a crash mid-write keeps the previous good manifest.
@@ -91,6 +101,19 @@ extension AppCore {
         )) ?? []
         for file in captures where !live.contains(file.lastPathComponent) {
             try? fileManager.removeItem(at: file)
+        }
+        let liveSnapshots = Set(session.tray.flatMap { item in
+            item.finding.designSnapshots.map {
+                designSnapshotFile(for: $0.id, in: item.id, mediaType: $0.mediaType).path
+            }
+        })
+        if let files = fileManager.enumerator(
+            at: openSessionDesignSnapshotsDirectory,
+            includingPropertiesForKeys: nil
+        ) {
+            for case let file as URL in files where !file.hasDirectoryPath && !liveSnapshots.contains(file.path) {
+                try? fileManager.removeItem(at: file)
+            }
         }
     }
 
@@ -124,6 +147,18 @@ extension AppCore {
                 assignee: item.assignee
             )
             finding.annotations = item.annotations
+            finding.designSnapshots = try (item.designSnapshots ?? []).map { snapshot in
+                try DesignSnapshot.validated(
+                    id: snapshot.id,
+                    name: snapshot.name,
+                    mediaType: snapshot.mediaType,
+                    data: Data(contentsOf: designSnapshotFile(
+                        for: snapshot.id,
+                        in: item.id,
+                        mediaType: snapshot.mediaType
+                    ))
+                )
+            }
             return TrayItem(id: item.id, finding: finding, filingProgress: item.filingProgress)
         }
         if !session.tray.isEmpty, session.tray.allSatisfy({ $0.filedIssue != nil }) {
@@ -223,6 +258,20 @@ extension AppCore {
         openSessionCapturesDirectory.appendingPathComponent("\(id.uuidString).png")
     }
 
+    private var openSessionDesignSnapshotsDirectory: URL {
+        openSessionDirectory.appendingPathComponent("design-snapshots", isDirectory: true)
+    }
+
+    private func designSnapshotFile(
+        for id: DesignSnapshot.ID,
+        in findingID: TrayItem.ID,
+        mediaType: DesignSnapshotMediaType
+    ) -> URL {
+        openSessionDesignSnapshotsDirectory
+            .appendingPathComponent(findingID.uuidString, isDirectory: true)
+            .appendingPathComponent("\(id.uuidString).\(mediaType.fileExtension)")
+    }
+
     private var historyDirectory: URL {
         workspaceDirectory.appendingPathComponent("history", isDirectory: true)
     }
@@ -295,6 +344,8 @@ private struct StoredTrayItem: Codable {
     var deviceContext: DeviceContext
     var annotations: [Annotation]
     var designReference: URL?
+    /// Absent in sessions written before Design Snapshots shipped.
+    var designSnapshots: [StoredDesignSnapshot]?
     var filingProgress: FilingProgress
     /// Optional so a manifest written before Type shipped still decodes:
     /// absent means Bug (see the load path). Additive, so schema version 1
@@ -314,10 +365,23 @@ private struct StoredTrayItem: Codable {
         deviceContext = item.finding.deviceContext
         annotations = item.finding.annotations
         designReference = item.finding.designReference
+        designSnapshots = item.finding.designSnapshots.map(StoredDesignSnapshot.init)
         filingProgress = item.filingProgress
         type = item.finding.type
         priority = item.finding.priority
         assignee = item.finding.assignee
+    }
+}
+
+private struct StoredDesignSnapshot: Codable {
+    var id: UUID
+    var name: String
+    var mediaType: DesignSnapshotMediaType
+
+    init(_ snapshot: DesignSnapshot) {
+        id = snapshot.id
+        name = snapshot.name
+        mediaType = snapshot.mediaType
     }
 }
 

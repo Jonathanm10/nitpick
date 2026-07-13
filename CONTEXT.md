@@ -29,7 +29,7 @@ The pane where the selected Finding is annotated and described. A Finding stays 
 _Avoid_: canvas, surface, compose area
 
 **Finding**:
-A single point of design-review feedback on the Build — a Bug or an Improvement (see Type) — captured as one annotated screenshot plus the designer's description. Files as exactly one Issue.
+A single point of design-review feedback on the Build — a Bug or an Improvement (see Type) — captured as one annotated screenshot plus the designer's description and optional Design Snapshots. Files as exactly one Issue.
 _Avoid_: disparity, nitpick, issue (reserved — the artifact is an Issue)
 
 **Type**:
@@ -59,3 +59,7 @@ _Avoid_: log, archive, recents
 **Design Reference**:
 An optional Figma URL on a Review Session or a Finding, pointing at the design source of truth. A link, never a rendering.
 _Avoid_: mockup, design spec
+
+**Design Snapshot**:
+An optional named static image from the design, attached to a Finding as visual reference alongside its captured app screenshot and independently of any Design Reference. A Finding may carry several Design Snapshots; each has a default name the designer may refine, and supports inspection rather than visual diffing or image editing.
+_Avoid_: attachment, Figma capture, comparison image

@@ -211,6 +211,8 @@ public struct Finding: Equatable, Sendable {
     /// Optional Finding-level Design Reference (ADR-0003: a link, never a
     /// rendering).
     public var designReference: URL?
+    /// Static design images attached to this Finding, in addition order.
+    public internal(set) var designSnapshots: [DesignSnapshot] = []
     /// What kind of feedback this is (glossary: Type). nitpick-owned,
     /// always set, defaults to Bug — a fresh capture is a Bug until the
     /// designer says otherwise. Filed as a namespaced tag, never the
@@ -253,6 +255,7 @@ extension Finding {
             && lhs.screenshotPNG == rhs.screenshotPNG
             && lhs.deviceContext == rhs.deviceContext
             && lhs.designReference == rhs.designReference
+            && lhs.designSnapshots == rhs.designSnapshots
             && lhs.type == rhs.type
             && lhs.priority == rhs.priority
             && lhs.assignee == rhs.assignee

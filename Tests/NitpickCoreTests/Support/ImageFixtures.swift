@@ -31,6 +31,19 @@ enum ImageFixtures {
         return data as Data
     }
 
+    static func solidJPEG(width: Int, height: Int) throws -> Data {
+        let png = try solidPNG(width: width, height: height)
+        let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(
+            data, UTType.jpeg.identifier as CFString, 1, nil
+        ))
+        CGImageDestinationAddImage(destination, image, nil)
+        try #require(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
     /// Decodes a PNG into a normalized RGBA8 sRGB pixel buffer, so two
     /// images compare by color values regardless of how they were encoded.
     static func decodeRGBA(_ png: Data) throws -> (width: Int, height: Int, pixels: [UInt8]) {

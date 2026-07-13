@@ -65,10 +65,13 @@ struct IssueFilingTests {
     static func multipartBody(boundary: Substring, files: [(fileName: String, data: Data)]) -> Data {
         var body = Data()
         for file in files {
+            let contentType = ["jpg", "jpeg"].contains((file.fileName as NSString).pathExtension.lowercased())
+                ? "image/jpeg"
+                : "image/png"
             body.append(Data((
                 "--\(boundary)\r\n"
                     + "Content-Disposition: form-data; name=\"upload\"; filename=\"\(file.fileName)\"\r\n"
-                    + "Content-Type: image/png\r\n"
+                    + "Content-Type: \(contentType)\r\n"
                     + "\r\n"
             ).utf8))
             body.append(file.data)

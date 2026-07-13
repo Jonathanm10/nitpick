@@ -217,13 +217,22 @@ extension AppCore {
             // review-backlog query — rather than tagged but missing its
             // screenshots. Both variants ride one request: annotated
             // first, clean original second (PRD story 29).
+            let snapshots = item.finding.designSnapshots
+            let attachmentNames = snapshots.effectiveAttachmentNames(reserving: ["annotated.png", "original.png"])
+            let designSnapshots = zip(snapshots, attachmentNames).map { snapshot, attachmentName in
+                AttachmentFile(
+                    fileName: attachmentName,
+                    contentType: snapshot.mediaType.contentType,
+                    data: snapshot.data
+                )
+            }
             let _: [AttachmentPayload] = try await requestYouTrack(
                 instanceURL: credentials.instanceURL, token: credentials.token,
                 method: "POST", path: "api/issues/\(issueID)/attachments", query: "fields=id,name",
                 body: Self.attachmentsBody([
-                    (fileName: "annotated.png", data: annotatedPNG),
-                    (fileName: "original.png", data: item.finding.screenshotPNG),
-                ]),
+                    AttachmentFile(fileName: "annotated.png", contentType: "image/png", data: annotatedPNG),
+                    AttachmentFile(fileName: "original.png", contentType: "image/png", data: item.finding.screenshotPNG),
+                ] + designSnapshots),
                 deniedAction: "attach the screenshots"
             )
             item.filingProgress = .attachmentsUploaded(issueID: issueID, idReadable: idReadable)
@@ -387,7 +396,7 @@ extension AppCore {
     /// The multipart/form-data body YouTrack's attachments endpoint expects:
     /// one `upload` part per attached file.
     private static func attachmentsBody(
-        _ files: [(fileName: String, data: Data)]
+        _ files: [AttachmentFile]
     ) -> (contentType: String, data: Data) {
         let boundary = "nitpick-\(UUID().uuidString)"
         var body = Data()
@@ -395,10 +404,15 @@ extension AppCore {
         // and the blank line separating headers from content is exactly
         // one \r\n — nothing implicit.
         for file in files {
+            let quotedFileName = file.fileName
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "\r", with: " ")
+                .replacingOccurrences(of: "\n", with: " ")
             body.append(contentsOf: Data((
                 "--\(boundary)\r\n"
-                    + "Content-Disposition: form-data; name=\"upload\"; filename=\"\(file.fileName)\"\r\n"
-                    + "Content-Type: image/png\r\n"
+                    + "Content-Disposition: form-data; name=\"upload\"; filename=\"\(quotedFileName)\"\r\n"
+                    + "Content-Type: \(file.contentType)\r\n"
                     + "\r\n"
             ).utf8))
             body.append(file.data)
@@ -407,6 +421,12 @@ extension AppCore {
         body.append(contentsOf: Data("--\(boundary)--\r\n".utf8))
         return (contentType: "multipart/form-data; boundary=\(boundary)", data: body)
     }
+}
+
+private struct AttachmentFile {
+    var fileName: String
+    var contentType: String
+    var data: Data
 }
 
 // MARK: - Wire payloads
