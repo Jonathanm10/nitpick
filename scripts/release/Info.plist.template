@@ -8,6 +8,8 @@
 	<string>nitpick</string>
 	<key>CFBundleExecutable</key>
 	<string>Nitpick</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>ch.liip.nitpick</string>
 	<key>CFBundleInfoDictionaryVersion</key>

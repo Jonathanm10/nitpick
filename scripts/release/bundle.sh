@@ -52,6 +52,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp "$BIN_DIR/Nitpick" "$APP/Contents/MacOS/Nitpick"
 cp -R "$FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"
+cp "$ROOT/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 PLIST="$APP/Contents/Info.plist"

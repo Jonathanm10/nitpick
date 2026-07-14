@@ -24,13 +24,14 @@ ZIP    = dist/releases/Nitpick-$(VERSION)-$(BUILD).zip
 # The release stages are a strict ladder (build -> sign -> verify -> notarize
 # -> staple -> package -> appcast); never run them in parallel.
 .NOTPARALLEL:
-.PHONY: help run test bundle sign verify notarize verify-release package \
+.PHONY: help run test icon bundle sign verify notarize verify-release package \
         appcast release publish drill setup clean require-version
 
 help:
 	@echo 'nitpick make targets:'
 	@echo '  run                        swift run (dev flow)'
 	@echo '  test                       swift test'
+	@echo '  icon                       regenerate assets/AppIcon.icns from assets/icon.svg'
 	@echo '  release VERSION= BUILD=    full signed + notarized release ladder'
 	@echo '  publish VERSION= BUILD=    upload the release zip + appcast to GitHub'
 	@echo '  bundle|sign|verify|notarize|package|appcast   individual stages'
@@ -45,6 +46,11 @@ run:
 
 test:
 	swift test
+
+# Regenerate assets/AppIcon.icns from assets/icon.svg. The .icns is committed
+# so the release ladder never renders; rerun this only when the artwork changes.
+icon:
+	swift scripts/make-icon.swift
 
 # --- release ladder --------------------------------------------------------
 # Each stage is runnable on its own; `release` chains them in ladder order.

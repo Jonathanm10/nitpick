@@ -1,0 +1,43 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- nitpick app icon: a loupe over the pixel grid, magnifying the one
+       pixel that is off. Master artwork — regenerate assets/AppIcon.icns
+       with `make icon`. The squircle is 824px centered on a 1024 canvas,
+       matching the macOS app-icon grid. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232a38"/>
+      <stop offset="1" stop-color="#161b25"/>
+    </linearGradient>
+    <clipPath id="squircle"><rect width="1024" height="1024" rx="232"/></clipPath>
+    <clipPath id="lens"><circle cx="450" cy="430" r="215"/></clipPath>
+  </defs>
+  <g transform="translate(100 100) scale(0.8046875)">
+    <g clip-path="url(#squircle)">
+      <rect width="1024" height="1024" fill="url(#bg)"/>
+      <g stroke="#ffffff" stroke-width="4" opacity="0.05">
+        <line x1="128" y1="0" x2="128" y2="1024"/><line x1="256" y1="0" x2="256" y2="1024"/>
+        <line x1="384" y1="0" x2="384" y2="1024"/><line x1="512" y1="0" x2="512" y2="1024"/>
+        <line x1="640" y1="0" x2="640" y2="1024"/><line x1="768" y1="0" x2="768" y2="1024"/>
+        <line x1="896" y1="0" x2="896" y2="1024"/>
+        <line x1="0" y1="128" x2="1024" y2="128"/><line x1="0" y1="256" x2="1024" y2="256"/>
+        <line x1="0" y1="384" x2="1024" y2="384"/><line x1="0" y1="512" x2="1024" y2="512"/>
+        <line x1="0" y1="640" x2="1024" y2="640"/><line x1="0" y1="768" x2="1024" y2="768"/>
+        <line x1="0" y1="896" x2="1024" y2="896"/>
+      </g>
+      <line x1="622" y1="602" x2="800" y2="780" stroke="#e8ebf2" stroke-width="110" stroke-linecap="round"/>
+      <circle cx="450" cy="430" r="215" fill="#f4f5f7"/>
+      <g clip-path="url(#lens)">
+        <rect x="241" y="221" width="130" height="130" rx="14" fill="#d4d7de"/>
+        <rect x="385" y="221" width="130" height="130" rx="14" fill="#d4d7de"/>
+        <rect x="529" y="221" width="130" height="130" rx="14" fill="#d4d7de"/>
+        <rect x="241" y="365" width="130" height="130" rx="14" fill="#d4d7de"/>
+        <rect x="385" y="365" width="130" height="130" rx="14" fill="#d4d7de"/>
+        <rect x="529" y="365" width="130" height="130" rx="14" fill="#ff453a"/>
+        <rect x="241" y="509" width="130" height="130" rx="14" fill="#d4d7de"/>
+        <rect x="385" y="509" width="130" height="130" rx="14" fill="#d4d7de"/>
+        <rect x="529" y="509" width="130" height="130" rx="14" fill="#d4d7de"/>
+      </g>
+      <circle cx="450" cy="430" r="215" fill="none" stroke="#e8ebf2" stroke-width="58"/>
+    </g>
+  </g>
+</svg>
