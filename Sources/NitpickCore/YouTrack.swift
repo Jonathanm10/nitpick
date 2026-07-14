@@ -252,9 +252,14 @@ extension AppCore {
     }
 
     func savedYouTrackCredentials() throws -> (instanceURL: URL, token: String)? {
+        // The config file gates the keychain read: a workspace with no saved
+        // instance URL never touches the credential store, so a binary the
+        // keychain doesn't recognize (a freshly re-signed dev build, an
+        // isolated NITPICK_WORKSPACE run) can't hang on an authorization
+        // prompt for a token it has no use for.
         guard
-            let token = try environment.credentialStore.secret(for: Self.youTrackTokenKey),
-            let data = try? Data(contentsOf: youTrackConfigurationFile)
+            let data = try? Data(contentsOf: youTrackConfigurationFile),
+            let token = try environment.credentialStore.secret(for: Self.youTrackTokenKey)
         else { return nil }
         let saved = try JSONDecoder().decode(SavedYouTrackConfiguration.self, from: data)
         return (saved.instanceURL, token)

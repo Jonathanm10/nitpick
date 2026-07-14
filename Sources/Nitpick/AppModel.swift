@@ -304,8 +304,14 @@ final class AppModel {
     }
 
     /// `~/Library/Application Support/Nitpick` — extracted Builds and captures.
+    /// `NITPICK_WORKSPACE` overrides the location for isolated dev runs
+    /// (staged screenshots, side-by-side QA) so the designer's real store is
+    /// never touched; the tests use the same seam through `AppCore.init`.
     private static func defaultWorkspaceDirectory() -> URL {
-        URL.applicationSupportDirectory.appendingPathComponent("Nitpick", isDirectory: true)
+        if let override = ProcessInfo.processInfo.environment["NITPICK_WORKSPACE"] {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return URL.applicationSupportDirectory.appendingPathComponent("Nitpick", isDirectory: true)
     }
 
     var selectedDevice: SimulatorDevice? {
@@ -344,6 +350,13 @@ final class AppModel {
         await perform { try await refreshSetup() }
         await restoreOpenSession()
         refreshHistory()
+        // Dev-only, paired with NITPICK_SNAPSHOT_PATH: staged screenshots
+        // pre-select the newest Finding so the Editor shows its annotated
+        // capture instead of the empty placeholder.
+        if ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_SELECT"] != nil,
+           let newest = session?.tray.last?.id {
+            selectItem(newest)
+        }
     }
 
     /// Runs the core's prerequisite probe and publishes its outcome: the
