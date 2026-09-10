@@ -166,10 +166,12 @@ struct AnnotationFlatteningTests {
             for column in 0..<480 {
                 let sourceColumn = column - deltaX
                 guard (0..<480).contains(sourceColumn) else { continue }
-                for channel in 0..<4
-                where shifted.pixels[(row * 480 + column) * 4 + channel]
-                    != original.pixels[(sourceRow * 480 + sourceColumn) * 4 + channel] {
-                    mismatched += 1
+                let shiftedPixel = (row * 480 + column) * 4
+                let originalPixel = (sourceRow * 480 + sourceColumn) * 4
+                for channel in 0..<4 {
+                    if shifted.pixels[shiftedPixel + channel] != original.pixels[originalPixel + channel] {
+                        mismatched += 1
+                    }
                 }
             }
         }
