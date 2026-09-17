@@ -24,6 +24,86 @@ public struct SimulatorDevice: Equatable, Sendable, Identifiable {
     }
 }
 
+/// The macOS app that shows a booted simulator: Simulator.app through
+/// Xcode 26, DeviceHub.app from Xcode 27. One value carries both the
+/// path to `open` and the bundle id to activate, read from the same
+/// bundle so they cannot disagree. Callers hold this; they never name
+/// the app.
+public struct SimulatorHostApp: Equatable, Sendable {
+    public var bundleURL: URL
+    public var bundleIdentifier: String
+    public var displayName: String
+}
+
+extension SimulatorHostApp {
+    /// Where each Xcode generation keeps its host UI, relative to the
+    /// active developer directory (`xcode-select -p`), newest first.
+    /// Preference is a property of the selected Xcode, not the OS.
+    static let layoutRelativePaths = [
+        "../Applications/DeviceHub.app", // Xcode 27+
+        "Applications/Simulator.app", // Xcode ≤26
+    ]
+
+    /// First existing host-app bundle under `developerDirectory` whose
+    /// Info.plist yields a `CFBundleIdentifier`. Nil when neither layout
+    /// is present or readable (Command Line Tools, incomplete Xcode).
+    public static func discover(inDeveloperDirectory developerDirectory: URL) -> SimulatorHostApp? {
+        for relativePath in layoutRelativePaths {
+            let bundleURL = resolvedBundleURL(relativePath, in: developerDirectory)
+            guard FileManager.default.fileExists(atPath: bundleURL.path) else { continue }
+            guard let host = read(from: bundleURL) else { continue }
+            return host
+        }
+        return nil
+    }
+
+    static func searchedPaths(in developerDirectory: URL) -> [String] {
+        layoutRelativePaths.map { resolvedBundleURL($0, in: developerDirectory).path }
+    }
+
+    static func resolvedBundleURL(_ relativePath: String, in developerDirectory: URL) -> URL {
+        // Force a directory base so `../` resolves against Developer/, not
+        // its parent — `URL(fileURLWithPath:relativeTo:)` otherwise treats
+        // a slash-less path as a file.
+        let root = URL(fileURLWithPath: developerDirectory.path, isDirectory: true)
+        return URL(fileURLWithPath: relativePath, relativeTo: root).standardizedFileURL
+    }
+
+    private static func read(from bundleURL: URL) -> SimulatorHostApp? {
+        let plistURL = bundleURL.appendingPathComponent("Info.plist")
+        guard let data = try? Data(contentsOf: plistURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let info = plist as? [String: Any],
+              let bundleIdentifier = info["CFBundleIdentifier"] as? String,
+              !bundleIdentifier.isEmpty
+        else { return nil }
+
+        let displayName = stringValue(info["CFBundleDisplayName"])
+            ?? stringValue(info["CFBundleName"])
+            ?? bundleURL.deletingPathExtension().lastPathComponent
+
+        return SimulatorHostApp(
+            bundleURL: canonicalFileURL(bundleURL),
+            bundleIdentifier: bundleIdentifier,
+            displayName: displayName
+        )
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        guard let string = value as? String, !string.isEmpty else { return nil }
+        return string
+    }
+
+    /// `/var/folders` and `/private/var/folders` are the same directory;
+    /// `open` and path assertions need the on-disk form.
+    private static func canonicalFileURL(_ url: URL) -> URL {
+        if let canonical = try? url.resourceValues(forKeys: [.canonicalPathKey]).canonicalPath {
+            return URL(fileURLWithPath: canonical, isDirectory: true)
+        }
+        return URL(fileURLWithPath: url.path, isDirectory: true)
+    }
+}
+
 /// Simulator interaction failed in a way that isn't a plain subprocess error.
 public enum SimulatorError: Error, Equatable, LocalizedError {
     /// `simctl list` returned output the core cannot parse.
@@ -35,6 +115,9 @@ public enum SimulatorError: Error, Equatable, LocalizedError {
     /// `captureScreen` was asked for a device that is no longer booted —
     /// typically the designer closed the simulator mid-session.
     case deviceNotBooted(deviceName: String)
+    /// The selected Xcode has neither Simulator.app nor DeviceHub.app.
+    /// Thrown by `launch` before any boot is attempted.
+    case hostAppNotFound(developerDirectory: String, searchedPaths: [String])
 
     public var errorDescription: String? {
         switch self {
@@ -46,6 +129,9 @@ public enum SimulatorError: Error, Equatable, LocalizedError {
             return "\(deviceName) can't be booted: its \(osName) simulator runtime isn't installed."
         case .deviceNotBooted(let deviceName):
             return "\(deviceName) is not booted — the simulator may have been closed."
+        case .hostAppNotFound(let developerDirectory, let searchedPaths):
+            let paths = searchedPaths.joined(separator: ", ")
+            return "The Xcode at \(developerDirectory) has no Simulator or Device Hub app. Looked for: \(paths). Reinstall Xcode, or select a full Xcode in its Settings → Locations."
         }
     }
 }
@@ -98,21 +184,33 @@ extension AppCore {
             }
     }
 
-    /// Boots the device, brings Simulator.app forward, installs the Build,
-    /// and launches it (ADR-0002). nitpick owns this Build lifecycle only;
-    /// it no longer touches the device's accessibility state (ADR-0009) —
+    /// Boots the device, brings the selected Xcode's simulator host app
+    /// forward, installs the Build, and launches it (ADR-0002). Returns
+    /// the host it opened so the shell can activate the same app later
+    /// without re-deciding. nitpick owns this Build lifecycle only; it
+    /// no longer touches the device's accessibility state (ADR-0009) —
     /// the designer sets that in the simulator and the core reads it back
     /// at capture time.
+    @discardableResult
     public func launch(
         _ build: Build,
         on device: SimulatorDevice
-    ) async throws {
+    ) async throws -> SimulatorHostApp {
         // The picker already flags such a device; refusing here keeps the
         // invariant even if a stale selection slips through — and fails
         // with the runtime story instead of an obscure boot error.
         guard device.isRuntimeAvailable else {
             throw SimulatorError.runtimeUnavailable(deviceName: device.name, osName: device.osName)
         }
+
+        let developerDirectory = try await activeDeveloperDirectory()
+        guard let host = SimulatorHostApp.discover(inDeveloperDirectory: developerDirectory) else {
+            throw SimulatorError.hostAppNotFound(
+                developerDirectory: developerDirectory.path,
+                searchedPaths: SimulatorHostApp.searchedPaths(in: developerDirectory)
+            )
+        }
+
         // Exit 149: "Unable to boot device in current state: Booted" — the
         // designer re-launching onto a booted device is normal, not a failure.
         try await runRequiringSuccess(
@@ -126,7 +224,7 @@ extension AppCore {
             SubprocessCommand(executablePath: "/usr/bin/xcrun", arguments: ["simctl", "bootstatus", device.udid, "-b"])
         )
         try await runRequiringSuccess(
-            SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", "Simulator"])
+            SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", host.bundleURL.path])
         )
         try await runRequiringSuccess(
             SubprocessCommand(
@@ -140,6 +238,7 @@ extension AppCore {
                 arguments: ["simctl", "launch", device.udid, build.identity.bundleID]
             )
         )
+        return host
     }
 
     /// Captures the device's current screen at native resolution via the

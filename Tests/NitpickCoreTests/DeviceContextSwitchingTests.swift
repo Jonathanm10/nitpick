@@ -13,6 +13,7 @@ struct DeviceContextSwitchingTests {
     let runner = FakeSubprocessRunner()
     let core: AppCore
     let build: Build
+    let xcode: Fixtures.FixtureXcode
     let iPhone = SimulatorDevice(udid: "AAAA-1111", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: true)
     let iPad = SimulatorDevice(udid: "BBBB-2222", name: "iPad Pro 13-inch (M4)", osName: "iOS 26.4", isBooted: false)
 
@@ -27,6 +28,7 @@ struct DeviceContextSwitchingTests {
             identity: BuildIdentity(bundleID: "ch.liip.reviewme", version: "2.1.0", buildNumber: "421"),
             appBundleURL: appURL
         )
+        xcode = try Fixtures.writeXcode(in: temp, hostApp: .simulator)
     }
 
     // MARK: - Observing the live accessibility state
@@ -106,6 +108,11 @@ struct DeviceContextSwitchingTests {
 
         // The designer switches to the iPad — the same Build relaunches, no
         // session setup redone and no accessibility command issued…
+        let hostAppURL = try #require(xcode.hostAppURL)
+        runner.enqueue(SubprocessResult(
+            exitCode: 0,
+            standardOutput: Data("\(xcode.developerDirectory.path)\n".utf8)
+        ))
         for _ in 0..<5 { runner.enqueue(SubprocessResult(exitCode: 0)) }
         try await core.launch(build, on: iPad)
 
@@ -137,9 +144,10 @@ struct DeviceContextSwitchingTests {
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "content_size"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "appearance"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "increase_contrast"]),
+            SubprocessCommand(executablePath: "/usr/bin/xcode-select", arguments: ["-p"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "boot", "BBBB-2222"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "bootstatus", "BBBB-2222", "-b"]),
-            SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", "Simulator"]),
+            SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", hostAppURL.path]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "install", "BBBB-2222", build.appBundleURL.path]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "launch", "BBBB-2222", "ch.liip.reviewme"]),
             listCommand,

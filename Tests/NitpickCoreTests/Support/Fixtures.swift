@@ -63,4 +63,66 @@ enum Fixtures {
         try data.write(to: bundleURL.appendingPathComponent("Info.plist"))
         return bundleURL
     }
+
+    /// Which host app a fixture Xcode ships.
+    enum FixtureHostApp {
+        /// `Contents/Developer/Applications/Simulator.app`, `com.apple.iphonesimulator`.
+        case simulator
+        /// `Contents/Applications/DeviceHub.app`, `com.apple.dt.Devices`.
+        case deviceHub
+        /// Neither bundle — an Xcode whose host app is missing.
+        case none
+    }
+
+    struct FixtureXcode {
+        /// What the fake `xcode-select -p` should print.
+        var developerDirectory: URL
+        /// The bundle `launch` is expected to `open`; nil for `.none`.
+        var hostAppURL: URL?
+    }
+
+    /// Writes a minimal `Xcode.app` tree under `directory` with the host
+    /// app at its real relative location and an Info.plist carrying the
+    /// real bundle id. Sequence tests script `xcode-select -p` to print
+    /// `developerDirectory` and assert `open -a <hostAppURL>`.
+    static func writeXcode(in directory: URL, hostApp: FixtureHostApp) throws -> FixtureXcode {
+        let xcodeApp = directory.appendingPathComponent("Xcode.app", isDirectory: true)
+        let contents = xcodeApp.appendingPathComponent("Contents", isDirectory: true)
+        let developerDirectory = contents.appendingPathComponent("Developer", isDirectory: true)
+        try FileManager.default.createDirectory(at: developerDirectory, withIntermediateDirectories: true)
+
+        let hostAppURL: URL?
+        switch hostApp {
+        case .simulator:
+            hostAppURL = try writeAppBundle(
+                named: "Simulator.app",
+                in: developerDirectory.appendingPathComponent("Applications", isDirectory: true),
+                infoPlist: hostAppInfoPlist(
+                    bundleIdentifier: "com.apple.iphonesimulator",
+                    displayName: "Simulator"
+                )
+            )
+        case .deviceHub:
+            hostAppURL = try writeAppBundle(
+                named: "DeviceHub.app",
+                in: contents.appendingPathComponent("Applications", isDirectory: true),
+                infoPlist: hostAppInfoPlist(
+                    bundleIdentifier: "com.apple.dt.Devices",
+                    displayName: "DeviceHub"
+                )
+            )
+        case .none:
+            hostAppURL = nil
+        }
+
+        return FixtureXcode(developerDirectory: developerDirectory, hostAppURL: hostAppURL)
+    }
+
+    private static func hostAppInfoPlist(bundleIdentifier: String, displayName: String) -> [String: Any] {
+        [
+            "CFBundleIdentifier": bundleIdentifier,
+            "CFBundleDisplayName": displayName,
+            "CFBundleName": displayName,
+        ]
+    }
 }

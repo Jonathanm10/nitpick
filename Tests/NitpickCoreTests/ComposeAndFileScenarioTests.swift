@@ -41,6 +41,11 @@ struct ComposeAndFileScenarioTests {
         runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data(SimulatorDeviceTests.deviceListJSON.utf8)))
         let devices = try await core.simulatorDevices()
         let device = try #require(devices.first { $0.name == "iPhone 17 Pro" })
+        let xcode = try Fixtures.writeXcode(in: temp, hostApp: .simulator)
+        runner.enqueue(SubprocessResult(
+            exitCode: 0,
+            standardOutput: Data("\(xcode.developerDirectory.path)\n".utf8)
+        ))
         for _ in 0..<5 { runner.enqueue(SubprocessResult(exitCode: 0)) }
         try await core.launch(build, on: device)
 
@@ -83,11 +88,11 @@ struct ComposeAndFileScenarioTests {
             url: URL(string: "https://youtrack.example.com/issue/RM-421")!
         )))
 
-        // The whole subprocess side ran: list, boot, bootstatus, open,
-        // install, launch, the capture's booted re-check, capture (pinned
-        // command-exactly by the walking skeleton scenario). No accessibility
-        // commands — nitpick observes, it does not set (ADR-0009).
-        #expect(runner.executedCommands.count == 8)
+        // The whole subprocess side ran: list, xcode-select, boot, bootstatus,
+        // open, install, launch, the capture's booted re-check, capture
+        // (pinned command-exactly by the walking skeleton scenario). No
+        // accessibility commands — nitpick observes, it does not set (ADR-0009).
+        #expect(runner.executedCommands.count == 9)
 
         // The exact filing requests, after the two connect requests.
         let base = "https://youtrack.example.com"
