@@ -47,8 +47,9 @@ enum Fixtures {
         ]
     }
 
-    /// Writes `<directory>/<name>` as an .app bundle containing the given
-    /// Info.plist. Returns the bundle URL.
+    /// Writes `<directory>/<name>` as an iOS-style .app with `Info.plist` at
+    /// the bundle root (what CI simulator Builds look like). Returns the
+    /// bundle URL.
     @discardableResult
     static func writeAppBundle(
         named name: String,
@@ -61,6 +62,24 @@ enum Fixtures {
             fromPropertyList: infoPlist, format: .xml, options: 0
         )
         try data.write(to: bundleURL.appendingPathComponent("Info.plist"))
+        return bundleURL
+    }
+
+    /// Writes a macOS-style `.app` with `Contents/Info.plist` — the layout
+    /// Simulator.app and DeviceHub.app use on disk.
+    @discardableResult
+    static func writeMacAppBundle(
+        named name: String,
+        in directory: URL,
+        infoPlist: [String: Any]
+    ) throws -> URL {
+        let bundleURL = directory.appendingPathComponent(name, isDirectory: true)
+        let contents = bundleURL.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: infoPlist, format: .xml, options: 0
+        )
+        try data.write(to: contents.appendingPathComponent("Info.plist"))
         return bundleURL
     }
 
@@ -94,7 +113,7 @@ enum Fixtures {
         let hostAppURL: URL?
         switch hostApp {
         case .simulator:
-            hostAppURL = try writeAppBundle(
+            hostAppURL = try writeMacAppBundle(
                 named: "Simulator.app",
                 in: developerDirectory.appendingPathComponent("Applications", isDirectory: true),
                 infoPlist: hostAppInfoPlist(
@@ -103,7 +122,7 @@ enum Fixtures {
                 )
             )
         case .deviceHub:
-            hostAppURL = try writeAppBundle(
+            hostAppURL = try writeMacAppBundle(
                 named: "DeviceHub.app",
                 in: contents.appendingPathComponent("Applications", isDirectory: true),
                 infoPlist: hostAppInfoPlist(

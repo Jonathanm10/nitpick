@@ -39,7 +39,7 @@ struct SimulatorHostAppTests {
     @Test("when both host apps exist, DeviceHub wins")
     func prefersDeviceHubWhenBothExist() throws {
         let xcode = try Fixtures.writeXcode(in: temp.appendingPathComponent("both"), hostApp: .deviceHub)
-        try Fixtures.writeAppBundle(
+        try Fixtures.writeMacAppBundle(
             named: "Simulator.app",
             in: xcode.developerDirectory.appendingPathComponent("Applications", isDirectory: true),
             infoPlist: [
@@ -58,7 +58,7 @@ struct SimulatorHostAppTests {
         let developer = temp.appendingPathComponent("names/Xcode.app/Contents/Developer", isDirectory: true)
         let applications = developer.appendingPathComponent("Applications", isDirectory: true)
 
-        try Fixtures.writeAppBundle(
+        try Fixtures.writeMacAppBundle(
             named: "Simulator.app",
             in: applications,
             infoPlist: ["CFBundleIdentifier": "com.apple.iphonesimulator"]
@@ -68,7 +68,7 @@ struct SimulatorHostAppTests {
         )
 
         try FileManager.default.removeItem(at: applications)
-        try Fixtures.writeAppBundle(
+        try Fixtures.writeMacAppBundle(
             named: "Simulator.app",
             in: applications,
             infoPlist: [
@@ -81,7 +81,7 @@ struct SimulatorHostAppTests {
         )
 
         try FileManager.default.removeItem(at: applications)
-        try Fixtures.writeAppBundle(
+        try Fixtures.writeMacAppBundle(
             named: "Simulator.app",
             in: applications,
             infoPlist: [
@@ -93,5 +93,37 @@ struct SimulatorHostAppTests {
         #expect(
             SimulatorHostApp.discover(inDeveloperDirectory: developer)?.displayName == "FromDisplay"
         )
+    }
+
+    @Test("discovers the real DeviceHub.app under this Mac's Xcode when present")
+    func discoversLiveDeviceHubWhenPresent() throws {
+        let developer = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer", isDirectory: true)
+        let deviceHub = URL(
+            fileURLWithPath: "/Applications/Xcode.app/Contents/Applications/DeviceHub.app",
+            isDirectory: true
+        )
+        guard FileManager.default.fileExists(atPath: deviceHub.path) else { return }
+
+        let host = try #require(SimulatorHostApp.discover(inDeveloperDirectory: developer))
+        #expect(host.bundleIdentifier == "com.apple.dt.Devices")
+        #expect(host.bundleURL.path == deviceHub.path)
+    }
+
+    @Test("ignores an iOS-style root Info.plist — host apps use Contents/Info.plist")
+    func ignoresRootLevelPlist() throws {
+        let developer = temp.appendingPathComponent(
+            "flat/Xcode.app/Contents/Developer", isDirectory: true
+        )
+        let applications = developer.deletingLastPathComponent()
+            .appendingPathComponent("Applications", isDirectory: true)
+        try Fixtures.writeAppBundle(
+            named: "DeviceHub.app",
+            in: applications,
+            infoPlist: [
+                "CFBundleIdentifier": "com.apple.dt.Devices",
+                "CFBundleDisplayName": "DeviceHub",
+            ]
+        )
+        #expect(SimulatorHostApp.discover(inDeveloperDirectory: developer) == nil)
     }
 }

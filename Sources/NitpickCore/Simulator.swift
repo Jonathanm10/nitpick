@@ -70,7 +70,13 @@ extension SimulatorHostApp {
     }
 
     private static func read(from bundleURL: URL) -> SimulatorHostApp? {
-        let plistURL = bundleURL.appendingPathComponent("Info.plist")
+        // macOS host apps (Simulator.app, DeviceHub.app) keep Info.plist
+        // under Contents/. The first reader looked at the bundle root —
+        // that matches iOS .app Builds, not these hosts — so discovery
+        // returned nil on every real Xcode install.
+        let plistURL = bundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Info.plist")
         guard let data = try? Data(contentsOf: plistURL),
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
               let info = plist as? [String: Any],
