@@ -34,6 +34,12 @@ struct WalkingSkeletonScenarioTests {
         let device = try #require(devices.first { $0.name == "iPhone 17 Pro" })
 
         // …starts the review (device happens to be booted already: exit 149)…
+        let xcode = try Fixtures.writeXcode(in: temp, hostApp: .simulator)
+        let hostAppURL = try #require(xcode.hostAppURL)
+        runner.enqueue(SubprocessResult(
+            exitCode: 0,
+            standardOutput: Data("\(xcode.developerDirectory.path)\n".utf8)
+        ))
         runner.enqueue(SubprocessResult(exitCode: 149))
         for _ in 0..<4 { runner.enqueue(SubprocessResult(exitCode: 0)) }
         try await core.launch(build, on: device)
@@ -60,9 +66,10 @@ struct WalkingSkeletonScenarioTests {
                 arguments: ["-x", "-f", zipURL.path, "-C", extractionDirectory.path]
             ),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "list", "devices", "--json"]),
+            SubprocessCommand(executablePath: "/usr/bin/xcode-select", arguments: ["-p"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "boot", "AAAA-1111"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "bootstatus", "AAAA-1111", "-b"]),
-            SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", "Simulator"]),
+            SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", hostAppURL.path]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "install", "AAAA-1111", appPath]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "launch", "AAAA-1111", "ch.liip.reviewme"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "list", "devices", "--json"]),

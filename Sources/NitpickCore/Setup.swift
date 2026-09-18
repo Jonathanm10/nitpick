@@ -77,18 +77,18 @@ extension AppCore {
     /// guidance before any boot is attempted — never as an obscure
     /// mid-flow failure (ADR-0002).
     public func checkSetup() async throws -> SetupCheck {
-        let printPath = SubprocessCommand(executablePath: "/usr/bin/xcode-select", arguments: ["-p"])
-        let result = try await environment.subprocess.run(printPath)
-        let developerDirectory = String(decoding: result.standardOutput, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard result.exitCode == 0, !developerDirectory.isEmpty else {
+        let developerDirectory: URL
+        do {
+            developerDirectory = try await activeDeveloperDirectory()
+        } catch is SubprocessFailure {
             return .needsSetup(.xcodeNotInstalled)
         }
+        let developerDirectoryPath = developerDirectory.path
         // A full Xcode's developer directory lives inside the app bundle
         // (…/Xcode.app/Contents/Developer); the Command Line Tools' does
         // not — and they ship no simulators.
-        guard developerDirectory.hasSuffix(".app/Contents/Developer") else {
-            return .needsSetup(.commandLineToolsOnly(developerDirectory: developerDirectory))
+        guard developerDirectoryPath.hasSuffix(".app/Contents/Developer") else {
+            return .needsSetup(.commandLineToolsOnly(developerDirectory: developerDirectoryPath))
         }
         // From here on the tools themselves are the suspect: any simctl
         // failure is setup guidance, not a raw tool error in the UI.
@@ -104,5 +104,24 @@ extension AppCore {
             return .needsSetup(.missingIOSRuntime)
         }
         return .ready(devices)
+    }
+
+    /// `xcode-select -p`, trimmed, as a directory URL. Non-zero exit or
+    /// empty output is a `SubprocessFailure`. `checkSetup` maps that
+    /// failure to `.xcodeNotInstalled`; `launch` lets it surface.
+    func activeDeveloperDirectory() async throws -> URL {
+        let command = SubprocessCommand(executablePath: "/usr/bin/xcode-select", arguments: ["-p"])
+        let result = try await runRequiringSuccess(command)
+        let path = String(decoding: result.standardOutput, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // xcode-select can exit 0 with empty stdout; treat that like no Xcode.
+        guard !path.isEmpty else {
+            throw SubprocessFailure(
+                command: command,
+                exitCode: result.exitCode,
+                standardError: String(decoding: result.standardError, as: UTF8.self)
+            )
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
     }
 }

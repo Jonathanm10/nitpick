@@ -32,6 +32,10 @@ final class AppModel {
     /// in-flight switch can never stamp a Finding with a device the Build
     /// isn't running on.
     private(set) var reviewDevice: SimulatorDevice?
+    /// The simulator host app the Build is running in — set by the same
+    /// successful launch that sets `reviewDevice`, cleared wherever
+    /// `reviewDevice` is cleared.
+    private(set) var reviewHost: SimulatorHostApp?
     /// The Device Settings last observed at capture — the accessibility
     /// state read back from the simulator when the most recent Finding was
     /// stamped. nitpick no longer pushes these (ADR-0009); the designer
@@ -469,6 +473,7 @@ final class AppModel {
             build = try await core.ingestBuild(at: url)
             isReviewing = false
             reviewDevice = nil
+            reviewHost = nil
             // A Build dropped onto the in-place filing result dismisses it:
             // the next review starts from the plain home drop zone, exactly
             // as a drop on home does (issue 03). Already nil on home.
@@ -496,7 +501,7 @@ final class AppModel {
             // or runtime surfaces as guidance before any boot is attempted.
             guard try await refreshSetup() else { return }
             guard let device = selectedDevice, device.isRuntimeAvailable else { return }
-            try await core.launch(build, on: device)
+            reviewHost = try await core.launch(build, on: device)
             reviewDevice = device
             recordRecentDevice(device)
             isReviewing = true
@@ -547,7 +552,7 @@ final class AppModel {
         selectedDeviceID = id
         await perform {
             do {
-                try await core.launch(build, on: device)
+                reviewHost = try await core.launch(build, on: device)
                 reviewDevice = device
                 recordRecentDevice(device)
             } catch {
@@ -612,6 +617,7 @@ final class AppModel {
                 if case SimulatorError.deviceNotBooted = error {
                     isReviewing = false
                     reviewDevice = nil
+                    reviewHost = nil
                 }
                 throw error
             }
@@ -619,17 +625,15 @@ final class AppModel {
         return didCapture
     }
 
-    /// Sends the designer back to the Build — v1 targets Simulator.app
-    /// concretely. The editor uses this as the one "return to the Build"
-    /// action, so the shell stays thin and the platform swap remains a
-    /// single core-side decision.
+    /// Sends the designer back to the Build (ADR-0006 round trip):
+    /// activates the host app the current review was launched into.
     @discardableResult
     func returnToBuild() -> Bool {
-        guard let simulator = NSRunningApplication
-            .runningApplications(withBundleIdentifier: "com.apple.iphonesimulator")
-            .first
-        else { return false }
-        return simulator.activate(options: [.activateAllWindows])
+        guard let host = reviewHost else { return false }
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: host.bundleIdentifier)
+        let match = running.first { $0.bundleURL == host.bundleURL } ?? running.first
+        guard let match else { return false }
+        return match.activate(options: [.activateAllWindows])
     }
 
     /// The hotkey follows the same capture path as ⌘S, then only on
@@ -679,6 +683,7 @@ final class AppModel {
             self.session = nil
             isReviewing = false
             reviewDevice = nil
+            reviewHost = nil
             sessionSchema = ProjectSchema()
             clearSelection()
             // Re-read History from disk and hold its newest entry — the
@@ -694,6 +699,7 @@ final class AppModel {
         session = nil
         isReviewing = false
         reviewDevice = nil
+        reviewHost = nil
         // The session's triage schema and any dropped-field notice belong
         // to this session; the next one reads a fresh schema at Start review.
         sessionSchema = ProjectSchema()
