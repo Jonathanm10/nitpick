@@ -5,7 +5,9 @@ import Testing
 /// Exercises the live credential store (real Keychain) and, when a server is
 /// provided, the live HTTP transport. Gated behind NITPICK_LIVE_SMOKE with
 /// the other tests that touch real machine state; uses a test-only Keychain
-/// service so the app's real token is never disturbed.
+/// service so the app's real token is never disturbed. The connecting tests
+/// share that service's one token key and are not serialized: set a single
+/// NITPICK_LIVE_FILE / NITPICK_LIVE_SEND_FEEDBACK flag per run.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["NITPICK_LIVE_SMOKE"] == "1"))
 struct YouTrackLiveTests {
     @Test("Keychain round-trip: write, read back, overwrite, delete")
@@ -96,5 +98,42 @@ struct YouTrackLiveTests {
         let filed = try await core.file(finding, in: session).issue
         #expect(!filed.idReadable.isEmpty)
         print("live file: \(filed.idReadable) at \(filed.url.absoluteString)")
+    }
+
+    @Test(
+        "real Feedback send against the server named by NITPICK_YOUTRACK_URL — creates a real issue in NIT",
+        // NITPICK_LIVE_SEND_FEEDBACK is the explicit write permission, like
+        // NITPICK_LIVE_FILE: connect-only smoke runs must never mutate NIT.
+        .enabled(if: ProcessInfo.processInfo.environment["NITPICK_LIVE_SEND_FEEDBACK"] == "1"
+            && ProcessInfo.processInfo.environment["NITPICK_YOUTRACK_URL"] != nil
+            && ProcessInfo.processInfo.environment["NITPICK_YOUTRACK_TOKEN"] != nil)
+    )
+    func realSendFeedback() async throws {
+        let url = try #require(ProcessInfo.processInfo.environment["NITPICK_YOUTRACK_URL"])
+        let token = try #require(ProcessInfo.processInfo.environment["NITPICK_YOUTRACK_TOKEN"])
+        let environment = CoreEnvironment(
+            subprocess: ProcessSubprocessRunner(),
+            httpTransport: URLSessionHTTPTransport(),
+            credentialStore: KeychainCredentialStore(service: "ch.liip.nitpick.tests")
+        )
+        let core = AppCore(environment: environment, workspaceDirectory: try Fixtures.makeTemporaryDirectory())
+        defer { try? environment.credentialStore.setSecret(nil, for: "youtrack-token") }
+        _ = try await core.connectYouTrack(instanceURL: url, token: token)
+
+        let feedback = Feedback(
+            kind: .improvement,
+            title: "nitpick live smoke Feedback — safe to delete",
+            description: "Sent by YouTrackLiveTests.realSendFeedback.",
+            environment: Feedback.Environment(
+                nitpick: "0.0.0 (0)",
+                macOS: ProcessInfo.processInfo.operatingSystemVersionString,
+                xcode: await core.xcodeVersion() ?? "unknown"
+            ),
+            imagePNG: try ImageFixtures.solidPNG(width: 320, height: 200)
+        )
+        let sent = try await core.send(feedback)
+        #expect(sent.idReadable.hasPrefix("\(AppCore.feedbackProjectShortName)-"))
+        #expect(sent.warnings.isEmpty)
+        print("live send: \(sent.idReadable) at \(sent.url.absoluteString)")
     }
 }

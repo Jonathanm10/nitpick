@@ -88,6 +88,8 @@ final class AppModel {
     /// Menu commands live outside ContentView, so the End Review confirmation
     /// flag sits on the model where both the window and the menu can drive it.
     var endReviewConfirmationRequested = false
+    /// The open Feedback sheet's model; nil while the sheet is closed.
+    var feedback: FeedbackModel?
 
     /// The verified YouTrack connection; nil shows the first-run settings.
     private(set) var youTrack: YouTrackConnection?
@@ -360,6 +362,9 @@ final class AppModel {
         if ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_SELECT"] != nil,
            let newest = session?.tray.last?.id {
             selectItem(newest)
+        }
+        if let state = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_FEEDBACK"] {
+            await stageFeedbackSnapshot(state)
         }
     }
 
@@ -1077,5 +1082,18 @@ extension AppModel {
             capturedImage = NSImage(data: finding.screenshotPNG)
             capturePixelSize = capturedImage.map { CGSize(width: $0.size.width, height: $0.size.height) }
         }
+    }
+}
+
+// MARK: - Feedback
+
+extension AppModel {
+    func presentFeedback() async {
+        let review = session.map {
+            Feedback.Environment.ReviewContext(build: $0.build.identity, hostName: reviewHost?.displayName, device: reviewDevice)
+        }
+        let environment = await FeedbackModel.environment(core: core, review: review)
+        guard feedback == nil else { return }
+        feedback = FeedbackModel(core: core, environment: environment)
     }
 }

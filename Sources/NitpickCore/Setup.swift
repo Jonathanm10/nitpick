@@ -124,4 +124,23 @@ extension AppCore {
         }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
+
+    /// `<Xcode.app>/Contents/version.plist`, beside the active developer
+    /// directory (`xcode-select -p` is `…/Contents/Developer`). Nil for
+    /// Command Line Tools or an unreadable install.
+    public func xcodeVersion() async -> String? {
+        guard let developerDirectory = try? await activeDeveloperDirectory() else { return nil }
+        let plistURL = developerDirectory
+            .deletingLastPathComponent()
+            .appendingPathComponent("version.plist")
+        guard let data = try? Data(contentsOf: plistURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let info = plist as? [String: Any],
+              let version = info["CFBundleShortVersionString"] as? String, !version.isEmpty
+        else { return nil }
+        if let build = info["ProductBuildVersion"] as? String, !build.isEmpty {
+            return "\(version) (\(build))"
+        }
+        return version
+    }
 }

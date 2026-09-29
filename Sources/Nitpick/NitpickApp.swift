@@ -8,8 +8,11 @@ struct NitpickApp: App {
     @State private var updater = UpdaterModel()
 
     var body: some Scene {
-        WindowGroup("nitpick") {
+        WindowGroup("nitpick", id: "main") {
             ContentView(model: model)
+                .sheet(item: $model.feedback) { feedback in
+                    FeedbackSheet(feedback: feedback, isConnected: model.isFeedbackConnected)
+                }
         }
         .defaultSize(width: 1140, height: 760)
         .commands {
@@ -18,6 +21,7 @@ struct NitpickApp: App {
                     .disabled(!updater.canCheckForUpdates)
             }
             ReviewCommands(model: model)
+            FeedbackCommands(model: model)
         }
 
         Window("History", id: "history") {
@@ -65,6 +69,27 @@ struct ReviewCommands: Commands {
     }
 }
 
+struct FeedbackCommands: Commands {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .help) {
+            Button("Send Feedback…") {
+                // A minimized window is not `isVisible`; opening another
+                // would duplicate the sheet and re-run launch.
+                if let window = NSApp.nitpickMainWindow, window.isVisible || window.isMiniaturized {
+                    window.deminiaturize(nil)
+                    window.makeKeyAndOrderFront(nil)
+                } else {
+                    openWindow(id: "main")
+                }
+                Task { await model.presentFeedback() }
+            }
+        }
+    }
+}
+
 /// Running from `swift run` there is no app bundle, so the process starts as
 /// a background executable; promote it to a regular, activated app.
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -77,20 +102,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // surfaces. Pin the whole app to aqua so appearance matches the design.
         NSApp.appearance = NSAppearance(named: .aqua)
 
-        // Dev-only: NITPICK_SNAPSHOT_PATH renders the main window to a PNG
-        // five seconds after launch. In-process (`cacheDisplay`), so staged
-        // screenshots need no Screen Recording permission; pairs with
-        // NITPICK_WORKSPACE for README/QA staging against a seeded store.
-        if let path = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_PATH"] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                guard let window = NSApp.windows.max(by: { $0.frame.width < $1.frame.width }),
-                      let frame = window.contentView?.superview,
-                      let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)
-                else { return }
-                frame.cacheDisplay(in: frame.bounds, to: rep)
-                try? rep.representation(using: .png, properties: [:])?
-                    .write(to: URL(fileURLWithPath: path))
-            }
-        }
+        WindowSnapshot.scheduleIfRequested()
     }
 }
