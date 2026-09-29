@@ -339,63 +339,20 @@ extension AppCore {
         return dropped
     }
 
-    /// Applies one already-resolved tag to an issue — one tag per request,
-    /// so each application is its own recorded ladder step.
-    private func applyTag(
-        _ tagID: String,
-        toIssue issueID: String,
-        named name: String,
-        credentials: (instanceURL: URL, token: String)
-    ) async throws {
-        let _: TagPayload = try await requestYouTrack(
-            instanceURL: credentials.instanceURL, token: credentials.token,
-            method: "POST", path: "api/issues/\(issueID)/tags", query: "fields=id,name",
-            body: try Self.jsonBody(TagReference(id: tagID)),
-            deniedAction: "apply the “\(name)” tag"
-        )
-    }
-
-    /// The instance-side ID of a tag by exact name: found among the tags
-    /// visible to the designer, or created on first use. Used for both the
-    /// fixed `design-review` tag and each Finding's `nitpick-type:*` tag —
-    /// resolved before any issue is created, so a create-permission refusal
-    /// never leaves an orphan issue behind (ADR-0008).
-    private func tagID(
-        named name: String,
-        with credentials: (instanceURL: URL, token: String)
-    ) async throws -> String {
-        // `query=` filters server-side by name; the exact-match check drops
-        // lookalikes ("design-review-old", "nitpick-type:bugfix").
-        let candidates: [TagPayload] = try await requestYouTrack(
-            instanceURL: credentials.instanceURL, token: credentials.token,
-            path: "api/tags", query: "fields=id,name&query=\(name)&$top=100",
-            deniedAction: "list tags"
-        )
-        if let existing = candidates.first(where: { $0.name == name }) {
-            return existing.id
-        }
-        let created: TagPayload = try await requestYouTrack(
-            instanceURL: credentials.instanceURL, token: credentials.token,
-            method: "POST", path: "api/tags", query: "fields=id,name",
-            body: try Self.jsonBody(TagCreationPayload(name: name)),
-            deniedAction: "create the “\(name)” tag (it does not exist yet)"
-        )
-        return created.id
-    }
-
     // MARK: - Request bodies
 
     /// Deterministic JSON: sorted keys make bodies byte-stable for the
-    /// request-shape tests; slashes stay readable.
-    private static func jsonBody(_ payload: some Encodable) throws -> (contentType: String, data: Data) {
+    /// request-shape tests; slashes stay readable. Shared by every YouTrack
+    /// write (filing, tags, Feedback).
+    static func jsonBody(_ payload: some Encodable) throws -> (contentType: String, data: Data) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return (contentType: "application/json", data: try encoder.encode(payload))
     }
 
     /// The multipart/form-data body YouTrack's attachments endpoint expects:
-    /// one `upload` part per attached file.
-    private static func attachmentsBody(
+    /// one `upload` part per attached file. Shared by filing and Feedback.
+    static func attachmentsBody(
         _ files: [AttachmentFile]
     ) -> (contentType: String, data: Data) {
         let boundary = "nitpick-\(UUID().uuidString)"
@@ -423,7 +380,7 @@ extension AppCore {
     }
 }
 
-private struct AttachmentFile {
+struct AttachmentFile {
     var fileName: String
     var contentType: String
     var data: Data
@@ -478,28 +435,14 @@ private enum CustomFieldValueKey: String, CodingKey {
     case login
 }
 
-private struct TagCreationPayload: Encodable {
-    var name: String
-}
-
-private struct TagReference: Encodable {
-    var id: String
-}
-
 /// The subset of `POST api/issues` the core reads back.
-private struct CreatedIssuePayload: Decodable {
+struct CreatedIssuePayload: Decodable {
     var id: String
     var idReadable: String
 }
 
-/// The subset of tag payloads the core reads.
-private struct TagPayload: Decodable {
-    var id: String
-    var name: String
-}
-
 /// The subset of `POST api/issues/{id}/attachments` the core reads back.
-private struct AttachmentPayload: Decodable {
+struct AttachmentPayload: Decodable {
     var id: String
     var name: String
 }

@@ -45,7 +45,7 @@ The project member a filed Finding is assigned to, chosen from the target projec
 _Avoid_: owner, responsible, reviewer
 
 **Issue**:
-The YouTrack artifact a filed Finding becomes, referenced locally only by its readable ID and URL — never a live mirror of its later YouTrack state.
+The YouTrack artifact a filed Finding or a sent Feedback becomes, referenced locally only by its readable ID and URL — never a live mirror of its later YouTrack state.
 _Avoid_: ticket, bug, card
 
 **Tray**:
@@ -63,3 +63,7 @@ _Avoid_: mockup, design spec
 **Design Snapshot**:
 An optional named static image from the design, attached to a Finding as visual reference alongside its captured app screenshot and independently of any Design Reference. A Finding may carry several Design Snapshots; each has a default name the designer may refine, and supports inspection rather than visual diffing or image editing.
 _Avoid_: attachment, Figma capture, comparison image
+
+**Feedback**:
+A designer's report about nitpick itself — a Bug (nitpick misbehaves) or an Improvement (a change worth making to nitpick) — with a title, a description, and the versions in play. Sent as exactly one Issue to the nitpick project; never part of a Review Session or History.
+_Avoid_: bug report, ticket, finding (a Finding is about the Build under review, not about nitpick)

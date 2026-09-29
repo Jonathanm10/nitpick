@@ -58,6 +58,8 @@ public enum YouTrackError: Error, Equatable, LocalizedError {
     case notConnected
     /// A Finding cannot file without a summary.
     case summaryRequired
+    /// A Feedback cannot send without a title.
+    case feedbackTitleRequired
     /// The server answered 403 to a filing step: the token authenticates,
     /// but the user lacks the permission the step needs.
     case permissionDenied(action: String)
@@ -78,6 +80,8 @@ public enum YouTrackError: Error, Equatable, LocalizedError {
             "Connect to YouTrack (instance URL + permanent token) before filing."
         case .summaryRequired:
             "The Finding needs a summary before it can be filed."
+        case .feedbackTitleRequired:
+            "The Feedback needs a title before it can be sent."
         case .permissionDenied(let action):
             "YouTrack denied permission to \(action). Ask a YouTrack administrator about your access."
         }
