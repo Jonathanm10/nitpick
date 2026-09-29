@@ -719,14 +719,20 @@ final class AppModel {
         clearSelection()
     }
 
-    /// True when file-all can run: something is left to file and every
-    /// still-editable Finding has the summary filing requires.
+    /// True when file-all can run: something is left to file and no
+    /// still-editable Finding lacks the summary filing requires. The summary
+    /// half reads the same core predicate the on-screen reason does, so a
+    /// disabled File all is never left unexplained.
     var canFileAll: Bool {
         guard let session, !isBusy, !hasPendingLabelDraft else { return false }
-        let remaining = session.tray.filter { $0.filedIssue == nil }
-        return !remaining.isEmpty && remaining.allSatisfy {
-            !$0.isEditable || !$0.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
+        return session.hasUnfiledFindings && session.findingsNeedingSummary.isEmpty
+    }
+
+    /// The Findings keeping File all disabled for want of a summary, in tray
+    /// order: the reason under the button, the tray's row marks, and the
+    /// Finding the reason selects all come from this one list.
+    var findingsNeedingSummary: [TrayItem.ID] {
+        session?.findingsNeedingSummary ?? []
     }
 
     /// The core's unfiled count — what "File all (n)" shows and the drop

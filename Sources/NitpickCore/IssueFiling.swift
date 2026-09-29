@@ -134,10 +134,10 @@ extension AppCore {
             // request: a missing summary or an undecodable capture on the
             // last item must stop the run before it half-files the tray.
             var pending: [(index: Int, annotatedPNG: Data)] = []
+            let needingSummary = Set(updated.findingsNeedingSummary)
             for index in remaining {
                 let item = updated.tray[index]
-                if item.isEditable,
-                    item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if needingSummary.contains(item.id) {
                     throw YouTrackError.summaryRequired
                 }
                 pending.append((index, try item.finding.annotatedScreenshotPNG()))

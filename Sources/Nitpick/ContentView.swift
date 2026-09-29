@@ -472,9 +472,9 @@ struct ContentView: View {
         .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// The session tray: the rows live in a platform List so swipe actions get
-    /// native physics and full-swipe behavior, while File all stays as the
-    /// explicit end-of-section action beneath them.
+    /// The session tray: the rows live in a platform List (see `TrayView`),
+    /// and File all stays the explicit end-of-section action beneath them,
+    /// with the reason it is disabled directly under it.
     @ViewBuilder
     private func traySection(_ tray: [TrayItem]) -> some View {
         HStack {
@@ -492,19 +492,79 @@ struct ContentView: View {
         TrayView(tray: tray, model: model)
             .layoutPriority(-1)
         if let phase = model.filingPhase {
-            Button {
-                Task { await model.fileAllFindings() }
-            } label: {
-                filingButtonLabel(phase)
+            let needingSummary = model.findingsNeedingSummary
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    Task { await model.fileAllFindings() }
+                } label: {
+                    filingButtonLabel(phase)
+                }
+                .disabled(!model.canFileAll)
+                // Applied outside `.disabled` so hovering the disabled button
+                // still answers why it is disabled.
+                .help(needingSummary.isEmpty
+                    ? "File every unfiled Finding to YouTrack"
+                    : Self.needsSummaryReason(count: needingSummary.count))
+                .tint(isAllFiled(phase) ? .green : .accentColor)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .animation(reduceMotion ? nil : MotionTokens.enter, value: phase)
+                .motionPressFeedback()
+                filingBlockedReason(needingSummary)
             }
-            .disabled(!model.canFileAll)
-            .tint(isAllFiled(phase) ? .green : .accentColor)
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .animation(reduceMotion ? nil : MotionTokens.enter, value: phase)
-            .motionPressFeedback()
         }
     }
+
+    /// Why File all is disabled when Findings still lack a summary, which is
+    /// the one blocker the designer has to act on. Clicking it selects the
+    /// first such Finding so its Summary field is right there. It stays
+    /// plain secondary text, so File all remains the screen's single
+    /// filled-accent action.
+    ///
+    /// The line's height is reserved even when nothing blocks filing: a
+    /// fresh capture always starts blocked, and the first keystroke in
+    /// Summary clears the reason, so a collapsing line would jolt the field
+    /// being typed into.
+    private func filingBlockedReason(_ needingSummary: [TrayItem.ID]) -> some View {
+        ZStack(alignment: .leading) {
+            Label("1 Finding needs a summary", systemImage: "exclamationmark.circle.fill")
+                .hidden()
+                .accessibilityHidden(true)
+            if let first = needingSummary.first {
+                Button {
+                    model.selectItem(first)
+                } label: {
+                    Label {
+                        Text(Self.needsSummaryReason(count: needingSummary.count))
+                    } icon: {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                    .foregroundStyle(NitpickTheme.secondaryText)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Select the first Finding that needs a summary")
+                .motionPressFeedback()
+                .transition(.opacity)
+            }
+        }
+        .font(NitpickTheme.secondary)
+        .animation(reduceMotion ? nil : MotionTokens.enter, value: needingSummary.isEmpty)
+    }
+
+    /// The blocker in the domain's words, shared by the reason line and the
+    /// disabled button's tooltip so the two always say the same thing.
+    private static func needsSummaryReason(count: Int) -> String {
+        count == 1 ? "1 Finding needs a summary" : "\(count) Findings need a summary"
+    }
+
+    /// File all's label deliberately sets no foreground color. The prominent
+    /// style draws its accent fill only while the window is key. Inactive,
+    /// which is the common case because the designer is working in the
+    /// Simulator, it falls back to a light bezel, and a forced white label
+    /// vanished into it. Letting the style pick the label color keeps every
+    /// phase legible whether the window is key, inactive or disabled.
     private func filingButtonLabel(_ phase: FilingPhase) -> some View {
         HStack(spacing: 6) {
             if isFiling(phase) {
@@ -516,7 +576,6 @@ struct ContentView: View {
                 .contentTransition(.opacity)
         }
         .font(.callout)
-        .foregroundStyle(.white)
         .lineLimit(1)
         .frame(maxWidth: .infinity, minHeight: 32)
     }
@@ -544,13 +603,16 @@ struct ContentView: View {
         return false
     }
 
+    /// The done checkmark inherits the label's color for the same reason the
+    /// label does. A hard-coded green glyph would vanish into the
+    /// `.green`-tinted fill; the tint already says "done", so the glyph only
+    /// has to stay legible.
     @ViewBuilder
     private func filingCheckmark(isAllFiled: Bool) -> some View {
         ZStack {
             if isAllFiled {
                 Image(systemName: "checkmark")
                     .font(.callout.weight(.semibold))
-                    .foregroundStyle(.green)
                     .transition(
                         MotionTokens.reducedMotionAware(
                             .scale.combined(with: .opacity),
