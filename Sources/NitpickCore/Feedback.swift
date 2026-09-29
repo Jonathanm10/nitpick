@@ -14,6 +14,22 @@ public struct Feedback: Equatable, Sendable {
             public var value: String
         }
 
+        /// The open Review Session's Build and where it is captured from.
+        public struct ReviewContext: Equatable, Sendable {
+            public var build: BuildIdentity
+            /// The simulator host app's display name, e.g. "Simulator".
+            public var hostName: String?
+            public var device: SimulatorDevice?
+
+            public init(build: BuildIdentity, hostName: String?, device: SimulatorDevice?) {
+                self.build = build
+                self.hostName = hostName
+                self.device = device
+            }
+        }
+
+        public static let unknown = "unknown"
+
         public var nitpick: String
         public var macOS: String
         public var xcode: String
@@ -28,6 +44,29 @@ public struct Feedback: Equatable, Sendable {
             self.captureSource = captureSource
         }
 
+        /// From what the shell could read: a nil or blank version is sent as
+        /// "unknown" (no bundle Info under `swift run`, no Xcode.app behind
+        /// Command Line Tools). Build and Capture Source come only with a
+        /// Review Session.
+        public init(
+            nitpickVersion: String?,
+            nitpickBuild: String?,
+            macOS: String?,
+            xcode: String?,
+            review: ReviewContext? = nil
+        ) {
+            let nitpick = Self.known(nitpickVersion).flatMap { version in
+                Self.known(nitpickBuild).map { "\(version) (\($0))" }
+            }
+            self.init(
+                nitpick: nitpick ?? Self.unknown,
+                macOS: Self.known(macOS) ?? Self.unknown,
+                xcode: Self.known(xcode) ?? Self.unknown,
+                build: review.map { "\($0.build.bundleID) \($0.build.version) (\($0.build.buildNumber))" },
+                captureSource: review.map(Self.captureSourceName)
+            )
+        }
+
         public var lines: [Line] {
             let pairs: [(String, String?)] = [
                 ("Nitpick", nitpick),
@@ -39,6 +78,16 @@ public struct Feedback: Equatable, Sendable {
             return pairs.compactMap { label, value in
                 value.map { Line(label: label, value: Self.singleLine($0)) }
             }
+        }
+
+        private static func known(_ value: String?) -> String? {
+            guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return value
+        }
+
+        private static func captureSourceName(_ review: ReviewContext) -> String {
+            guard let device = review.device else { return "Simulator (not running)" }
+            return "\(review.hostName ?? "Simulator") — \(device.name), \(device.osName)"
         }
 
         private static func singleLine(_ value: String) -> String {
@@ -64,6 +113,16 @@ public struct Feedback: Equatable, Sendable {
         self.description = description
         self.environment = environment
         self.imagePNG = imagePNG
+    }
+
+    /// The Issue summary; `send` refuses a Feedback whose summary is empty.
+    public var summary: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whether closing without sending would lose something the designer wrote.
+    public var hasText: Bool {
+        !summary.isEmpty || !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var issueDescription: String {
@@ -94,73 +153,61 @@ extension AppCore {
 
     /// Once the Issue exists, a failed tag or image upload becomes a warning
     /// instead of an error: the designer's only recourse, a retry, would
-    /// create a second Issue.
+    /// create a second Issue. A create whose response is lost or undecodable
+    /// still throws, so that retry can duplicate; Finding filing shares the
+    /// limit.
     public func send(_ feedback: Feedback) async throws -> SentFeedback {
-        let summary = feedback.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !summary.isEmpty else { throw YouTrackError.feedbackTitleRequired }
+        guard !feedback.summary.isEmpty else { throw YouTrackError.feedbackTitleRequired }
         guard let credentials = try savedYouTrackCredentials() else { throw YouTrackError.notConnected }
 
+        let project = try await feedbackProject(with: credentials)
         let tagName = feedback.kind.tagName
         let tagID = try await tagID(named: tagName, with: credentials)
-        let shortName = Self.feedbackProjectShortName
-        let project: FeedbackProjectPayload = try await requestYouTrack(
-            instanceURL: credentials.instanceURL, token: credentials.token,
-            path: "api/admin/projects/\(shortName)", query: "fields=id,name",
-            deniedAction: "read the \(shortName) project"
+        let created = try await createIssue(
+            in: project, summary: feedback.summary, description: feedback.issueDescription,
+            credentials: credentials
         )
 
-        let created: CreatedIssuePayload = try await requestYouTrack(
-            instanceURL: credentials.instanceURL, token: credentials.token,
-            method: "POST", path: "api/issues", query: "fields=id,idReadable",
-            body: try Self.jsonBody(FeedbackIssuePayload(
-                project: .init(id: project.id),
-                summary: summary,
-                description: feedback.issueDescription
-            )),
-            deniedAction: "create an issue in \(project.name)"
-        )
         var warnings: [String] = []
         do {
             try await applyTag(tagID, toIssue: created.id, named: tagName, credentials: credentials)
         } catch {
             warnings.append("The \(tagName) tag could not be applied.")
         }
-
         if let imagePNG = feedback.imagePNG {
             do {
-                let _: [AttachmentPayload] = try await requestYouTrack(
-                    instanceURL: credentials.instanceURL, token: credentials.token,
-                    method: "POST", path: "api/issues/\(created.id)/attachments", query: "fields=id,name",
-                    body: Self.attachmentsBody([
-                        AttachmentFile(fileName: Self.feedbackImageFileName, contentType: "image/png", data: imagePNG),
-                    ]),
-                    deniedAction: "attach the window image"
+                try await attach(
+                    [AttachmentFile(fileName: Self.feedbackImageFileName, contentType: "image/png", data: imagePNG)],
+                    toIssue: created.id, deniedAction: "attach the window image", credentials: credentials
                 )
             } catch {
                 warnings.append("The window image could not be attached.")
             }
         }
-
         return SentFeedback(
             idReadable: created.idReadable,
             url: Self.issueURL(instanceURL: credentials.instanceURL, idReadable: created.idReadable),
             warnings: warnings
         )
     }
+
+    /// Looked up before the tag, so an unreadable NIT leaves no tag behind.
+    private func feedbackProject(with credentials: (instanceURL: URL, token: String)) async throws -> YouTrackProject {
+        let shortName = Self.feedbackProjectShortName
+        do {
+            let project: FeedbackProjectPayload = try await requestYouTrack(
+                instanceURL: credentials.instanceURL, token: credentials.token,
+                path: "api/admin/projects/\(shortName)", query: "fields=id,name",
+                deniedAction: "read the \(shortName) project"
+            )
+            return YouTrackProject(id: project.id, shortName: shortName, name: project.name)
+        } catch YouTrackError.unexpectedResponse(statusCode: 404) {
+            throw YouTrackError.projectNotFound(shortName: shortName)
+        }
+    }
 }
 
 // MARK: - Wire payloads
-
-/// No `customFields`: NIT's defaults apply and triage happens on the board.
-private struct FeedbackIssuePayload: Encodable {
-    struct ProjectReference: Encodable {
-        var id: String
-    }
-
-    var project: ProjectReference
-    var summary: String
-    var description: String
-}
 
 private struct FeedbackProjectPayload: Decodable {
     var id: String

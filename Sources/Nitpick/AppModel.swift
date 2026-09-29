@@ -88,8 +88,8 @@ final class AppModel {
     /// Menu commands live outside ContentView, so the End Review confirmation
     /// flag sits on the model where both the window and the menu can drive it.
     var endReviewConfirmationRequested = false
-    var isFeedbackSheetPresented = false
-    let feedback = FeedbackModel()
+    /// The open Feedback sheet's model; nil while the sheet is closed.
+    var feedback: FeedbackModel?
 
     /// The verified YouTrack connection; nil shows the first-run settings.
     private(set) var youTrack: YouTrackConnection?
@@ -1089,17 +1089,11 @@ extension AppModel {
 
 extension AppModel {
     func presentFeedback() async {
-        guard !isFeedbackSheetPresented else { return }
         let review = session.map {
-            FeedbackModel.ReviewContext(build: $0.build.identity, host: reviewHost, device: reviewDevice)
+            Feedback.Environment.ReviewContext(build: $0.build.identity, hostName: reviewHost?.displayName, device: reviewDevice)
         }
         let environment = await FeedbackModel.environment(core: core, review: review)
-        guard !isFeedbackSheetPresented else { return }
-        feedback.reset(connected: youTrack != nil, environment: environment)
-        isFeedbackSheetPresented = true
-    }
-
-    func sendFeedback() async {
-        await feedback.send(using: core)
+        guard feedback == nil else { return }
+        feedback = FeedbackModel(core: core, environment: environment)
     }
 }

@@ -10,8 +10,8 @@ struct NitpickApp: App {
     var body: some Scene {
         WindowGroup("nitpick", id: "main") {
             ContentView(model: model)
-                .sheet(isPresented: $model.isFeedbackSheetPresented) {
-                    FeedbackSheet(model: model)
+                .sheet(item: $model.feedback) { feedback in
+                    FeedbackSheet(feedback: feedback, isConnected: model.isFeedbackConnected)
                 }
         }
         .defaultSize(width: 1140, height: 760)
@@ -76,7 +76,10 @@ struct FeedbackCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .help) {
             Button("Send Feedback…") {
-                if let window = NSApp.nitpickMainWindow, window.isVisible {
+                // A minimized window is not `isVisible`; opening another
+                // would duplicate the sheet and re-run launch.
+                if let window = NSApp.nitpickMainWindow, window.isVisible || window.isMiniaturized {
+                    window.deminiaturize(nil)
                     window.makeKeyAndOrderFront(nil)
                 } else {
                     openWindow(id: "main")

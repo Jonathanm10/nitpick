@@ -5,7 +5,9 @@ import Testing
 /// Exercises the live credential store (real Keychain) and, when a server is
 /// provided, the live HTTP transport. Gated behind NITPICK_LIVE_SMOKE with
 /// the other tests that touch real machine state; uses a test-only Keychain
-/// service so the app's real token is never disturbed.
+/// service so the app's real token is never disturbed. The connecting tests
+/// share that service's one token key and are not serialized: set a single
+/// NITPICK_LIVE_FILE / NITPICK_LIVE_SEND_FEEDBACK flag per run.
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["NITPICK_LIVE_SMOKE"] == "1"))
 struct YouTrackLiveTests {
     @Test("Keychain round-trip: write, read back, overwrite, delete")

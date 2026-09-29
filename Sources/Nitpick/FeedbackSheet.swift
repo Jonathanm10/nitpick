@@ -3,30 +3,27 @@ import NitpickCore
 import SwiftUI
 
 struct FeedbackSheet: View {
-    @Bindable var model: AppModel
+    @Bindable var feedback: FeedbackModel
+    /// Read on every render, so connecting in Settings while the sheet is
+    /// open swaps the not-connected state for the form.
+    let isConnected: Bool
 
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.dismiss) private var dismiss
 
     static let width: CGFloat = 520
-
-    @Bindable private var feedback: FeedbackModel
-
-    init(model: AppModel) {
-        self.model = model
-        feedback = model.feedback
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Send Feedback")
                 .font(.title3.weight(.semibold))
             switch feedback.phase {
-            case .notConnected:
-                notConnected
             case .sent(let sent):
                 sentConfirmation(sent)
-            case .editing, .sending, .failed:
+            case .sending:
                 form
+            case .editing, .failed:
+                if isConnected { form } else { notConnected }
             }
         }
         .padding(20)
@@ -44,9 +41,6 @@ struct FeedbackSheet: View {
         } message: {
             Text("The title and description you wrote will be lost.")
         }
-        .onChange(of: model.youTrack != nil) { _, connected in
-            if connected, feedback.phase == .notConnected { feedback.phase = .editing }
-        }
     }
 
     // MARK: Not connected
@@ -58,11 +52,13 @@ struct FeedbackSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { close() }
+                Button("Cancel", role: .cancel) { requestClose() }
                     .keyboardShortcut(.cancelAction)
                     .motionPressFeedback()
+                // Text survives only if the sheet does: disconnecting
+                // mid-edit lands here with the draft still in the model.
                 Button("Open Settings…") {
-                    close()
+                    if !feedback.closeNeedsConfirmation { close() }
                     openSettings()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -140,7 +136,7 @@ struct FeedbackSheet: View {
                     .keyboardShortcut(.cancelAction)
                     .motionPressFeedback()
                 Button("Send") {
-                    Task { await model.sendFeedback() }
+                    Task { await feedback.send() }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!feedback.canSend)
@@ -212,7 +208,7 @@ struct FeedbackSheet: View {
     }
 
     private func close() {
-        model.isFeedbackSheetPresented = false
+        dismiss()
     }
 }
 

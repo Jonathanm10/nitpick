@@ -62,6 +62,9 @@ public enum YouTrackError: Error, Equatable, LocalizedError {
     /// The server answered 403 to a filing step: the token authenticates,
     /// but the user lacks the permission the step needs.
     case permissionDenied(action: String)
+    /// The server answered 404 to a project lookup: the project is gone,
+    /// renamed, or not visible to the token's user.
+    case projectNotFound(shortName: String)
 
     public var errorDescription: String? {
         switch self {
@@ -83,6 +86,8 @@ public enum YouTrackError: Error, Equatable, LocalizedError {
             "The Feedback needs a title before it can be sent."
         case .permissionDenied(let action):
             "YouTrack denied permission to \(action). Ask a YouTrack administrator about your access."
+        case .projectNotFound(let shortName):
+            "YouTrack has no \(shortName) project visible to your account. Ask a YouTrack administrator about your access."
         }
     }
 }

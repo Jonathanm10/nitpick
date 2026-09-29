@@ -3,6 +3,7 @@ import Foundation
 import NitpickCore
 
 // Dev-only NITPICK_SNAPSHOT_* seams. Prints here are the proof package's measurements.
+// Like the other seams they are not behind `#if DEBUG`; none of them calls send or file itself.
 
 @MainActor
 enum WindowSnapshot {
@@ -49,15 +50,23 @@ enum WindowSnapshot {
 }
 
 extension AppModel {
+    /// A staged `NITPICK_SNAPSHOT_FEEDBACK` state other than "not-connected"
+    /// shows the form without a saved connection; the seam never calls send.
+    var isFeedbackConnected: Bool {
+        if let state = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_FEEDBACK"] {
+            return state != "not-connected"
+        }
+        return youTrack != nil
+    }
+
     func stageFeedbackSnapshot(_ state: String) async {
         await presentFeedback()
+        guard let feedback else { return }
         guard state != "not-connected" else {
-            feedback.phase = .notConnected
-            print("feedback snapshot: state=\(state)")
+            print("feedback snapshot: state=\(state) connected=\(isFeedbackConnected)")
             fflush(stdout)
             return
         }
-        feedback.phase = .editing
         if state != "editing-empty" {
             feedback.title = "Capture button stays disabled after ⌘S"
             feedback.description = """
@@ -89,13 +98,15 @@ extension AppModel {
             ))
         case "failed":
             feedback.phase = .failed(message: YouTrackError.permissionDenied(action: "create an issue in Nitpick").localizedDescription)
+        case "failed-not-found":
+            feedback.phase = .failed(message: YouTrackError.projectNotFound(shortName: AppCore.feedbackProjectShortName).localizedDescription)
         case "discard":
             try? await Task.sleep(for: .seconds(1.5))
             feedback.discardConfirmationRequested = true
         default:
             break
         }
-        print("feedback snapshot: state=\(state) canSend=\(feedback.canSend) hasText=\(feedback.hasText)")
+        print("feedback snapshot: state=\(state) canSend=\(feedback.canSend) hasText=\(feedback.payload.hasText)")
         fflush(stdout)
     }
 }

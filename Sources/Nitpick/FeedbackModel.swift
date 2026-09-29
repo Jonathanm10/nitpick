@@ -3,17 +3,20 @@ import Foundation
 import NitpickCore
 import Observation
 
+/// One presentation of the Feedback sheet: created when the sheet opens,
+/// dropped when it closes, so every presentation starts blank.
 @MainActor
 @Observable
-final class FeedbackModel {
+final class FeedbackModel: Identifiable {
     enum Phase: Equatable {
-        case notConnected
         case editing
         case sending
         case sent(SentFeedback)
         case failed(message: String)
     }
 
+    private let core: AppCore
+    let environment: Feedback.Environment
     var phase: Phase = .editing
     var kind: FeedbackKind = .bug
     var title = ""
@@ -21,27 +24,26 @@ final class FeedbackModel {
     private(set) var windowImagePNG: Data?
     private(set) var windowImage: NSImage?
     var attachesWindowImage: Bool { windowImagePNG != nil }
-    var environment = Feedback.Environment(nitpick: "unknown", macOS: "unknown", xcode: "unknown")
     var discardConfirmationRequested = false
+
+    init(core: AppCore, environment: Feedback.Environment) {
+        self.core = core
+        self.environment = environment
+    }
 
     var isFormEditable: Bool {
         switch phase {
         case .editing, .failed: true
-        case .notConnected, .sending, .sent: false
+        case .sending, .sent: false
         }
     }
 
     var canSend: Bool {
-        isFormEditable && !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var hasText: Bool {
-        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        isFormEditable && !payload.summary.isEmpty
     }
 
     var closeNeedsConfirmation: Bool {
-        isFormEditable && hasText
+        isFormEditable && payload.hasText
     }
 
     var failureMessage: String? {
@@ -59,17 +61,6 @@ final class FeedbackModel {
         )
     }
 
-    func reset(connected: Bool, environment: Feedback.Environment) {
-        phase = connected ? .editing : .notConnected
-        kind = .bug
-        title = ""
-        description = ""
-        windowImagePNG = nil
-        windowImage = nil
-        self.environment = environment
-        discardConfirmationRequested = false
-    }
-
     func setWindowImage(_ png: Data?) {
         windowImagePNG = png
         windowImage = png.flatMap(NSImage.init(data:))
@@ -81,7 +72,7 @@ final class FeedbackModel {
 
     /// Not routed through `AppModel.perform`: a Feedback must not flip
     /// `isBusy` and freeze the review behind the sheet.
-    func send(using core: AppCore) async {
+    func send() async {
         guard canSend else { return }
         let payload = payload
         phase = .sending

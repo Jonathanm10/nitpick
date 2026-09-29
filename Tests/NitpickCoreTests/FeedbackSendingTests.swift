@@ -38,13 +38,13 @@ struct FeedbackSendingTests {
     }
 
     static func enqueueLadder(on transport: FakeHTTPTransport) {
-        transport.enqueue(json: existingBugTagJSON)
         transport.enqueue(json: projectJSON)
+        transport.enqueue(json: existingBugTagJSON)
         transport.enqueue(json: createdIssueJSON)
         transport.enqueue(json: appliedBugTagJSON)
     }
 
-    @Test("send emits find-tag → find NIT → create issue → apply tag, with exact bodies and no custom fields")
+    @Test("send emits find NIT → find-tag → create issue → apply tag, with exact bodies and no custom fields")
     func sendsOneIssue() async throws {
         let transport = FakeHTTPTransport()
         let core = try await IssueFilingTests.connectedCore(transport: transport)
@@ -61,11 +61,11 @@ struct FeedbackSendingTests {
         }
 
         #expect(requests[0].httpMethod == "GET")
-        #expect(requests[0].url?.absoluteString == "\(Self.base)/api/tags?fields=id,name&query=nitpick-feedback:bug&$top=100")
+        #expect(requests[0].url?.absoluteString == "\(Self.base)/api/admin/projects/NIT?fields=id,name")
+        #expect(requests[0].httpBody == nil)
 
         #expect(requests[1].httpMethod == "GET")
-        #expect(requests[1].url?.absoluteString == "\(Self.base)/api/admin/projects/NIT?fields=id,name")
-        #expect(requests[1].httpBody == nil)
+        #expect(requests[1].url?.absoluteString == "\(Self.base)/api/tags?fields=id,name&query=nitpick-feedback:bug&$top=100")
 
         #expect(requests[2].httpMethod == "POST")
         #expect(requests[2].url?.absoluteString == "\(Self.base)/api/issues?fields=id,idReadable")
@@ -78,13 +78,13 @@ struct FeedbackSendingTests {
         #expect(Self.body(requests[3]) == #"{"id":"6-3910"}"#)
     }
 
-    @Test("a missing nitpick-feedback tag is created by exact name before the project and issue")
+    @Test("a missing nitpick-feedback tag is created by exact name after the project and before the issue")
     func createsMissingTag() async throws {
         let transport = FakeHTTPTransport()
         let core = try await IssueFilingTests.connectedCore(transport: transport)
+        transport.enqueue(json: Self.projectJSON)
         transport.enqueue(json: #"[{"id":"6-1","name":"nitpick-feedback:improvements","$type":"Tag"}]"#)
         transport.enqueue(json: #"{"id":"6-3911","name":"nitpick-feedback:improvement","$type":"Tag"}"#)
-        transport.enqueue(json: Self.projectJSON)
         transport.enqueue(json: Self.createdIssueJSON)
         transport.enqueue(json: #"{"id":"6-3911","name":"nitpick-feedback:improvement","$type":"Tag"}"#)
 
@@ -92,11 +92,11 @@ struct FeedbackSendingTests {
 
         let requests = Array(transport.sentRequests.dropFirst(2))
         try #require(requests.count == 5)
-        #expect(requests[0].url?.absoluteString == "\(Self.base)/api/tags?fields=id,name&query=nitpick-feedback:improvement&$top=100")
-        #expect(requests[1].httpMethod == "POST")
-        #expect(requests[1].url?.absoluteString == "\(Self.base)/api/tags?fields=id,name")
-        #expect(Self.body(requests[1]) == #"{"name":"nitpick-feedback:improvement"}"#)
-        #expect(requests[2].url?.absoluteString == "\(Self.base)/api/admin/projects/NIT?fields=id,name")
+        #expect(requests[0].url?.absoluteString == "\(Self.base)/api/admin/projects/NIT?fields=id,name")
+        #expect(requests[1].url?.absoluteString == "\(Self.base)/api/tags?fields=id,name&query=nitpick-feedback:improvement&$top=100")
+        #expect(requests[2].httpMethod == "POST")
+        #expect(requests[2].url?.absoluteString == "\(Self.base)/api/tags?fields=id,name")
+        #expect(Self.body(requests[2]) == #"{"name":"nitpick-feedback:improvement"}"#)
         #expect(requests[3].url?.absoluteString == "\(Self.base)/api/issues?fields=id,idReadable")
         #expect(Self.body(requests[4]) == #"{"id":"6-3911"}"#)
     }
@@ -105,18 +105,20 @@ struct FeedbackSendingTests {
     func tokenRejectedOnTag() async throws {
         let transport = FakeHTTPTransport()
         let core = try await IssueFilingTests.connectedCore(transport: transport)
+        transport.enqueue(json: Self.projectJSON)
         transport.enqueue(statusCode: 401, json: #"{"error":"Unauthorized"}"#)
 
         await #expect(throws: YouTrackError.tokenRejected) {
             try await core.send(Self.feedback())
         }
-        #expect(transport.sentRequests.count == 3)
+        #expect(transport.sentRequests.count == 4)
     }
 
     @Test("a 403 on tag creation names the permission and no issue is created")
     func tagCreationDenied() async throws {
         let transport = FakeHTTPTransport()
         let core = try await IssueFilingTests.connectedCore(transport: transport)
+        transport.enqueue(json: Self.projectJSON)
         transport.enqueue(json: "[]")
         transport.enqueue(statusCode: 403, json: #"{"error":"Forbidden"}"#)
 
@@ -125,29 +127,42 @@ struct FeedbackSendingTests {
         )) {
             try await core.send(Self.feedback())
         }
-        #expect(transport.sentRequests.count == 4)
+        #expect(transport.sentRequests.count == 5)
         #expect(!transport.sentRequests.contains { $0.url?.path().hasSuffix("api/issues") == true })
     }
 
-    @Test("a 403 on the NIT project lookup names the permission and no issue is created")
+    @Test("a 403 on the NIT project lookup names the permission and touches no tag")
     func projectLookupDenied() async throws {
         let transport = FakeHTTPTransport()
         let core = try await IssueFilingTests.connectedCore(transport: transport)
-        transport.enqueue(json: Self.existingBugTagJSON)
         transport.enqueue(statusCode: 403, json: #"{"error":"Forbidden"}"#)
 
         await #expect(throws: YouTrackError.permissionDenied(action: "read the NIT project")) {
             try await core.send(Self.feedback())
         }
-        #expect(transport.sentRequests.count == 4)
+        #expect(transport.sentRequests.count == 3)
+    }
+
+    @Test("a 404 on the NIT project lookup names NIT and touches no tag")
+    func projectLookupNotFound() async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await IssueFilingTests.connectedCore(transport: transport)
+        transport.enqueue(statusCode: 404, json: #"{"error":"Not Found"}"#)
+
+        await #expect(throws: YouTrackError.projectNotFound(shortName: "NIT")) {
+            try await core.send(Self.feedback())
+        }
+        #expect(!transport.sentRequests.contains { $0.url?.path().hasSuffix("api/tags") == true })
+        #expect(transport.sentRequests.count == 3)
+        #expect(YouTrackError.projectNotFound(shortName: "NIT").localizedDescription.contains("NIT"))
     }
 
     @Test("a 403 on issue creation names the NIT project; nothing is tagged")
     func creationDenied() async throws {
         let transport = FakeHTTPTransport()
         let core = try await IssueFilingTests.connectedCore(transport: transport)
-        transport.enqueue(json: Self.existingBugTagJSON)
         transport.enqueue(json: Self.projectJSON)
+        transport.enqueue(json: Self.existingBugTagJSON)
         transport.enqueue(statusCode: 403, json: #"{"error":"Forbidden"}"#)
 
         await #expect(throws: YouTrackError.permissionDenied(action: "create an issue in Nitpick")) {
@@ -227,14 +242,14 @@ struct FeedbackSendingTests {
         #expect(!transport.sentRequests.contains { $0.url?.path().hasSuffix("attachments") == true })
     }
 
-    @Test("an environment value the shell could not read is sent verbatim as “unknown”")
-    func unknownVersionPassesThrough() async throws {
+    @Test("a version the shell could not read is sent as “unknown”")
+    func unknownVersionOnTheWire() async throws {
         let transport = FakeHTTPTransport()
         let core = try await IssueFilingTests.connectedCore(transport: transport)
         Self.enqueueLadder(on: transport)
 
         _ = try await core.send(Self.feedback(description: "", environment: Feedback.Environment(
-            nitpick: "unknown", macOS: "Version 26.1 (Build 25B78)", xcode: "unknown"
+            nitpickVersion: nil, nitpickBuild: nil, macOS: "Version 26.1 (Build 25B78)", xcode: nil
         )))
 
         let creation = transport.sentRequests[4]
@@ -242,13 +257,61 @@ struct FeedbackSendingTests {
             + #""project":{"id":"0-77"},"summary":"Tray loses focus after capture"}"#)
     }
 
+    @Test("a nil or blank version, or a version without its build, falls back to “unknown”",
+          arguments: [
+              (String?.none, String?.none), ("1.4.0", nil), (nil, "57"), ("", "57"), ("1.4.0", " "),
+          ])
+    func unknownFallback(version: String?, build: String?) {
+        let environment = Feedback.Environment(nitpickVersion: version, nitpickBuild: build, macOS: "  ", xcode: "")
+        #expect(environment.nitpick == "unknown")
+        #expect(environment.macOS == "unknown")
+        #expect(environment.xcode == "unknown")
+    }
+
+    @Test("read versions pass through; nitpick joins version and build")
+    func knownVersions() {
+        let environment = Feedback.Environment(
+            nitpickVersion: "1.4.0", nitpickBuild: "57", macOS: "Version 26.1 (Build 25B78)", xcode: "26.1 (17B55)"
+        )
+        #expect(environment == Self.versionsOnly)
+    }
+
+    @Test("a Review Session adds Build and Capture Source; without one, neither appears")
+    func reviewContextLines() {
+        let build = BuildIdentity(bundleID: "ch.liip.reviewme", version: "2.1.0", buildNumber: "421")
+        let device = SimulatorDevice(udid: "AAAA-1111", name: "iPhone 17 Pro", osName: "iOS 26.1", isBooted: true)
+        func environment(_ review: Feedback.Environment.ReviewContext?) -> Feedback.Environment {
+            Feedback.Environment(nitpickVersion: "1.4.0", nitpickBuild: "57", macOS: "26.1", xcode: "26.1", review: review)
+        }
+
+        let hosted = environment(.init(build: build, hostName: "DeviceHub", device: device))
+        #expect(hosted.build == "ch.liip.reviewme 2.1.0 (421)")
+        #expect(hosted.captureSource == "DeviceHub — iPhone 17 Pro, iOS 26.1")
+        #expect(environment(.init(build: build, hostName: nil, device: device)).captureSource
+            == "Simulator — iPhone 17 Pro, iOS 26.1")
+        #expect(environment(.init(build: build, hostName: "DeviceHub", device: nil)).captureSource
+            == "Simulator (not running)")
+
+        let idle = environment(nil)
+        #expect(idle.build == nil)
+        #expect(idle.captureSource == nil)
+    }
+
+    @Test("the summary is the trimmed title; whitespace alone is no text")
+    func summaryAndText() {
+        #expect(Self.feedback().summary == "Tray loses focus after capture")
+        #expect(!Self.feedback(title: " \n", description: "\t ").hasText)
+        #expect(Self.feedback(title: "", description: "Only a description").hasText)
+        #expect(Self.feedback(title: "Only a title", description: "").hasText)
+    }
+
     @Test("a failed tag after the Issue exists returns the Issue with a warning; no second issue is created",
           arguments: [401, 403, 500])
     func tagFailureIsWarning(statusCode: Int) async throws {
         let transport = FakeHTTPTransport()
         let core = try await IssueFilingTests.connectedCore(transport: transport)
-        transport.enqueue(json: Self.existingBugTagJSON)
         transport.enqueue(json: Self.projectJSON)
+        transport.enqueue(json: Self.existingBugTagJSON)
         transport.enqueue(json: Self.createdIssueJSON)
         transport.enqueue(statusCode: statusCode, json: #"{"error":"nope"}"#)
         transport.enqueue(json: Self.attachmentsJSON)
