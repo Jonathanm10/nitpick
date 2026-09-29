@@ -108,8 +108,10 @@ extension AppCore {
 
     /// `xcode-select -p`, trimmed, as a directory URL. Non-zero exit or
     /// empty output is a `SubprocessFailure`. `checkSetup` maps that
-    /// failure to `.xcodeNotInstalled`; `launch` lets it surface.
-    func activeDeveloperDirectory() async throws -> URL {
+    /// failure to `.xcodeNotInstalled`; `launch` lets it surface. Public
+    /// so the shell can read the Xcode version for a Feedback's Environment
+    /// section through the same injected subprocess seam.
+    public func activeDeveloperDirectory() async throws -> URL {
         let command = SubprocessCommand(executablePath: "/usr/bin/xcode-select", arguments: ["-p"])
         let result = try await runRequiringSuccess(command)
         let path = String(decoding: result.standardOutput, as: UTF8.self)
