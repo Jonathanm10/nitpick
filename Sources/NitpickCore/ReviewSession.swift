@@ -153,6 +153,20 @@ extension ReviewSession {
     public var hasUnfiledFindings: Bool {
         unfiledFindingCount > 0
     }
+
+    /// The Findings that keep File all from running, in tray order: still
+    /// editable, so filing would create their Issue, yet missing the
+    /// summary every Issue needs. Frozen and filed items never block, since
+    /// their Issue already exists and a retry only finishes it. This is the
+    /// one predicate behind the shell's File all enablement, the reason it
+    /// shows under the button, and file-all's own pre-flight, so none of
+    /// them can disagree about why filing is blocked.
+    public var findingsNeedingSummary: [TrayItem.ID] {
+        tray.filter {
+            $0.isEditable && $0.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        .map(\.id)
+    }
 }
 
 /// The device and settings in effect when a Finding is captured: device

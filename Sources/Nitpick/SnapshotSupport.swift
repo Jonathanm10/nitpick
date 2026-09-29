@@ -1,15 +1,59 @@
 import AppKit
 import Foundation
 import NitpickCore
+import SwiftUI
 
 // Dev-only NITPICK_SNAPSHOT_* seams. Prints here are the proof package's measurements.
 // Like the other seams they are not behind `#if DEBUG`; none of them calls send or file itself.
 
 @MainActor
 enum WindowSnapshot {
+    /// `NITPICK_SNAPSHOT_SIZE=WxH` renders an offscreen, never-key copy of the
+    /// main view at exactly that size instead of the real window: layout QA
+    /// no longer depends on the window manager (a tiler can pin the real
+    /// frame), and the inactive-window look the designer sees while working
+    /// in the Simulator is deterministic.
+    static let requestedSize: NSSize? = {
+        guard let value = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_SIZE"] else { return nil }
+        let parts = value.split(separator: "x").compactMap { Double($0) }
+        guard parts.count == 2 else { return nil }
+        return NSSize(width: parts[0], height: parts[1])
+    }()
+
+    private static var offscreenWindow: NSWindow?
+
+    /// Hosts a second `ContentView` over the same model in a borderless
+    /// window parked off every screen. Called once, after launch restored
+    /// the session, so the copy renders the same state as the real window.
+    static func stageOffscreenCopy(model: AppModel) {
+        guard offscreenWindow == nil, let size = requestedSize else { return }
+        let window = NSWindow(
+            contentRect: NSRect(origin: CGPoint(x: -10_000, y: 0), size: size),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = NSHostingView(rootView: ContentView(model: model, isSnapshotCopy: true))
+        window.orderFront(nil)
+        offscreenWindow = window
+    }
+
     static func scheduleIfRequested() {
         guard let path = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_PATH"] else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            if let window = offscreenWindow, let size = requestedSize {
+                // Start-review growth resizes the copy too; pin it back first.
+                window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    guard let view = window.contentView,
+                          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+                    else { return }
+                    view.cacheDisplay(in: view.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?
+                        .write(to: URL(fileURLWithPath: path))
+                }
+                return
+            }
             guard let window = NSApp.nitpickMainWindow
                 ?? NSApp.windows.filter({ !$0.isSheet }).max(by: { $0.frame.width < $1.frame.width }),
                   let rep = snapshot(of: window)

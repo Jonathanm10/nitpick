@@ -2,11 +2,12 @@ import NitpickCore
 import SwiftUI
 
 /// The tray lives in a List for its content-sized scrolling: it is the control
-/// column's one scroll region — a flexible frame lets it sit at its
+/// column's first scroll region — a flexible frame lets it sit at its
 /// row-count-capped natural height when there is room and compress toward a
-/// ~2-row floor when the fixed compose fields need the space, scrolling once
-/// rows are hidden. A lower layoutPriority than compose (set at the use site)
-/// makes the tray — not the whole column — yield and scroll; an unbounded
+/// ~2-row floor when the compose fields need the space, scrolling once rows
+/// are hidden. A lower layoutPriority than compose (set at the use site) makes
+/// the tray yield and scroll before compose does (compose scrolls only as the
+/// column's last resort, once the tray sits at its floor); an unbounded
 /// List would instead swallow the column's spare height and orphan the fields
 /// below it. Discard is a hover/selection × per row, not a swipe (ADR-0010):
 /// swipe-to-act is a touch idiom, undiscoverable on a pointer-driven Mac list.
@@ -134,19 +135,19 @@ struct TrayView: View {
         )
     }
 
+    /// One tray row, squeezed in a fixed order when the inspector is narrow.
+    /// The status (filed Issue ID, filing state, the needs-a-summary mark and
+    /// Discard ×) claims its width first and never truncates, because an
+    /// Issue ID cut to one character or "Filing interrupted" wrapped into
+    /// "F / il" reads as noise. The device model yields next, then the
+    /// summary truncates. A long filing error is the one status allowed to
+    /// truncate: it shares the title's priority, so the two split the width
+    /// and neither is erased (its `.help` keeps the full message).
     private func trayRow(_ item: TrayItem) -> some View {
         let isSelected = model.selectedItemID == item.id
         let isHovered = hoveredItemID == item.id
         return HStack(spacing: 8) {
-            let summary = item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-            Text(summary.isEmpty ? "Untitled Finding" : summary)
-                .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                .lineLimit(1)
-                .layoutPriority(3)
-            Text(item.finding.deviceContext.deviceModel)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(NitpickTheme.secondaryText)
-                .lineLimit(1)
+            rowTitle(item, isSelected: isSelected)
                 .layoutPriority(1)
             Spacer(minLength: 4)
             if let filed = item.filedIssue {
@@ -158,6 +159,8 @@ struct TrayView: View {
                         .motionPressFeedback()
                 }
                 .font(.system(size: 13))
+                .fixedSize()
+                .layoutPriority(2)
                 .transition(
                     MotionTokens.reducedMotionAware(
                         .scale.combined(with: .opacity),
@@ -165,17 +168,24 @@ struct TrayView: View {
                     )
                 )
             } else if item.isEditable {
-                // Discard is a hover/selection × (ADR-0010) that stages the
-                // confirmation — never a one-click destroy. Gated exactly as
-                // the old swipe was: no × while a File all run is busy or a
-                // label draft is pending.
-                if isHovered || isSelected {
-                    TrayDiscardButton(
-                        disabled: model.isBusy || model.hasPendingLabelDraft
-                    ) {
-                        pendingDiscardID = item.id
+                HStack(spacing: 8) {
+                    if model.findingsNeedingSummary.contains(item.id) {
+                        NeedsSummaryMark()
+                    }
+                    // Discard is a hover/selection × (ADR-0010) that stages
+                    // the confirmation — never a one-click destroy. Gated
+                    // exactly as the old swipe was: no × while a File all run
+                    // is busy or a label draft is pending.
+                    if isHovered || isSelected {
+                        TrayDiscardButton(
+                            disabled: model.isBusy || model.hasPendingLabelDraft
+                        ) {
+                            pendingDiscardID = item.id
+                        }
                     }
                 }
+                .fixedSize()
+                .layoutPriority(2)
             } else {
                 // Mid-ladder: its issue exists but is incomplete — a File all
                 // retry finishes it without re-creating anything. After a
@@ -185,16 +195,21 @@ struct TrayView: View {
                     Text("Filing…")
                         .font(.system(size: 13))
                         .foregroundStyle(.orange)
+                        .fixedSize()
+                        .layoutPriority(2)
                 } else if model.filingStoppedByFailure, let message = model.errorMessage {
                     Text(message)
                         .font(.system(size: 13))
                         .foregroundStyle(.red)
                         .lineLimit(1)
+                        .layoutPriority(1)
                         .help(message)
                 } else {
                     Text("Filing interrupted — retry")
                         .font(.system(size: 13))
                         .foregroundStyle(.orange)
+                        .fixedSize()
+                        .layoutPriority(2)
                 }
             }
         }
@@ -219,6 +234,28 @@ struct TrayView: View {
         }
     }
 
+    /// The summary, followed by the Device Context's model only when both fit
+    /// whole. `ViewThatFits` drops the device outright instead of letting it
+    /// shrink: a model name cut to "il" or "iPho…" says nothing, while the
+    /// summary still reads when truncated. A layout priority can't express
+    /// that, since it only picks who shrinks first, never who disappears.
+    private func rowTitle(_ item: TrayItem, isSelected: Bool) -> some View {
+        let summary = item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = Text(summary.isEmpty ? "Untitled Finding" : summary)
+            .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+            .lineLimit(1)
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                title
+                Text(item.finding.deviceContext.deviceModel)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(NitpickTheme.secondaryText)
+                    .lineLimit(1)
+            }
+            title
+        }
+    }
+
     private func rowBackground(isSelected: Bool, isHovered: Bool) -> Color {
         if isSelected {
             return Color.accentColor.opacity(0.10)
@@ -227,6 +264,19 @@ struct TrayView: View {
             return NitpickTheme.hover.opacity(0.65)
         }
         return Color.clear
+    }
+}
+
+/// Marks a row whose Finding keeps File all disabled because it has no
+/// summary. The same orange glyph leads the reason line under File all, so
+/// the designer can match the reason to its rows at a glance.
+private struct NeedsSummaryMark: View {
+    var body: some View {
+        Image(systemName: "exclamationmark.circle.fill")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.orange)
+            .help("Needs a summary before it can be filed")
+            .accessibilityLabel("Needs a summary")
     }
 }
 
