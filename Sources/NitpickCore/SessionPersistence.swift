@@ -102,16 +102,23 @@ extension AppCore {
         for file in captures where !live.contains(file.lastPathComponent) {
             try? fileManager.removeItem(at: file)
         }
+        // Snapshots are matched as `<finding-id>/<snapshot-file>`, never by
+        // full path: the enumerator reports symlink-resolved URLs
+        // (`/tmp/…` comes back as `/private/tmp/…`) while the live set is
+        // built from the workspace URL as given, so under a symlinked
+        // workspace every live snapshot looked orphaned and was deleted by
+        // the very save that wrote it.
         let liveSnapshots = Set(session.tray.flatMap { item in
             item.finding.designSnapshots.map {
-                designSnapshotFile(for: $0.id, in: item.id, mediaType: $0.mediaType).path
+                Self.snapshotKey(designSnapshotFile(for: $0.id, in: item.id, mediaType: $0.mediaType))
             }
         })
         if let files = fileManager.enumerator(
             at: openSessionDesignSnapshotsDirectory,
             includingPropertiesForKeys: nil
         ) {
-            for case let file as URL in files where !file.hasDirectoryPath && !liveSnapshots.contains(file.path) {
+            for case let file as URL in files
+            where !file.hasDirectoryPath && !liveSnapshots.contains(Self.snapshotKey(file)) {
                 try? fileManager.removeItem(at: file)
             }
         }
@@ -270,6 +277,12 @@ extension AppCore {
         openSessionDesignSnapshotsDirectory
             .appendingPathComponent(findingID.uuidString, isDirectory: true)
             .appendingPathComponent("\(id.uuidString).\(mediaType.fileExtension)")
+    }
+
+    /// A snapshot file's identity independent of how the workspace path is
+    /// spelled: its Finding's directory name plus its own file name.
+    private static func snapshotKey(_ file: URL) -> String {
+        file.pathComponents.suffix(2).joined(separator: "/")
     }
 
     private var historyDirectory: URL {

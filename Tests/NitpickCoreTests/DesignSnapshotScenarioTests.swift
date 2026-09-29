@@ -111,6 +111,84 @@ struct DesignSnapshotScenarioTests {
         #expect(resumed.tray[1].finding.designSnapshots.map(\.name) == ["other-finding.png"])
     }
 
+    @Test("snapshots survive every save when the workspace path goes through a symlink")
+    func keepsSnapshotsUnderSymlinkedWorkspace() throws {
+        let (workspace, real) = try Self.makeSymlinkedWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let core = DurabilityTests.relaunchedCore(workspace: workspace)
+        let firstPNG = try ImageFixtures.solidPNG(width: 80, height: 60)
+        let secondPNG = try ImageFixtures.solidPNG(width: 40, height: 30)
+        var session = IssueFilingTests.session
+        let firstFinding = session.addFinding(IssueFilingTests.finding(summary: "First"))
+        let first = try session.addDesignSnapshot(
+            to: firstFinding, name: "button.png", mediaType: .png, data: firstPNG
+        )
+
+        try core.saveOpenSession(session)
+        #expect(Self.snapshotExists(first, in: firstFinding, workspace: real))
+        var resumed = try #require(try core.loadOpenSession())
+        #expect(resumed.tray[0].finding.designSnapshots.map(\.id) == [first])
+        #expect(resumed.tray[0].finding.designSnapshots.map(\.data) == [firstPNG])
+
+        // The second save is the one that used to prune: a rename plus a
+        // new Finding with its own snapshot must leave both files in place.
+        try session.renameDesignSnapshot(first, in: firstFinding, to: "approved-button.png")
+        let secondFinding = session.addFinding(IssueFilingTests.finding(summary: "Second"))
+        let second = try session.addDesignSnapshot(
+            to: secondFinding, name: "other.png", mediaType: .png, data: secondPNG
+        )
+        try core.saveOpenSession(session)
+
+        #expect(Self.snapshotExists(first, in: firstFinding, workspace: real))
+        #expect(Self.snapshotExists(second, in: secondFinding, workspace: real))
+        resumed = try #require(try core.loadOpenSession())
+        #expect(resumed.tray[0].finding.designSnapshots.map(\.name) == ["approved-button.png"])
+        #expect(resumed.tray[0].finding.designSnapshots.map(\.data) == [firstPNG])
+        #expect(resumed.tray[1].finding.designSnapshots.map(\.id) == [second])
+        #expect(resumed.tray[1].finding.designSnapshots.map(\.data) == [secondPNG])
+    }
+
+    @Test("a removed snapshot is still pruned when the workspace path goes through a symlink")
+    func prunesRemovedSnapshotsUnderSymlinkedWorkspace() throws {
+        let (workspace, real) = try Self.makeSymlinkedWorkspace()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let core = DurabilityTests.relaunchedCore(workspace: workspace)
+        let png = try ImageFixtures.solidPNG(width: 80, height: 60)
+        var session = IssueFilingTests.session
+        let findingID = session.addFinding(IssueFilingTests.finding())
+        let kept = try session.addDesignSnapshot(to: findingID, name: "kept.png", mediaType: .png, data: png)
+        let removed = try session.addDesignSnapshot(to: findingID, name: "gone.png", mediaType: .png, data: png)
+        try core.saveOpenSession(session)
+        #expect(Self.snapshotExists(removed, in: findingID, workspace: real))
+
+        try session.removeDesignSnapshot(removed, from: findingID)
+        try core.saveOpenSession(session)
+
+        #expect(Self.snapshotExists(kept, in: findingID, workspace: real))
+        #expect(!Self.snapshotExists(removed, in: findingID, workspace: real))
+    }
+
+    /// A workspace reached only through a symlink to a real directory — the
+    /// shape of `/tmp` -> `/private/tmp` or a symlinked `~/Library`. Returns
+    /// the symlink (what the core is given) and the real directory (where
+    /// the files actually land). `Fixtures.makeTemporaryDirectory` hands out
+    /// canonical paths, so every other test is blind to this.
+    private static func makeSymlinkedWorkspace() throws -> (link: URL, real: URL) {
+        let real = try Fixtures.makeTemporaryDirectory()
+        let link = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nitpick-tests-link-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        #expect(link.path != real.path)
+        return (link, real)
+    }
+
+    private static func snapshotExists(_ id: UUID, in findingID: UUID, workspace: URL) -> Bool {
+        let file = workspace.appendingPathComponent(
+            "open-session/design-snapshots/\(findingID.uuidString)/\(id.uuidString).png"
+        )
+        return FileManager.default.fileExists(atPath: file.path)
+    }
+
     @Test("rename and replacement keep attachment extensions truthful")
     func keepsExtensionsTruthful() throws {
         let png = try ImageFixtures.solidPNG(width: 20, height: 20)
