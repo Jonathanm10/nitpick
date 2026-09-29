@@ -3,6 +3,9 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var model: AppModel
+    /// Dev-only: the offscreen copy `WindowSnapshot` renders — it shares the
+    /// model, so it must not run the launch sequence a second time.
+    var isSnapshotCopy = false
     /// A Build dropped while the open session still holds unfiled
     /// Findings — staged until the designer confirms the destruction the
     /// collapsed drop zone made invisible (issue 05). Nil otherwise: a
@@ -113,7 +116,11 @@ struct ContentView: View {
         } message: {
             Text("Ending this review will discard \(unfiledFindingsPhrase).")
         }
-        .task { await model.onLaunch() }
+        .task {
+            guard !isSnapshotCopy else { return }
+            await model.onLaunch()
+            WindowSnapshot.stageOffscreenCopy(model: model)
+        }
         .overlay(alignment: .topTrailing) {
             if model.isBusy {
                 ProgressView()
