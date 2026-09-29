@@ -294,29 +294,29 @@ struct ContentView: View {
         }
     }
 
-    /// The open session, split (issue 01): the capture pane takes the
-    /// remaining width, while the inspector keeps adaptive min/ideal/max
-    /// bounds so the workspace can resize without a hard fixed column.
+    /// The open session, split (issue 01): the inspector's width comes from
+    /// the split's own width through an explicit rule
+    /// (`NitpickTheme.inspectorWidth`), and the capture pane takes the rest.
+    /// No layout priority is involved. A higher-priority capture pane
+    /// starved the inspector to its minimum on every window.
     private func sessionSplit(_ session: ReviewSession) -> some View {
-        HStack(alignment: .top, spacing: 0) {
-            capturePane
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .layoutPriority(1)
-            controlColumn(session)
-                .frame(
-                    minWidth: NitpickTheme.inspectorMinWidth,
-                    idealWidth: NitpickTheme.inspectorIdealWidth,
-                    maxWidth: NitpickTheme.inspectorMaxWidth,
-                    alignment: .topLeading
-                )
-                .padding(.leading, 24)
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(NitpickTheme.border)
-                        .frame(width: 1)
-                }
+        GeometryReader { proxy in
+            HStack(alignment: .top, spacing: 0) {
+                capturePane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                controlColumn(session)
+                    .frame(
+                        width: NitpickTheme.inspectorWidth(forSplitWidth: proxy.size.width),
+                        alignment: .topLeading
+                    )
+                    .padding(.leading, NitpickTheme.inspectorGutter)
+                    .overlay(alignment: .leading) {
+                        Rectangle()
+                            .fill(NitpickTheme.border)
+                            .frame(width: 1)
+                    }
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { syncEditorArrivalState(for: session) }
         .onChange(of: session.startedAt) { syncEditorArrivalState(for: session) }
         .onChange(of: session.tray.count) { registerEditorArrivalIfNeeded(for: session) }
@@ -429,14 +429,19 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 14) {
             // Session-level Design Reference: one Figma URL for every
             // Finding of this session (a per-Finding override lives in the
-            // compose fields). A link, never a rendering (ADR-0003).
+            // compose fields). A link, never a rendering (ADR-0003). This
+            // field has no section label, so its placeholder carries the
+            // domain term and the scope. It must fit the 300pt minimum
+            // inspector (about 250pt beside the icon); the tooltip carries
+            // the rest.
             HStack(spacing: 8) {
                 Image(systemName: "link")
                     .foregroundStyle(NitpickTheme.secondaryText)
-                TextField("Design Reference (Figma URL, all Findings)", text: $model.sessionDesignReferenceField)
+                TextField("Design Reference (Figma, all Findings)", text: $model.sessionDesignReferenceField)
                     .textFieldStyle(.plain)
             }
                 .nitpickField(minHeight: 32)
+                .help("A Figma URL filed with every Finding of this session, unless a Finding sets its own.")
                 .disabled(model.isBusy)
 
             if session.tray.isEmpty == false {
@@ -444,18 +449,36 @@ struct ContentView: View {
             }
 
             if model.selectedItem?.isEditable == true {
-                composeSection
+                // Compose scrolls only as the column's last resort. The
+                // hugging layout sizes the ScrollView to its content, so at
+                // normal heights it reads as rigid fields, with no scroll
+                // bar and no bounce. At default priority it takes its full
+                // height before the tray (lower priority) gets more than its
+                // floor, so it shrinks below its content only once the tray
+                // is at that floor. This is what fits the column into the
+                // 640pt minimum window, whatever fields compose holds. With
+                // a connected YouTrack, the Priority and Assignee pickers
+                // just scroll further.
+                HugIdealHeight {
+                    ScrollView(.vertical) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            composeSection
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                }
             }
 
-            // Only the tray scrolls (never the whole column). Design ref,
-            // compose, and End Review are rigid and keep default layout
-            // priority; the tray's List is the column's sole flexible
-            // absorber — it carries a flexible frame and a lower priority,
-            // so it, not this Spacer, yields first when space is tight.
-            // The Spacer sits lower still: it soaks only the slack left once
-            // the tray sits at its natural cap, pinning End Review at the
-            // foot with room to spare. As the column tightens the Spacer
-            // closes, then the tray shrinks and scrolls; compose never moves.
+            // Two regions yield under pressure, never the whole column. The
+            // tray's List is the flexible absorber: a flexible frame and a
+            // lower priority than compose, so it gives up height first.
+            // Compose, above, gives up height only after the tray reaches
+            // its ~2-row floor. The Spacer sits lower still. It soaks only
+            // the slack left once the tray sits at its natural cap, pinning
+            // End Review at the foot. As the column tightens, the Spacer
+            // closes first, then the tray shrinks and scrolls, and only then
+            // does compose scroll.
             Spacer(minLength: 0)
                 .layoutPriority(-2)
 
@@ -467,8 +490,9 @@ struct ContentView: View {
             .disabled(!model.canEndReview)
             .motionPressFeedback()
         }
-        // Full height so the Spacer can pin End Review at the column's foot;
-        // the tray flexes between its cap and a ~2-row floor within it.
+        // Full height, so the Spacer can pin End Review at the column's foot.
+        // Within it the tray flexes between its cap and its ~2-row floor, and
+        // compose between its content height and zero.
         .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -485,10 +509,11 @@ struct ContentView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(NitpickTheme.secondaryText)
         }
-        // The one flexible child of the column: a lower priority than the
-        // rigid compose fields so it yields space first, but higher than the
-        // foot Spacer so it reaches its cap before the Spacer opens (see
-        // controlColumn). It shrinks and scrolls internally under pressure.
+        // The column's first flexible absorber: a lower priority than
+        // compose, so it yields space first (compose scrolls only once the
+        // tray reaches its floor), but higher than the foot Spacer, so it
+        // reaches its cap before the Spacer opens (see controlColumn). It
+        // shrinks and scrolls internally under pressure.
         TrayView(tray: tray, model: model)
             .layoutPriority(-1)
         if let phase = model.filingPhase {
@@ -676,13 +701,37 @@ struct ContentView: View {
             .nitpickSectionLabel()
         TextField("Description", text: $model.descriptionField, axis: .vertical)
             .lineLimit(3...6)
-            .nitpickField(minHeight: 116)
+            .nitpickField(minHeight: 116, alignment: .topLeading)
             .disabled(model.isBusy)
+        // The section label already names the Design Reference, so the
+        // placeholder spends its width (about 276pt at the minimum inspector)
+        // on the scope that sets it apart from the session-wide field.
         Text("Design Reference")
             .nitpickSectionLabel()
-        TextField("Design Reference (Figma URL, this Finding only)", text: $model.findingDesignReferenceField)
+        TextField("Figma URL for this Finding only", text: $model.findingDesignReferenceField)
             .nitpickField(minHeight: 34)
+            .help("A Figma URL for this Finding only. It replaces the session's Design Reference.")
             .disabled(model.isBusy)
         DesignSnapshotsSection(model: model)
+    }
+}
+
+/// Sizes its one subview to that subview's ideal height, but never taller than
+/// the height on offer. A vertical ScrollView inside it hugs its content while
+/// there is room and scrolls only once there isn't. A bare ScrollView instead
+/// swallows every point it is offered. Inside a stack that would starve its
+/// flexible siblings, and End Review's foot Spacer, at every height.
+private struct HugIdealHeight: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let ideal = subview.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(
+            width: proposal.width ?? ideal.width,
+            height: min(ideal.height, proposal.height ?? ideal.height)
+        )
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }

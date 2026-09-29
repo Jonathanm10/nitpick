@@ -2,11 +2,12 @@ import NitpickCore
 import SwiftUI
 
 /// The tray lives in a List for its content-sized scrolling: it is the control
-/// column's one scroll region — a flexible frame lets it sit at its
+/// column's first scroll region — a flexible frame lets it sit at its
 /// row-count-capped natural height when there is room and compress toward a
-/// ~2-row floor when the fixed compose fields need the space, scrolling once
-/// rows are hidden. A lower layoutPriority than compose (set at the use site)
-/// makes the tray — not the whole column — yield and scroll; an unbounded
+/// ~2-row floor when the compose fields need the space, scrolling once rows
+/// are hidden. A lower layoutPriority than compose (set at the use site) makes
+/// the tray yield and scroll before compose does (compose scrolls only as the
+/// column's last resort, once the tray sits at its floor); an unbounded
 /// List would instead swallow the column's spare height and orphan the fields
 /// below it. Discard is a hover/selection × per row, not a swipe (ADR-0010):
 /// swipe-to-act is a touch idiom, undiscoverable on a pointer-driven Mac list.
