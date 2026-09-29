@@ -97,4 +97,39 @@ struct YouTrackLiveTests {
         #expect(!filed.idReadable.isEmpty)
         print("live file: \(filed.idReadable) at \(filed.url.absoluteString)")
     }
+
+    @Test(
+        "real Feedback send against the server named by NITPICK_YOUTRACK_URL — creates a real issue in NIT",
+        // NITPICK_LIVE_SEND_FEEDBACK is the explicit write permission, like
+        // NITPICK_LIVE_FILE: connect-only smoke runs must never mutate NIT.
+        .enabled(if: ProcessInfo.processInfo.environment["NITPICK_LIVE_SEND_FEEDBACK"] == "1"
+            && ProcessInfo.processInfo.environment["NITPICK_YOUTRACK_URL"] != nil
+            && ProcessInfo.processInfo.environment["NITPICK_YOUTRACK_TOKEN"] != nil)
+    )
+    func realSendFeedback() async throws {
+        let url = try #require(ProcessInfo.processInfo.environment["NITPICK_YOUTRACK_URL"])
+        let token = try #require(ProcessInfo.processInfo.environment["NITPICK_YOUTRACK_TOKEN"])
+        let environment = CoreEnvironment(
+            subprocess: ProcessSubprocessRunner(),
+            httpTransport: URLSessionHTTPTransport(),
+            credentialStore: KeychainCredentialStore(service: "ch.liip.nitpick.tests")
+        )
+        let core = AppCore(environment: environment, workspaceDirectory: try Fixtures.makeTemporaryDirectory())
+        defer { try? environment.credentialStore.setSecret(nil, for: "youtrack-token") }
+        _ = try await core.connectYouTrack(instanceURL: url, token: token)
+
+        let feedback = Feedback(
+            kind: .improvement,
+            title: "nitpick live smoke Feedback — safe to delete",
+            description: "Sent by YouTrackLiveTests.realSendFeedback.",
+            environment: [
+                .init(label: "Nitpick", value: "0.0.0 (0)"),
+                .init(label: "macOS", value: ProcessInfo.processInfo.operatingSystemVersionString),
+            ],
+            imagePNG: try ImageFixtures.solidPNG(width: 320, height: 200)
+        )
+        let sent = try await core.send(feedback)
+        #expect(sent.idReadable.hasPrefix("\(AppCore.feedbackProjectShortName)-"))
+        print("live send: \(sent.idReadable) at \(sent.url.absoluteString)")
+    }
 }
