@@ -337,8 +337,6 @@ extension AppCore {
         return dropped
     }
 
-    /// An Issue's page on the instance, `<instance>/issue/<idReadable>` —
-    /// shared by filed Findings and sent Feedback.
     static func issueURL(instanceURL: URL, idReadable: String) -> URL {
         instanceURL
             .appendingPathComponent("issue")
@@ -348,8 +346,7 @@ extension AppCore {
     // MARK: - Request bodies
 
     /// Deterministic JSON: sorted keys make bodies byte-stable for the
-    /// request-shape tests; slashes stay readable. Shared by every YouTrack
-    /// write (filing, tags, Feedback).
+    /// request-shape tests; slashes stay readable.
     static func jsonBody(_ payload: some Encodable) throws -> (contentType: String, data: Data) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -357,7 +354,7 @@ extension AppCore {
     }
 
     /// The multipart/form-data body YouTrack's attachments endpoint expects:
-    /// one `upload` part per attached file. Shared by filing and Feedback.
+    /// one `upload` part per attached file.
     static func attachmentsBody(
         _ files: [AttachmentFile]
     ) -> (contentType: String, data: Data) {

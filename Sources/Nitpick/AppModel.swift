@@ -88,11 +88,7 @@ final class AppModel {
     /// Menu commands live outside ContentView, so the End Review confirmation
     /// flag sits on the model where both the window and the menu can drive it.
     var endReviewConfirmationRequested = false
-    /// The Help menu's Send Feedback… lives outside ContentView too, so the
-    /// sheet's presentation is a model flag the menu and the window share.
     var isFeedbackSheetPresented = false
-    /// The Feedback sheet's own state — separate from every Review Session
-    /// field, because a Feedback is never a Finding (glossary: Feedback).
     let feedback = FeedbackModel()
 
     /// The verified YouTrack connection; nil shows the first-run settings.
@@ -1089,12 +1085,9 @@ extension AppModel {
     }
 }
 
-// MARK: - Feedback about nitpick (glossary: Feedback)
+// MARK: - Feedback
 
 extension AppModel {
-    /// Help ▸ Send Feedback…: opens a fresh sheet in any app state — the
-    /// not-connected state included, so the menu item is never disabled
-    /// and never unexplained. A sheet already on screen keeps its text.
     func presentFeedback() async {
         guard !isFeedbackSheetPresented else { return }
         let review = session.map {

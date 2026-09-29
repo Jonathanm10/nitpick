@@ -2,16 +2,8 @@ import AppKit
 import Foundation
 import NitpickCore
 
-// Dev-only NITPICK_SNAPSHOT_* seams for staged, in-process screenshots.
-// Nothing here runs unless the variables are set; the stdout lines are the
-// proof package's measurements, which is why this file alone prints.
+// Dev-only NITPICK_SNAPSHOT_* seams. Prints here are the proof package's measurements.
 
-/// NITPICK_SNAPSHOT_PATH renders the main window to a PNG five seconds after
-/// launch. In-process (`cacheDisplay`), so staged screenshots need no Screen
-/// Recording permission; pairs with NITPICK_WORKSPACE for README/QA staging
-/// against a seeded store. Attached sheets (NITPICK_SNAPSHOT_FEEDBACK) are
-/// separate windows `cacheDisplay` omits, so each is rendered and composited
-/// at its on-screen offset.
 @MainActor
 enum WindowSnapshot {
     static func scheduleIfRequested() {
@@ -26,6 +18,8 @@ enum WindowSnapshot {
         }
     }
 
+    /// Attached sheets are separate windows `cacheDisplay` omits, so each is
+    /// composited at its on-screen offset.
     private static func snapshot(of window: NSWindow) -> NSBitmapImageRep? {
         guard let frame = window.contentView?.superview,
               let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)
@@ -55,11 +49,6 @@ enum WindowSnapshot {
 }
 
 extension AppModel {
-    /// Paired with NITPICK_SNAPSHOT_PATH: opens the Feedback sheet in one
-    /// named state with fictional text so the proof package can stage every
-    /// state without typing or touching the network — the phase is set
-    /// directly and `core.send` is never called. States: not-connected,
-    /// editing-empty, editing, sending, sent, sent-warning, failed, discard.
     func stageFeedbackSnapshot(_ state: String) async {
         await presentFeedback()
         guard state != "not-connected" else {
@@ -79,11 +68,9 @@ extension AppModel {
         let sampleURL = URL(string: "https://youtrack.example.com/issue/NIT-42")!
         switch state {
         case "editing":
-            // The designer ticks the box on a sheet already on screen;
-            // staging does the same, so the rendered window is settled.
+            // The toggle and the discard dialog need the sheet on screen first.
             try? await Task.sleep(for: .seconds(1.5))
             feedback.setAttachesWindowImage(true)
-            // The exact bytes Send would upload, beside the snapshot.
             if let png = feedback.windowImagePNG, let path = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_PATH"] {
                 try? png.write(to: URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("window-image.png"))
             }
@@ -103,7 +90,6 @@ extension AppModel {
         case "failed":
             feedback.phase = .failed(message: YouTrackError.permissionDenied(action: "create an issue in Nitpick").localizedDescription)
         case "discard":
-            // The dialog needs the sheet on screen to attach to.
             try? await Task.sleep(for: .seconds(1.5))
             feedback.discardConfirmationRequested = true
         default:

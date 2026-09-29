@@ -125,12 +125,9 @@ extension AppCore {
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
-    /// The selected Xcode's version for a Feedback's Environment section:
-    /// `<Xcode.app>/Contents/version.plist`, found beside the active
-    /// developer directory (`xcode-select -p` is `…/Contents/Developer`).
-    /// `<version> (<ProductBuildVersion>)`, or the version alone without a
-    /// build. Nil for Command Line Tools or any unreadable install, so the
-    /// shell spells the gap and an Environment line never blocks a send.
+    /// `<Xcode.app>/Contents/version.plist`, beside the active developer
+    /// directory (`xcode-select -p` is `…/Contents/Developer`). Nil for
+    /// Command Line Tools or an unreadable install.
     public func xcodeVersion() async -> String? {
         guard let developerDirectory = try? await activeDeveloperDirectory() else { return nil }
         let plistURL = developerDirectory

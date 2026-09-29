@@ -58,7 +58,6 @@ public enum YouTrackError: Error, Equatable, LocalizedError {
     case notConnected
     /// A Finding cannot file without a summary.
     case summaryRequired
-    /// A Feedback cannot send without a title.
     case feedbackTitleRequired
     /// The server answered 403 to a filing step: the token authenticates,
     /// but the user lacks the permission the step needs.

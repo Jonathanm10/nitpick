@@ -1,12 +1,6 @@
 import Foundation
 
-/// Tag resolution and application, shared by every path that tags an Issue:
-/// Finding filing (`design-review`, `nitpick-type:*`) and Feedback
-/// (`nitpick-feedback:*`). One implementation keeps the exact-name matching
-/// and the resolve-before-create ordering identical for both (ADR-0008).
 extension AppCore {
-    /// Applies one already-resolved tag to an issue — one tag per request,
-    /// so each application is its own recorded ladder step.
     func applyTag(
         _ tagID: String,
         toIssue issueID: String,
@@ -21,10 +15,8 @@ extension AppCore {
         )
     }
 
-    /// The instance-side ID of a tag by exact name: found among the tags
-    /// visible to the designer, or created on first use. Callers resolve
-    /// every tag before any issue is created, so a create-permission refusal
-    /// never leaves an orphan issue behind (ADR-0008).
+    /// Callers resolve every tag before any issue is created, so a
+    /// create-permission refusal never leaves an orphan issue (ADR-0008).
     func tagID(
         named name: String,
         with credentials: (instanceURL: URL, token: String)
@@ -59,7 +51,6 @@ private struct TagReference: Encodable {
     var id: String
 }
 
-/// The subset of tag payloads the core reads.
 private struct TagPayload: Decodable {
     var id: String
     var name: String

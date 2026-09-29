@@ -2,16 +2,11 @@ import Foundation
 import NitpickCore
 import Testing
 
-/// Sending a Feedback about nitpick through the app core's public API:
-/// exactly one Issue in the `NIT` project, tagged `nitpick-feedback:<kind>`,
-/// with the Environment section appended and no custom fields. Asserts the
-/// exact HTTP requests the core emits, in the style of `IssueFilingTests`.
 @Suite("Feedback sending")
 struct FeedbackSendingTests {
     static let base = "https://youtrack.example.com/yt"
     static let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xAB])
 
-    /// No Review Session open: versions only.
     static let versionsOnly = Feedback.Environment(
         nitpick: "1.4.0 (57)",
         macOS: "Version 26.1 (Build 25B78)",
@@ -42,8 +37,6 @@ struct FeedbackSendingTests {
         request.httpBody.map { String(decoding: $0, as: UTF8.self) }
     }
 
-    /// The happy-path responses after the connect: tag found, project,
-    /// issue, tag applied.
     static func enqueueLadder(on transport: FakeHTTPTransport) {
         transport.enqueue(json: existingBugTagJSON)
         transport.enqueue(json: projectJSON)
@@ -67,24 +60,19 @@ struct FeedbackSendingTests {
             #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
         }
 
-        // 1. The kind's tag is resolved before anything else exists.
         #expect(requests[0].httpMethod == "GET")
         #expect(requests[0].url?.absoluteString == "\(Self.base)/api/tags?fields=id,name&query=nitpick-feedback:bug&$top=100")
 
-        // 2. The project is resolved by its fixed shortName, never persisted.
         #expect(requests[1].httpMethod == "GET")
         #expect(requests[1].url?.absoluteString == "\(Self.base)/api/admin/projects/NIT?fields=id,name")
         #expect(requests[1].httpBody == nil)
 
-        // 3. One issue: trimmed summary, Markdown body ending in the
-        //    Environment section, the resolved project, no customFields.
         #expect(requests[2].httpMethod == "POST")
         #expect(requests[2].url?.absoluteString == "\(Self.base)/api/issues?fields=id,idReadable")
         #expect(requests[2].value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(Self.body(requests[2]) == Self.expectedIssueJSON)
         #expect(Self.body(requests[2])?.contains("customFields") == false)
 
-        // 4. The tag resolved in step 1 is applied by ID.
         #expect(requests[3].httpMethod == "POST")
         #expect(requests[3].url?.absoluteString == "\(Self.base)/api/issues/3-900/tags?fields=id,name")
         #expect(Self.body(requests[3]) == #"{"id":"6-3910"}"#)
@@ -94,7 +82,6 @@ struct FeedbackSendingTests {
     func createsMissingTag() async throws {
         let transport = FakeHTTPTransport()
         let core = try await IssueFilingTests.connectedCore(transport: transport)
-        // Only a lookalike exists; exact-name matching rejects it.
         transport.enqueue(json: #"[{"id":"6-1","name":"nitpick-feedback:improvements","$type":"Tag"}]"#)
         transport.enqueue(json: #"{"id":"6-3911","name":"nitpick-feedback:improvement","$type":"Tag"}"#)
         transport.enqueue(json: Self.projectJSON)
@@ -177,14 +164,11 @@ struct FeedbackSendingTests {
         Self.enqueueLadder(on: transport)
         Self.enqueueLadder(on: transport)
 
-        // No Review Session open: versions only.
         _ = try await core.send(Self.feedback(description: ""))
-        // A Review Session open: Build and Capture Source follow the versions.
         var reviewing = Self.versionsOnly
         reviewing.captureSource = "Simulator — iPhone 17 Pro, iOS 26.1"
         reviewing.build = "ch.liip.reviewme 2.1.0 (421)"
         _ = try await core.send(Self.feedback(description: "", environment: reviewing))
-        // A value's newlines never split a bullet.
         var multiline = Self.versionsOnly
         multiline.macOS = "Version 26.1\n(Build 25B78)"
         _ = try await core.send(Self.feedback(description: "", environment: multiline))
@@ -193,7 +177,6 @@ struct FeedbackSendingTests {
             .filter { $0.url?.path().hasSuffix("api/issues") == true }
             .compactMap(Self.body)
         try #require(bodies.count == 3)
-        // An empty description sends the Environment section alone.
         let versions = #"## Environment\n- Nitpick: 1.4.0 (57)\n- macOS: Version 26.1 (Build 25B78)\n- Xcode: 26.1 (17B55)"#
         #expect(bodies[0] == #"{"description":"\#(versions)","project":{"id":"0-77"},"summary":"Tray loses focus after capture"}"#)
         #expect(bodies[1] == #"{"description":"\#(versions)\n- Build: ch.liip.reviewme 2.1.0 (421)"#
@@ -275,7 +258,6 @@ struct FeedbackSendingTests {
         #expect(sent.idReadable == "NIT-42")
         #expect(sent.url == URL(string: "\(Self.base)/issue/NIT-42")!)
         #expect(sent.warnings == ["The nitpick-feedback:bug tag could not be applied."])
-        // The image still goes up after the failed tag.
         #expect(transport.sentRequests.last?.url?.path().hasSuffix("api/issues/3-900/attachments") == true)
         #expect(Self.issueCreations(in: transport) == 1)
     }

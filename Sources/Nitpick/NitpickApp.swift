@@ -9,8 +9,6 @@ struct NitpickApp: App {
 
     var body: some Scene {
         WindowGroup("nitpick", id: "main") {
-            // The Feedback sheet hangs off the main window so Help ▸ Send
-            // Feedback… reaches it from every ContentView state.
             ContentView(model: model)
                 .sheet(isPresented: $model.isFeedbackSheetPresented) {
                     FeedbackSheet(model: model)
@@ -71,10 +69,6 @@ struct ReviewCommands: Commands {
     }
 }
 
-/// Help ▸ Send Feedback… (glossary: Feedback) — where macOS apps put it.
-/// Never disabled: without a connection the sheet itself explains and
-/// points at Settings. The sheet attaches to the main window, so a closed
-/// one is reopened and a buried one brought forward first.
 struct FeedbackCommands: Commands {
     let model: AppModel
     @Environment(\.openWindow) private var openWindow
@@ -105,7 +99,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // surfaces. Pin the whole app to aqua so appearance matches the design.
         NSApp.appearance = NSAppearance(named: .aqua)
 
-        // Dev-only NITPICK_SNAPSHOT_PATH seam (SnapshotSupport.swift).
         WindowSnapshot.scheduleIfRequested()
     }
 }
