@@ -122,14 +122,16 @@ struct YouTrackLiveTests {
             kind: .improvement,
             title: "nitpick live smoke Feedback — safe to delete",
             description: "Sent by YouTrackLiveTests.realSendFeedback.",
-            environment: [
-                .init(label: "Nitpick", value: "0.0.0 (0)"),
-                .init(label: "macOS", value: ProcessInfo.processInfo.operatingSystemVersionString),
-            ],
+            environment: Feedback.Environment(
+                nitpick: "0.0.0 (0)",
+                macOS: ProcessInfo.processInfo.operatingSystemVersionString,
+                xcode: await core.xcodeVersion() ?? "unknown"
+            ),
             imagePNG: try ImageFixtures.solidPNG(width: 320, height: 200)
         )
         let sent = try await core.send(feedback)
         #expect(sent.idReadable.hasPrefix("\(AppCore.feedbackProjectShortName)-"))
+        #expect(sent.warnings.isEmpty)
         print("live send: \(sent.idReadable) at \(sent.url.absoluteString)")
     }
 }

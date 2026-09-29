@@ -1097,138 +1097,16 @@ extension AppModel {
     /// and never unexplained. A sheet already on screen keeps its text.
     func presentFeedback() async {
         guard !isFeedbackSheetPresented else { return }
-        let environment = await feedbackEnvironment()
+        let review = session.map {
+            FeedbackModel.ReviewContext(build: $0.build.identity, host: reviewHost, device: reviewDevice)
+        }
+        let environment = await FeedbackModel.environment(core: core, review: review)
         guard !isFeedbackSheetPresented else { return }
         feedback.reset(connected: youTrack != nil, environment: environment)
         isFeedbackSheetPresented = true
     }
 
-    /// Sends the sheet's Feedback as one Issue in `NIT`. Deliberately not
-    /// routed through `perform`: Feedback must not flip `isBusy` and freeze
-    /// the review behind the sheet, and its error belongs in the sheet, not
-    /// on home. A failure keeps every field for the retry.
     func sendFeedback() async {
-        guard feedback.canSend else { return }
-        let payload = feedback.payload
-        feedback.phase = .sending
-        do {
-            feedback.phase = .sent(try await core.send(payload))
-        } catch {
-            feedback.phase = .failed(message: error.localizedDescription)
-        }
-    }
-
-    /// The Attach window image toggle. On draws the main window's content
-    /// view into a bitmap in-process (`cacheDisplay`) — never the screen, so
-    /// no Screen Recording permission or prompt is ever involved. The sheet
-    /// is its own window and the title bar sits outside the content view,
-    /// so both are absent from the image by design (PRD R2 Q5).
-    func setFeedbackAttachesWindowImage(_ attaches: Bool) {
-        feedback.setWindowImage(attaches ? WindowImageRenderer.mainWindowPNG() : nil)
-    }
-
-    /// The Environment section, in the order it is shown and sent. Values
-    /// only — never the token or the instance URL. Build and Capture Source
-    /// lines only while a Review Session is open, so the team can reproduce
-    /// what the designer saw.
-    func feedbackEnvironment() async -> [Feedback.EnvironmentLine] {
-        var lines = [
-            Feedback.EnvironmentLine(label: "Nitpick", value: Self.nitpickVersion),
-            Feedback.EnvironmentLine(label: "macOS", value: ProcessInfo.processInfo.operatingSystemVersionString),
-            Feedback.EnvironmentLine(label: "Xcode", value: await xcodeVersion()),
-        ]
-        if let session {
-            let identity = session.build.identity
-            lines.append(.init(label: "Build", value: "\(identity.bundleID) \(identity.version) (\(identity.buildNumber))"))
-            lines.append(.init(label: "Capture Source", value: captureSourceName))
-        }
-        return lines
-    }
-
-    /// `<version> (<build>)` from the app bundle's Info.plist; "unknown"
-    /// under `swift run`, where there is no bundle to read.
-    private static var nitpickVersion: String {
-        let info = Bundle.main.infoDictionary
-        guard let version = info?["CFBundleShortVersionString"] as? String, !version.isEmpty,
-              let build = info?["CFBundleVersion"] as? String, !build.isEmpty
-        else { return "unknown" }
-        return "\(version) (\(build))"
-    }
-
-    /// The selected Xcode's version from `<Xcode.app>/Contents/version.plist`,
-    /// found beside the active developer directory (`xcode-select -p` is
-    /// `…/Contents/Developer`). "unknown" for Command Line Tools or any
-    /// unreadable install — an Environment line never blocks a send.
-    private func xcodeVersion() async -> String {
-        guard let developerDirectory = try? await core.activeDeveloperDirectory() else { return "unknown" }
-        let plistURL = URL(fileURLWithPath: developerDirectory.path, isDirectory: true)
-            .deletingLastPathComponent()
-            .appendingPathComponent("version.plist")
-        guard let data = try? Data(contentsOf: plistURL),
-              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let version = plist["CFBundleShortVersionString"] as? String, !version.isEmpty
-        else { return "unknown" }
-        if let build = plist["ProductBuildVersion"] as? String, !build.isEmpty {
-            return "\(version) (\(build))"
-        }
-        return version
-    }
-
-    /// Where captures come from right now (glossary: Capture Source): the
-    /// simulator host app and the device the Build runs on, or the plain
-    /// simulator before Resume review has launched it.
-    private var captureSourceName: String {
-        guard let device = reviewDevice else { return "Simulator (not running)" }
-        return "\(reviewHost?.displayName ?? "Simulator") — \(device.name), \(device.osName)"
-    }
-
-    /// Dev-only, paired with NITPICK_SNAPSHOT_PATH: opens the Feedback
-    /// sheet in one named state with fictional text so the proof package
-    /// can stage every state without typing or touching the network — the
-    /// phase is set directly and `core.send` is never called. States:
-    /// not-connected, editing-empty, editing, sending, sent, failed, discard.
-    private func stageFeedbackSnapshot(_ state: String) async {
-        await presentFeedback()
-        guard state != "not-connected" else {
-            feedback.phase = .notConnected
-            print("feedback snapshot: state=\(state)")
-            return
-        }
-        feedback.phase = .editing
-        if state != "editing-empty" {
-            feedback.title = "Capture button stays disabled after ⌘S"
-            feedback.details = """
-                After pressing ⌘S the Capture button greys out and never comes back.
-                Switching devices re-enables it.
-                """
-        }
-        switch state {
-        case "editing":
-            // The designer ticks the box on a sheet already on screen;
-            // staging does the same, so the rendered window is settled.
-            try? await Task.sleep(for: .seconds(1.5))
-            setFeedbackAttachesWindowImage(true)
-            // The exact bytes Send would upload, beside the snapshot.
-            if let png = feedback.windowImagePNG, let path = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_PATH"] {
-                try? png.write(to: URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("window-image.png"))
-            }
-        case "sending":
-            feedback.phase = .sending
-        case "sent":
-            feedback.phase = .sent(SentFeedback(
-                idReadable: "NIT-42",
-                url: URL(string: "https://youtrack.example.com/issue/NIT-42")!
-            ))
-        case "failed":
-            feedback.phase = .failed(message: YouTrackError.permissionDenied(action: "create an issue in Nitpick").localizedDescription)
-        case "discard":
-            // The dialog needs the sheet on screen to attach to.
-            try? await Task.sleep(for: .seconds(1.5))
-            feedback.discardConfirmationRequested = true
-        default:
-            break
-        }
-        print("feedback snapshot: state=\(state) canSend=\(feedback.canSend) hasText=\(feedback.hasText)")
-        fflush(stdout)
+        await feedback.send(using: core)
     }
 }

@@ -250,9 +250,7 @@ extension AppCore {
             try await applyTag(typeTagID, toIssue: issueID, named: item.finding.type.tagName, credentials: credentials)
             item.filingProgress = .filed(FiledIssue(
                 idReadable: idReadable,
-                url: credentials.instanceURL
-                    .appendingPathComponent("issue")
-                    .appendingPathComponent(idReadable)
+                url: Self.issueURL(instanceURL: credentials.instanceURL, idReadable: idReadable)
             ))
             return []
 
@@ -337,6 +335,14 @@ extension AppCore {
             dropped.append(DroppedTriageField(field: .assignee, intendedValue: assignee.fullName))
         }
         return dropped
+    }
+
+    /// An Issue's page on the instance, `<instance>/issue/<idReadable>` —
+    /// shared by filed Findings and sent Feedback.
+    static func issueURL(instanceURL: URL, idReadable: String) -> URL {
+        instanceURL
+            .appendingPathComponent("issue")
+            .appendingPathComponent(idReadable)
     }
 
     // MARK: - Request bodies

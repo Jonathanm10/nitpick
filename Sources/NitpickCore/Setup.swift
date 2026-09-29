@@ -108,10 +108,8 @@ extension AppCore {
 
     /// `xcode-select -p`, trimmed, as a directory URL. Non-zero exit or
     /// empty output is a `SubprocessFailure`. `checkSetup` maps that
-    /// failure to `.xcodeNotInstalled`; `launch` lets it surface. Public
-    /// so the shell can read the Xcode version for a Feedback's Environment
-    /// section through the same injected subprocess seam.
-    public func activeDeveloperDirectory() async throws -> URL {
+    /// failure to `.xcodeNotInstalled`; `launch` lets it surface.
+    func activeDeveloperDirectory() async throws -> URL {
         let command = SubprocessCommand(executablePath: "/usr/bin/xcode-select", arguments: ["-p"])
         let result = try await runRequiringSuccess(command)
         let path = String(decoding: result.standardOutput, as: UTF8.self)
@@ -125,5 +123,27 @@ extension AppCore {
             )
         }
         return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    /// The selected Xcode's version for a Feedback's Environment section:
+    /// `<Xcode.app>/Contents/version.plist`, found beside the active
+    /// developer directory (`xcode-select -p` is `…/Contents/Developer`).
+    /// `<version> (<ProductBuildVersion>)`, or the version alone without a
+    /// build. Nil for Command Line Tools or any unreadable install, so the
+    /// shell spells the gap and an Environment line never blocks a send.
+    public func xcodeVersion() async -> String? {
+        guard let developerDirectory = try? await activeDeveloperDirectory() else { return nil }
+        let plistURL = developerDirectory
+            .deletingLastPathComponent()
+            .appendingPathComponent("version.plist")
+        guard let data = try? Data(contentsOf: plistURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
+              let info = plist as? [String: Any],
+              let version = info["CFBundleShortVersionString"] as? String, !version.isEmpty
+        else { return nil }
+        if let build = info["ProductBuildVersion"] as? String, !build.isEmpty {
+            return "\(version) (\(build))"
+        }
+        return version
     }
 }

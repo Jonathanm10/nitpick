@@ -17,16 +17,52 @@ public enum FeedbackKind: String, Equatable, Sendable, CaseIterable {
 /// exactly one Issue to the nitpick project, never part of a Review Session
 /// or History.
 public struct Feedback: Equatable, Sendable {
-    /// One read-only line of the Environment section, e.g. "macOS" →
-    /// "Version 26.1 (Build 25B78)". Ordered pairs rather than a dictionary:
-    /// the designer previews the lines in the order they will be sent.
-    public struct EnvironmentLine: Equatable, Sendable {
-        public var label: String
-        public var value: String
+    /// The read-only Environment section: gathered by the shell (versions,
+    /// and the Build and Capture Source while a Review Session is open) and
+    /// passed in as values — the core never reads the process or bundle, so
+    /// tests pin exact strings. The core owns the labels and their order;
+    /// missing values are the shell's to spell ("unknown") and are sent
+    /// verbatim. Never carries the token or the instance URL.
+    public struct Environment: Equatable, Sendable {
+        /// One rendered line, e.g. "macOS" → "Version 26.1 (Build 25B78)".
+        public struct Line: Equatable, Hashable, Sendable {
+            public var label: String
+            public var value: String
+        }
 
-        public init(label: String, value: String) {
-            self.label = label
-            self.value = value
+        public var nitpick: String
+        public var macOS: String
+        public var xcode: String
+        /// Only while a Review Session is open.
+        public var build: String?
+        /// Only while a Review Session is open.
+        public var captureSource: String?
+
+        public init(nitpick: String, macOS: String, xcode: String, build: String? = nil, captureSource: String? = nil) {
+            self.nitpick = nitpick
+            self.macOS = macOS
+            self.xcode = xcode
+            self.build = build
+            self.captureSource = captureSource
+        }
+
+        /// The lines in the fixed order they are previewed and sent. A
+        /// value's newlines become spaces so one value stays one bullet.
+        public var lines: [Line] {
+            let pairs: [(String, String?)] = [
+                ("Nitpick", nitpick),
+                ("macOS", macOS),
+                ("Xcode", xcode),
+                ("Build", build),
+                ("Capture Source", captureSource),
+            ]
+            return pairs.compactMap { label, value in
+                value.map { Line(label: label, value: Self.singleLine($0)) }
+            }
+        }
+
+        private static func singleLine(_ value: String) -> String {
+            value.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).joined(separator: " ")
         }
     }
 
@@ -34,11 +70,7 @@ public struct Feedback: Equatable, Sendable {
     public var title: String
     /// Optional; an empty description sends the Environment section alone.
     public var description: String
-    /// Gathered by the shell (versions, and Build lines while a Review
-    /// Session is open) and passed in as values: the core never reads the
-    /// process or bundle, so tests pin exact strings. Missing values are the
-    /// shell's to spell ("unknown"); the core sends them verbatim.
-    public var environment: [EnvironmentLine]
+    public var environment: Environment
     /// An optional PNG of the nitpick window, uploaded after the Issue exists.
     public var imagePNG: Data?
 
@@ -46,7 +78,7 @@ public struct Feedback: Equatable, Sendable {
         kind: FeedbackKind,
         title: String,
         description: String = "",
-        environment: [EnvironmentLine] = [],
+        environment: Environment,
         imagePNG: Data? = nil
     ) {
         self.kind = kind
@@ -63,9 +95,7 @@ public struct Feedback: Equatable, Sendable {
         let text = description.trimmingCharacters(in: .whitespacesAndNewlines)
         var sections: [String] = []
         if !text.isEmpty { sections.append(text) }
-        if !environment.isEmpty {
-            sections.append("## Environment\n" + environment.map { "- \($0.label): \($0.value)" }.joined(separator: "\n"))
-        }
+        sections.append("## Environment\n" + environment.lines.map { "- \($0.label): \($0.value)" }.joined(separator: "\n"))
         return sections.joined(separator: "\n\n")
     }
 }
@@ -76,10 +106,15 @@ public struct SentFeedback: Equatable, Sendable {
     public var idReadable: String
     /// The issue's page on the instance.
     public var url: URL
+    /// Steps after the Issue existed that did not land (the tag, the window
+    /// image), in designer-facing words. The Issue is still returned: a
+    /// retry would file a duplicate, so these are shown, never thrown.
+    public var warnings: [String]
 
-    public init(idReadable: String, url: URL) {
+    public init(idReadable: String, url: URL, warnings: [String] = []) {
         self.idReadable = idReadable
         self.url = url
+        self.warnings = warnings
     }
 }
 
@@ -98,7 +133,10 @@ extension AppCore {
     /// project by shortName → create the Issue (summary + Markdown body, no
     /// custom fields: Priority, Stage and Assignee stay project defaults) →
     /// apply the tag → upload the window image if any. Both resolutions run
-    /// before the Issue exists, so a refusal there leaves no orphan.
+    /// before the Issue exists, so a refusal there leaves no orphan. Once
+    /// the Issue exists nothing throws: a failed tag or image (auth errors
+    /// included) becomes a warning on the returned `SentFeedback`, because
+    /// the designer's only recourse, a retry, would create a second Issue.
     /// Unlike filing, nothing is recorded between steps: Feedback is not
     /// resumable and never touches the workspace or History.
     public func send(_ feedback: Feedback) async throws -> SentFeedback {
@@ -125,24 +163,32 @@ extension AppCore {
             )),
             deniedAction: "create an issue in \(project.name)"
         )
-        try await applyTag(tagID, toIssue: created.id, named: tagName, credentials: credentials)
+        var warnings: [String] = []
+        do {
+            try await applyTag(tagID, toIssue: created.id, named: tagName, credentials: credentials)
+        } catch {
+            warnings.append("The \(tagName) tag could not be applied.")
+        }
 
         if let imagePNG = feedback.imagePNG {
-            let _: [AttachmentPayload] = try await requestYouTrack(
-                instanceURL: credentials.instanceURL, token: credentials.token,
-                method: "POST", path: "api/issues/\(created.id)/attachments", query: "fields=id,name",
-                body: Self.attachmentsBody([
-                    AttachmentFile(fileName: Self.feedbackImageFileName, contentType: "image/png", data: imagePNG),
-                ]),
-                deniedAction: "attach the window image"
-            )
+            do {
+                let _: [AttachmentPayload] = try await requestYouTrack(
+                    instanceURL: credentials.instanceURL, token: credentials.token,
+                    method: "POST", path: "api/issues/\(created.id)/attachments", query: "fields=id,name",
+                    body: Self.attachmentsBody([
+                        AttachmentFile(fileName: Self.feedbackImageFileName, contentType: "image/png", data: imagePNG),
+                    ]),
+                    deniedAction: "attach the window image"
+                )
+            } catch {
+                warnings.append("The window image could not be attached.")
+            }
         }
 
         return SentFeedback(
             idReadable: created.idReadable,
-            url: credentials.instanceURL
-                .appendingPathComponent("issue")
-                .appendingPathComponent(created.idReadable)
+            url: Self.issueURL(instanceURL: credentials.instanceURL, idReadable: created.idReadable),
+            warnings: warnings
         )
     }
 }

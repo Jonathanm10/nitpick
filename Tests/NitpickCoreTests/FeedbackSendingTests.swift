@@ -11,22 +11,18 @@ struct FeedbackSendingTests {
     static let base = "https://youtrack.example.com/yt"
     static let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xAB])
 
-    static let versionLines = [
-        Feedback.EnvironmentLine(label: "nitpick", value: "1.4.0 (57)"),
-        Feedback.EnvironmentLine(label: "macOS", value: "Version 26.1 (Build 25B78)"),
-        Feedback.EnvironmentLine(label: "Xcode", value: "26.1"),
-    ]
-    /// What the shell adds while a Review Session is open.
-    static let buildLines = [
-        Feedback.EnvironmentLine(label: "Build", value: "ch.liip.reviewme 2.1.0 (421)"),
-        Feedback.EnvironmentLine(label: "Capture Source", value: "iPhone 17 Pro"),
-    ]
+    /// No Review Session open: versions only.
+    static let versionsOnly = Feedback.Environment(
+        nitpick: "1.4.0 (57)",
+        macOS: "Version 26.1 (Build 25B78)",
+        xcode: "26.1 (17B55)"
+    )
 
     static func feedback(
         kind: FeedbackKind = .bug,
         title: String = "  Tray loses focus after capture \n",
         description: String = "After capturing, the summary field is not focused.",
-        environment: [Feedback.EnvironmentLine] = versionLines,
+        environment: Feedback.Environment = versionsOnly,
         imagePNG: Data? = nil
     ) -> Feedback {
         Feedback(kind: kind, title: title, description: description, environment: environment, imagePNG: imagePNG)
@@ -39,7 +35,7 @@ struct FeedbackSendingTests {
     static let attachmentsJSON = #"[{"id":"134-90","name":"nitpick-window.png","$type":"IssueAttachment"}]"#
 
     static let expectedIssueJSON = #"{"description":"After capturing, the summary field is not focused.\n\n"#
-        + #"## Environment\n- nitpick: 1.4.0 (57)\n- macOS: Version 26.1 (Build 25B78)\n- Xcode: 26.1","#
+        + #"## Environment\n- Nitpick: 1.4.0 (57)\n- macOS: Version 26.1 (Build 25B78)\n- Xcode: 26.1 (17B55)","#
         + #""project":{"id":"0-77"},"summary":"Tray loses focus after capture"}"#
 
     static func body(_ request: URLRequest) -> String? {
@@ -173,28 +169,47 @@ struct FeedbackSendingTests {
         #expect(transport.sentRequests.count == 5)
     }
 
-    @Test("Build lines appear in the Environment section, in the given order, only when supplied")
+    @Test("Build and Capture Source lines appear, in fixed order after the versions, only when supplied")
     func environmentLinesInOrder() async throws {
         let transport = FakeHTTPTransport()
         let core = try await IssueFilingTests.connectedCore(transport: transport)
         Self.enqueueLadder(on: transport)
         Self.enqueueLadder(on: transport)
+        Self.enqueueLadder(on: transport)
 
         // No Review Session open: versions only.
         _ = try await core.send(Self.feedback(description: ""))
-        // A Review Session open: the shell appends the Build lines.
-        _ = try await core.send(Self.feedback(description: "", environment: Self.versionLines + Self.buildLines))
+        // A Review Session open: Build and Capture Source follow the versions.
+        var reviewing = Self.versionsOnly
+        reviewing.captureSource = "Simulator — iPhone 17 Pro, iOS 26.1"
+        reviewing.build = "ch.liip.reviewme 2.1.0 (421)"
+        _ = try await core.send(Self.feedback(description: "", environment: reviewing))
+        // A value's newlines never split a bullet.
+        var multiline = Self.versionsOnly
+        multiline.macOS = "Version 26.1\n(Build 25B78)"
+        _ = try await core.send(Self.feedback(description: "", environment: multiline))
 
         let bodies = transport.sentRequests
             .filter { $0.url?.path().hasSuffix("api/issues") == true }
             .compactMap(Self.body)
-        try #require(bodies.count == 2)
+        try #require(bodies.count == 3)
         // An empty description sends the Environment section alone.
-        let versions = #"## Environment\n- nitpick: 1.4.0 (57)\n- macOS: Version 26.1 (Build 25B78)\n- Xcode: 26.1"#
+        let versions = #"## Environment\n- Nitpick: 1.4.0 (57)\n- macOS: Version 26.1 (Build 25B78)\n- Xcode: 26.1 (17B55)"#
         #expect(bodies[0] == #"{"description":"\#(versions)","project":{"id":"0-77"},"summary":"Tray loses focus after capture"}"#)
-        #expect(bodies[1] == #"{"description":"\#(versions)\n- Build: ch.liip.reviewme 2.1.0 (421)\n- Capture Source: iPhone 17 Pro","#
+        #expect(bodies[1] == #"{"description":"\#(versions)\n- Build: ch.liip.reviewme 2.1.0 (421)"#
+            + #"\n- Capture Source: Simulator — iPhone 17 Pro, iOS 26.1","#
             + #""project":{"id":"0-77"},"summary":"Tray loses focus after capture"}"#)
-        #expect(!bodies[0].contains("Build:"))
+        #expect(bodies[2].contains(#"\n- macOS: Version 26.1 (Build 25B78)\n"#))
+    }
+
+    @Test("Environment lines render with fixed labels in fixed order")
+    func environmentLabels() {
+        let environment = Feedback.Environment(
+            nitpick: "1.4.0 (57)", macOS: "26.1", xcode: "unknown",
+            build: "com.example.app 1.0 (1)", captureSource: "Simulator (not running)"
+        )
+        #expect(environment.lines.map(\.label) == ["Nitpick", "macOS", "Xcode", "Build", "Capture Source"])
+        #expect(Self.versionsOnly.lines.map(\.label) == ["Nitpick", "macOS", "Xcode"])
     }
 
     @Test("an optional window image is uploaded as multipart after the tag")
@@ -235,14 +250,63 @@ struct FeedbackSendingTests {
         let core = try await IssueFilingTests.connectedCore(transport: transport)
         Self.enqueueLadder(on: transport)
 
-        _ = try await core.send(Self.feedback(description: "", environment: [
-            Feedback.EnvironmentLine(label: "nitpick", value: "unknown"),
-            Feedback.EnvironmentLine(label: "Xcode", value: "unknown"),
-        ]))
+        _ = try await core.send(Self.feedback(description: "", environment: Feedback.Environment(
+            nitpick: "unknown", macOS: "Version 26.1 (Build 25B78)", xcode: "unknown"
+        )))
 
         let creation = transport.sentRequests[4]
-        #expect(Self.body(creation) == ###"{"description":"## Environment\n- nitpick: unknown\n- Xcode: unknown","###
+        #expect(Self.body(creation) == ###"{"description":"## Environment\n- Nitpick: unknown\n- macOS: Version 26.1 (Build 25B78)\n- Xcode: unknown","###
             + #""project":{"id":"0-77"},"summary":"Tray loses focus after capture"}"#)
+    }
+
+    @Test("a failed tag after the Issue exists returns the Issue with a warning; no second issue is created",
+          arguments: [401, 403, 500])
+    func tagFailureIsWarning(statusCode: Int) async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await IssueFilingTests.connectedCore(transport: transport)
+        transport.enqueue(json: Self.existingBugTagJSON)
+        transport.enqueue(json: Self.projectJSON)
+        transport.enqueue(json: Self.createdIssueJSON)
+        transport.enqueue(statusCode: statusCode, json: #"{"error":"nope"}"#)
+        transport.enqueue(json: Self.attachmentsJSON)
+
+        let sent = try await core.send(Self.feedback(imagePNG: Self.pngBytes))
+
+        #expect(sent.idReadable == "NIT-42")
+        #expect(sent.url == URL(string: "\(Self.base)/issue/NIT-42")!)
+        #expect(sent.warnings == ["The nitpick-feedback:bug tag could not be applied."])
+        // The image still goes up after the failed tag.
+        #expect(transport.sentRequests.last?.url?.path().hasSuffix("api/issues/3-900/attachments") == true)
+        #expect(Self.issueCreations(in: transport) == 1)
+    }
+
+    @Test("a failed image upload after the Issue exists returns the Issue with a warning; no second issue is created",
+          arguments: [401, 403, 500])
+    func attachmentFailureIsWarning(statusCode: Int) async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await IssueFilingTests.connectedCore(transport: transport)
+        Self.enqueueLadder(on: transport)
+        transport.enqueue(statusCode: statusCode, json: #"{"error":"nope"}"#)
+
+        let sent = try await core.send(Self.feedback(imagePNG: Self.pngBytes))
+
+        #expect(sent.idReadable == "NIT-42")
+        #expect(sent.warnings == ["The window image could not be attached."])
+        #expect(transport.sentRequests.count == 2 + 5)
+        #expect(Self.issueCreations(in: transport) == 1)
+    }
+
+    @Test("a clean send carries no warnings")
+    func cleanSendNoWarnings() async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await IssueFilingTests.connectedCore(transport: transport)
+        Self.enqueueLadder(on: transport)
+        let sent = try await core.send(Self.feedback())
+        #expect(sent.warnings.isEmpty)
+    }
+
+    static func issueCreations(in transport: FakeHTTPTransport) -> Int {
+        transport.sentRequests.filter { $0.httpMethod == "POST" && $0.url?.path().hasSuffix("api/issues") == true }.count
     }
 
     @Test("sending before connecting is the not-connected error; nothing reaches the network")

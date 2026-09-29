@@ -183,4 +183,36 @@ struct SetupGuidanceTests {
         }
         #expect(runner.executedCommands.isEmpty)
     }
+
+    // MARK: - xcodeVersion: the Feedback Environment's Xcode line
+
+    @Test("xcodeVersion reads version.plist beside the active developer directory")
+    func xcodeVersionFromPlist() async throws {
+        let temp = try Fixtures.makeTemporaryDirectory()
+        let xcode = try Fixtures.writeXcode(in: temp, hostApp: .simulator)
+        let plist: [String: Any] = [
+            "CFBundleShortVersionString": "26.1",
+            "CFBundleVersion": "24000.1.2",
+            "ProductBuildVersion": "17B55",
+        ]
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            .write(to: xcode.developerDirectory.deletingLastPathComponent().appendingPathComponent("version.plist"))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("\(xcode.developerDirectory.path)\n".utf8)))
+
+        #expect(await core.xcodeVersion() == "26.1 (17B55)")
+        #expect(runner.executedCommands == [
+            SubprocessCommand(executablePath: "/usr/bin/xcode-select", arguments: ["-p"])
+        ])
+    }
+
+    @Test("xcodeVersion is nil without a readable version.plist or an active developer directory")
+    func xcodeVersionMissing() async throws {
+        let temp = try Fixtures.makeTemporaryDirectory()
+        let xcode = try Fixtures.writeXcode(in: temp, hostApp: .simulator)
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("\(xcode.developerDirectory.path)\n".utf8)))
+        #expect(await core.xcodeVersion() == nil)
+
+        runner.enqueue(SubprocessResult(exitCode: 2, standardError: Data("xcode-select: error".utf8)))
+        #expect(await core.xcodeVersion() == nil)
+    }
 }

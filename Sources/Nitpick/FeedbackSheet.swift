@@ -101,7 +101,7 @@ struct FeedbackSheet: View {
 
             Text("Description")
                 .nitpickSectionLabel()
-            TextEditor(text: $feedback.details)
+            TextEditor(text: $feedback.description)
                 .font(NitpickTheme.body)
                 .scrollContentBackground(.hidden)
                 .padding(.horizontal, 7)
@@ -117,7 +117,7 @@ struct FeedbackSheet: View {
 
             Toggle("Attach window image", isOn: Binding(
                 get: { feedback.attachesWindowImage },
-                set: { model.setFeedbackAttachesWindowImage($0) }
+                set: { feedback.setAttachesWindowImage($0) }
             ))
             .toggleStyle(.checkbox)
             if feedback.attachesWindowImage, let image = feedback.windowImage {
@@ -171,7 +171,7 @@ struct FeedbackSheet: View {
             Text("Environment")
                 .nitpickSectionLabel()
             VStack(alignment: .leading, spacing: 3) {
-                ForEach(feedback.environment, id: \.label) { line in
+                ForEach(feedback.environment.lines, id: \.label) { line in
                     Text("•  \(line.label): \(line.value)")
                         .font(NitpickTheme.secondary)
                         .foregroundStyle(NitpickTheme.secondaryText)
@@ -195,14 +195,26 @@ struct FeedbackSheet: View {
                     .font(NitpickTheme.emphasis)
                     .textSelection(.enabled)
             }
+            // The Issue exists either way; a retry would duplicate it, so a
+            // step that did not land is said plainly instead of failing.
+            if !sent.warnings.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(sent.warnings, id: \.self) { warning in
+                        Label(warning, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
             Text("Thanks — the nitpick team triages it on the board.")
                 .foregroundStyle(NitpickTheme.secondaryText)
             HStack {
                 Spacer()
                 Button("Open in YouTrack") { NSWorkspace.shared.open(sent.url) }
                     .motionPressFeedback()
+                // Escape closes too: nothing is left to lose once sent.
                 Button("Done") { close() }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.cancelAction)
                     .motionPressFeedback()
             }
         }
@@ -244,8 +256,12 @@ enum WindowImageRenderer {
 
 extension NSApplication {
     /// The window the `main` WindowGroup shows — where the Feedback sheet
-    /// attaches. SwiftUI derives window identifiers from the scene id.
+    /// attaches. SwiftUI derives window identifiers from the scene id. The
+    /// key window wins when several main windows are open, so the sheet and
+    /// the window image follow the one the designer is looking at.
     var nitpickMainWindow: NSWindow? {
-        windows.first { $0.identifier?.rawValue.hasPrefix("main") == true && !$0.isSheet }
+        let isMain = { (window: NSWindow) in window.identifier?.rawValue.hasPrefix("main") == true && !window.isSheet }
+        if let key = keyWindow, isMain(key) { return key }
+        return windows.first(where: isMain)
     }
 }
