@@ -15,9 +15,9 @@ struct HistoryRow: View {
                     .font(NitpickTheme.secondaryEmphasis)
                 Text("\(entry.build.bundleID) \(entry.build.version) (\(entry.build.buildNumber))")
                     .font(NitpickTheme.secondaryMono)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(NitpickTheme.secondaryText)
                 Text(entry.startedAt.formatted(date: .abbreviated, time: .shortened))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(NitpickTheme.secondaryText)
             }
             ForEach(entry.findings, id: \.issue.idReadable) { finding in
                 HStack(spacing: 8) {
@@ -27,7 +27,7 @@ struct HistoryRow: View {
                     let summary = finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
                     Text(summary.isEmpty ? "Untitled Finding" : summary)
                         .lineLimit(1)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(NitpickTheme.secondaryText)
                 }
             }
         }

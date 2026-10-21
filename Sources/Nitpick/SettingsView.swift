@@ -41,7 +41,7 @@ struct SettingsView: View {
             }
             if let message = model.youTrackErrorMessage {
                 Text(message)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(NitpickTheme.error)
                     .textSelection(.enabled)
             }
         }

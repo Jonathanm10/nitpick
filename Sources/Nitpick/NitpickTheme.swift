@@ -10,6 +10,8 @@ enum NitpickTheme {
     static let border = Color(.border)
     static let strongBorder = Color(.strongBorder)
     static let secondaryText = Color(.secondaryText)
+    static let error = Color(.error)
+    static let warning = Color(.warning)
 
     static let radiusSmall: CGFloat = 5
     static let radiusMedium: CGFloat = 7

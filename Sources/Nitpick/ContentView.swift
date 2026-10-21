@@ -206,7 +206,7 @@ struct ContentView: View {
     /// states, where the designer acted.
     private func errorLine(_ message: String) -> some View {
         Text(message)
-            .foregroundStyle(.red)
+            .foregroundStyle(NitpickTheme.error)
             .textSelection(.enabled)
     }
 
@@ -231,7 +231,7 @@ struct ContentView: View {
         } else {
             HStack(spacing: 12) {
                 Text("Not connected to YouTrack")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(NitpickTheme.secondaryText)
                 Button("Open Settings…") { openSettings() }
                     .motionPressFeedback()
             }
@@ -254,7 +254,7 @@ struct ContentView: View {
                             .font(.title2.weight(.semibold))
                         Text("\(build.identity.bundleID) \(build.identity.version) (\(build.identity.buildNumber))")
                             .font(.callout.monospaced())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(NitpickTheme.secondaryText)
                             .textSelection(.enabled)
                     }
                 } else {
@@ -264,7 +264,7 @@ struct ContentView: View {
                             .foregroundStyle(.tertiary)
                         Text("Drop a simulator Build (.app or .zip)")
                             .font(.title3)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(NitpickTheme.secondaryText)
                     }
                 }
             }
@@ -294,7 +294,7 @@ struct ContentView: View {
                     .font(.headline)
                 ForEach(Array(guidance.steps.enumerated()), id: \.offset) { index, step in
                     Text("\(index + 1). \(step)")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(NitpickTheme.secondaryText)
                 }
                 Button("Check again") {
                     Task { await model.recheckSetup() }
@@ -509,7 +509,7 @@ struct ContentView: View {
                 model.requestEndReview()
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(NitpickTheme.secondaryText)
             .disabled(!model.canEndReview)
             .motionPressFeedback()
         }
@@ -586,7 +586,7 @@ struct ContentView: View {
                         Text(Self.needsSummaryReason(count: needingSummary.count))
                     } icon: {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(NitpickTheme.warning)
                     }
                     .foregroundStyle(NitpickTheme.secondaryText)
                     .contentShape(Rectangle())

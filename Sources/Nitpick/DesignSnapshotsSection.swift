@@ -36,7 +36,7 @@ struct DesignSnapshotsSection: View {
             if model.designSnapshots.isEmpty {
                 Text("Add a PNG from the design.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(NitpickTheme.secondaryText)
             } else {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
@@ -60,7 +60,7 @@ struct DesignSnapshotsSection: View {
             if let message = model.designSnapshotErrorMessage {
                 Text(message)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(NitpickTheme.error)
                     .textSelection(.enabled)
             }
         }

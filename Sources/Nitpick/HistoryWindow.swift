@@ -83,7 +83,7 @@ struct HistoryTraceLine: View {
                     Spacer(minLength: 0)
                 }
                 .font(NitpickTheme.secondary)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(NitpickTheme.secondaryText)
                 .lineLimit(1)
             }
             .buttonStyle(.plain)
@@ -105,7 +105,7 @@ struct HistoryTraceLine: View {
                     .motionPressFeedback()
                 }
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(NitpickTheme.secondaryText)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

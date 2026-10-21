@@ -201,20 +201,20 @@ struct TrayView: View {
                 if model.isBusy {
                     Text("Filing…")
                         .font(NitpickTheme.body)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(NitpickTheme.warning)
                         .fixedSize()
                         .layoutPriority(2)
                 } else if let failure = model.filingFailure {
                     Text(failure)
                         .font(NitpickTheme.body)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(NitpickTheme.error)
                         .lineLimit(1)
                         .layoutPriority(1)
                         .help(failure)
                 } else {
                     Text("Filing interrupted — retry")
                         .font(NitpickTheme.body)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(NitpickTheme.warning)
                         .fixedSize()
                         .layoutPriority(2)
                 }
@@ -289,7 +289,7 @@ private struct NeedsSummaryMark: View {
     var body: some View {
         Image(systemName: "exclamationmark.circle.fill")
             .font(NitpickTheme.secondaryEmphasis)
-            .foregroundStyle(.orange)
+            .foregroundStyle(NitpickTheme.warning)
             .help("Needs a summary before it can be filed")
             .accessibilityLabel("Needs a summary")
     }
