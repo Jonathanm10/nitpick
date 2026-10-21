@@ -197,13 +197,13 @@ struct TrayView: View {
                         .foregroundStyle(.orange)
                         .fixedSize()
                         .layoutPriority(2)
-                } else if model.filingFailure != nil, let message = model.errorMessage {
-                    Text(message)
+                } else if let failure = model.filingFailure {
+                    Text(failure.message)
                         .font(.system(size: 13))
                         .foregroundStyle(.red)
                         .lineLimit(1)
                         .layoutPriority(1)
-                        .help(message)
+                        .help(failure.message)
                 } else {
                     Text("Filing interrupted — retry")
                         .font(.system(size: 13))
