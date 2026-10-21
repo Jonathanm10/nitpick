@@ -13,6 +13,7 @@ struct AnnotationToolbar: View {
             Picker("Tool", selection: $model.annotationTool) {
                 ForEach(AnnotationTool.allCases) { tool in
                     Image(systemName: tool.symbolName)
+                        .accessibilityLabel(tool.title)
                         .help(tool.help)
                         .tag(tool)
                 }
@@ -35,6 +36,8 @@ struct AnnotationToolbar: View {
                     }
                     .buttonStyle(.plain)
                     .help(color.rawValue.capitalized)
+                    .accessibilityLabel(color.rawValue.capitalized)
+                    .accessibilityAddTraits(model.annotationColor == color ? .isSelected : [])
                     .motionPressFeedback()
                 }
             }
@@ -50,7 +53,8 @@ struct AnnotationToolbar: View {
             }
             .keyboardShortcut("z", modifiers: .command)
             .disabled(!model.canUndoAnnotation)
-            .help("Undo")
+            .help("Undo Annotation (⌘Z)")
+            .accessibilityLabel("Undo Annotation")
             .motionPressFeedback()
             Button {
                 model.redoAnnotation()
@@ -59,7 +63,8 @@ struct AnnotationToolbar: View {
             }
             .keyboardShortcut("z", modifiers: [.command, .shift])
             .disabled(!model.canRedoAnnotation)
-            .help("Redo")
+            .help("Redo Annotation (⇧⌘Z)")
+            .accessibilityLabel("Redo Annotation")
             .motionPressFeedback()
         }
         .padding(.horizontal, 12)

@@ -33,13 +33,27 @@ enum AnnotationTool: String, CaseIterable, Identifiable {
         }
     }
 
-    var help: String {
+    var title: String {
         switch self {
-        case .select: "Select — click a mark to select it"
-        case .pen: "Pen — draw freehand"
-        case .arrow: "Arrow — point at an element"
-        case .rectangle: "Rectangle — mark a region"
-        case .label: "Text label — click to place a note"
+        case .select: "Select"
+        case .pen: "Pen"
+        case .arrow: "Arrow"
+        case .rectangle: "Rectangle"
+        case .label: "Text label"
+        }
+    }
+
+    var help: String {
+        "\(title) (\(shortcutKey.character.uppercased())) — \(purpose)"
+    }
+
+    private var purpose: String {
+        switch self {
+        case .select: "click a mark to select it"
+        case .pen: "draw freehand"
+        case .arrow: "point at an element"
+        case .rectangle: "mark a region"
+        case .label: "click to place a note"
         }
     }
 }

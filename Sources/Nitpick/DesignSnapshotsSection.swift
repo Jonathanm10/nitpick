@@ -161,6 +161,8 @@ private struct DesignSnapshotCard: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Design Snapshot \(snapshot.name)")
+                .accessibilityHint("Opens a larger preview")
                 DesignSnapshotRemoveButton(action: remove)
                     .focused($removeFocused)
                     .opacity(hovering || removeFocused ? 1 : 0)
