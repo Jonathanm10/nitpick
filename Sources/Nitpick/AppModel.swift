@@ -98,12 +98,25 @@ final class AppModel {
     /// property, so every open/close edge stays in a single choke point.
     private(set) var session: ReviewSession? {
         didSet {
-            guard let edge = SessionEdge(wasOpen: sessionIsOpen, isOpen: session != nil) else { return }
-            sessionIsOpen = session != nil
-            apply(edge)
+            let isOpen = session != nil
+            guard isOpen != sessionIsOpen else { return }
+            sessionIsOpen = isOpen
+            captureHotkey.setActive(isOpen)
+            if isOpen {
+                // A held filing result never shows beside a live session.
+                filingResult = nil
+            } else {
+                // Start review launches the Build and reads the triage schema
+                // before it opens the session, so only a close drops them.
+                reviewRun = nil
+                sessionSchema = ProjectSchema()
+            }
+            // Or the next session would open on a stale "File N remaining".
+            activity.forgetFilingFailure()
+            clearSelection()
         }
     }
-    /// The edge reads this instead of `oldValue`: an `oldValue` read keeps
+    /// The didSet reads this instead of `oldValue`: an `oldValue` read keeps
     /// a second reference to the tray, so every Summary keystroke would copy it.
     @ObservationIgnored private var sessionIsOpen = false
     /// The held result of a successful file-all run: the just-filed
@@ -688,18 +701,6 @@ final class AppModel {
         if clearingPersisted {
             try core.clearOpenSession()
         }
-    }
-
-    private func apply(_ edge: SessionEdge) {
-        captureHotkey.setActive(edge == .opened)
-        if edge.dropsRunAndSchema {
-            reviewRun = nil
-            sessionSchema = ProjectSchema()
-        }
-        if edge.dismissesFilingResult { filingResult = nil }
-        // Or the next session would open on a stale "File N remaining".
-        activity.forgetFilingFailure()
-        clearSelection()
     }
 
     /// True when file-all can run: something is left to file and no
