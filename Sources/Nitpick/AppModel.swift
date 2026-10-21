@@ -25,17 +25,12 @@ final class AppModel {
     /// the panel's own "Check again".
     private(set) var setupGuidance: SetupGuidance?
     var selectedDeviceID: SimulatorDevice.ID?
-    /// True once the Build has been launched on the selected device.
-    private(set) var isReviewing = false
-    /// The device the Build is actually running on — the stamp source for
-    /// every capture. Set only after a successful launch, so a failed or
-    /// in-flight switch can never stamp a Finding with a device the Build
-    /// isn't running on.
-    private(set) var reviewDevice: SimulatorDevice?
-    /// The simulator host app the Build is running in — set by the same
-    /// successful launch that sets `reviewDevice`, cleared wherever
-    /// `reviewDevice` is cleared.
-    private(set) var reviewHost: SimulatorHostApp?
+    /// The Build running in a simulator; nil until a successful launch.
+    /// Its device is the stamp source for every capture.
+    private(set) var reviewRun: ReviewRun?
+    var isReviewing: Bool { reviewRun != nil }
+    var reviewDevice: SimulatorDevice? { reviewRun?.device }
+    var reviewHost: SimulatorHostApp? { reviewRun?.host }
     /// The Device Settings last observed at capture — the accessibility
     /// state read back from the simulator when the most recent Finding was
     /// stamped. nitpick no longer pushes these (ADR-0009); the designer
@@ -96,11 +91,15 @@ final class AppModel {
 
     /// The active Review Session: Build + project pinned at Start review,
     /// and the session tray its captures accumulate in.
-    /// The capture hotkey follows this one property so every open/close
-    /// edge stays in a single choke point; the stored value mutates often,
-    /// but registration only cares whether a session exists.
+    /// The capture hotkey and every per-session reset follow this one
+    /// property, so every open/close edge stays in a single choke point;
+    /// the stored value mutates often, but the edge only cares whether a
+    /// session exists.
     private(set) var session: ReviewSession? {
-        didSet { captureHotkey.setActive(session != nil) }
+        didSet {
+            captureHotkey.setActive(session != nil)
+            if (oldValue == nil) != (session == nil) { sessionOpenedOrClosed() }
+        }
     }
     /// The held result of a successful file-all run: the just-filed
     /// session as History's newest entry, shown in place until the designer
@@ -407,12 +406,8 @@ final class AppModel {
         await perform {
             guard let restored = try core.loadOpenSession() else { return }
             // Filing must never pair the session's pinned project with a
-            // connection that lacks it. A held filing result must be cleared
-            // before the restored session becomes live again, so the shell
-            // shows only one truth at a time.
+            // connection that lacks it.
             if let youTrack, !youTrack.projects.contains(restored.project) { return }
-            filingResult = nil
-            activity.forgetFilingFailure()
             session = restored
             build = restored.build
             selectedProjectID = restored.project.id
@@ -476,9 +471,7 @@ final class AppModel {
     func ingest(_ url: URL) async {
         await perform {
             build = try await core.ingestBuild(at: url)
-            isReviewing = false
-            reviewDevice = nil
-            reviewHost = nil
+            reviewRun = nil
             // A Build dropped onto the in-place filing result dismisses it:
             // the next review starts from the plain home drop zone, exactly
             // as a drop on home does (issue 03). Already nil on home.
@@ -506,20 +499,15 @@ final class AppModel {
             // or runtime surfaces as guidance before any boot is attempted.
             guard try await refreshSetup() else { return }
             guard let device = selectedDevice, device.isRuntimeAvailable else { return }
-            reviewHost = try await core.launch(build, on: device)
-            reviewDevice = device
+            reviewRun = ReviewRun(device: device, host: try await core.launch(build, on: device))
             recordRecentDevice(device)
-            isReviewing = true
             // Session-setup schema read (ADR-0008): learn the project's
             // Priority scale so the Editor's control is populated before the
             // first capture. Non-fatal — an empty schema hides the control,
             // and capture and filing proceed regardless (PRD story 22).
             sessionSchema = await core.loadProjectSchema(for: project)
             if session == nil {
-                filingResult = nil
-                activity.forgetFilingFailure()
                 session = ReviewSession(build: build, project: project)
-                clearSelection()
                 persistOpenSession()
             }
         }
@@ -557,8 +545,7 @@ final class AppModel {
         selectedDeviceID = id
         await perform {
             do {
-                reviewHost = try await core.launch(build, on: device)
-                reviewDevice = device
+                reviewRun = ReviewRun(device: device, host: try await core.launch(build, on: device))
                 recordRecentDevice(device)
             } catch {
                 selectedDeviceID = reviewDevice?.id
@@ -620,9 +607,7 @@ final class AppModel {
                 // review pauses into the restored-session state — session
                 // and tray intact, Resume review relaunches the Build.
                 if case SimulatorError.deviceNotBooted = error {
-                    isReviewing = false
-                    reviewDevice = nil
-                    reviewHost = nil
+                    reviewRun = nil
                 }
                 throw error
             }
@@ -675,19 +660,14 @@ final class AppModel {
             }
 
             // The whole tray filed: the live Review Session is over. End it
-            // — the capture hotkey unregisters as `session` clears, the
-            // device is dropped — and hold the just-filed session as the
+            // — the capture hotkey unregisters and the device is dropped as
+            // `session` clears — and hold the just-filed session as the
             // in-place result: History's newest entry, shown read-only until
             // the designer chooses Done or drops the next Build (PRD stories
             // 1, 2, 25). No timer; nothing disappears on its own. The held
             // result is transient and in-memory — the session survives on
             // disk as the newest History entry regardless.
             self.session = nil
-            isReviewing = false
-            reviewDevice = nil
-            reviewHost = nil
-            sessionSchema = ProjectSchema()
-            clearSelection()
             // Re-read History from disk and hold its newest entry — the
             // session that just filed (its start moment is the latest, so it
             // sorts to the head). A throwing read means a successful file-all
@@ -699,20 +679,29 @@ final class AppModel {
     }
     private func endSession(clearingPersisted: Bool) throws {
         session = nil
-        isReviewing = false
-        reviewDevice = nil
-        reviewHost = nil
-        // The session's triage schema and any dropped-field notice belong
-        // to this session; the next one reads a fresh schema at Start review.
-        sessionSchema = ProjectSchema()
+        // A dropped-field notice belongs to this session. It is not an
+        // edge reset: a successful File all ends its session yet still
+        // shows the notice.
         droppedFieldNotice = nil
-        // The comeback label belongs to the run that failed — a session
-        // ending takes it along, or the next session would open on a
-        // stale "File N remaining".
-        activity.forgetFilingFailure()
         if clearingPersisted {
             try core.clearOpenSession()
         }
+    }
+
+    /// Everything that belongs to one Review Session starts over when a
+    /// session opens or closes, whichever path got there. A held filing
+    /// result never shows beside a live session. The comeback label belongs
+    /// to the run that failed, or the next session would open on a stale
+    /// "File N remaining". A closed session takes its running Build and its
+    /// triage schema along; the next one reads a fresh schema at Start review.
+    private func sessionOpenedOrClosed() {
+        if session == nil {
+            reviewRun = nil
+            sessionSchema = ProjectSchema()
+        } else {
+            filingResult = nil
+        }
+        activity.forgetFilingFailure()
         clearSelection()
     }
 
