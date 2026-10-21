@@ -25,17 +25,11 @@ final class AppModel {
     /// the panel's own "Check again".
     private(set) var setupGuidance: SetupGuidance?
     var selectedDeviceID: SimulatorDevice.ID?
-    /// True once the Build has been launched on the selected device.
-    private(set) var isReviewing = false
-    /// The device the Build is actually running on — the stamp source for
-    /// every capture. Set only after a successful launch, so a failed or
-    /// in-flight switch can never stamp a Finding with a device the Build
-    /// isn't running on.
-    private(set) var reviewDevice: SimulatorDevice?
-    /// The simulator host app the Build is running in — set by the same
-    /// successful launch that sets `reviewDevice`, cleared wherever
-    /// `reviewDevice` is cleared.
-    private(set) var reviewHost: SimulatorHostApp?
+    /// Its device is the stamp source for every capture.
+    private(set) var reviewRun: ReviewRun?
+    var isReviewing: Bool { reviewRun != nil }
+    var reviewDevice: SimulatorDevice? { reviewRun?.device }
+    var reviewHost: SimulatorHostApp? { reviewRun?.host }
     /// The Device Settings last observed at capture — the accessibility
     /// state read back from the simulator when the most recent Finding was
     /// stamped. nitpick no longer pushes these (ADR-0009); the designer
@@ -46,45 +40,45 @@ final class AppModel {
     private(set) var capturedImage: NSImage?
     /// The capture's native pixel size, for view↔pixel coordinate mapping.
     private(set) var capturePixelSize: CGSize?
-    /// The tray item under edit: the capture that just landed, or whatever
-    /// tray row the designer selected. Nil hides the editor.
-    private(set) var selectedItemID: TrayItem.ID?
-    /// Changes whenever the editor's target changes — a new capture or a
-    /// different tray selection — so the annotation surface resets its
-    /// in-flight draft even when two targets share a pixel size.
-    private(set) var captureID = UUID()
+    /// A retarget drops the Annotation selection made on the old target, so
+    /// an orphaned drag's full-canvas overlay does not stay in memory.
+    private(set) var editor = EditorState() {
+        didSet {
+            if annotationSelection?.belongs(to: editor) == false { annotationSelection = nil }
+        }
+    }
+    /// Stored apart from `editor` so a drag tick re-renders only the
+    /// annotation surface.
+    private var annotationSelection: AnnotationSelection<NSImage>?
+    var selectedItemID: TrayItem.ID? { editor.target }
+    var captureID: UUID { editor.generation }
+    var selectedAnnotationIndex: Int? { annotationSelection?.index }
+    var annotationDrag: AnnotationDrag? { annotationSelection?.drag }
     var annotationTool: AnnotationTool = .pen {
         // Switching to any draw tool drops the selection — a stale
         // selection must never receive a stray keypress — and aborts any
         // in-flight move uncommitted.
         didSet {
             cancelAnnotationDrag()
-            if annotationTool != .select { selectedAnnotationIndex = nil }
+            if annotationTool != .select { annotationSelection = nil }
         }
     }
-    /// The index of the Annotation selected with the Select tool —
-    /// ephemeral workspace chrome: never persisted, never flattened into
-    /// any PNG. Every editor-retargeting event clears it.
-    private(set) var selectedAnnotationIndex: Int?
-    /// The in-flight rigid move of the selected Annotation — nil except
-    /// between the first cursor movement on the shape and release. Like
-    /// the selection it belongs to, ephemeral workspace state.
-    private(set) var annotationDrag: AnnotationDrag?
     var annotationColor: AnnotationColor = .default
-    /// True only while the shell is inside file-all's core call — a
-    /// dedicated run bit so the button phase can distinguish filing from
-    /// unrelated busy work like device switches.
-    private(set) var filingRunActive = false
-    /// Remembers that the most recent file-all run came back with a
-    /// failure, so the shell can say "File N remaining" until the next run
-    /// starts and clears the comeback label.
-    private(set) var filingStoppedByFailure = false
-    private(set) var isBusy = false
-    /// True while a text label is waiting for commit; every editor-retarget
-    /// path keeps it intact so a visible draft never lands on the wrong row.
-    var hasPendingLabelDraft = false
+    /// Only `perform` begins and ends work.
+    private(set) var activity = ShellActivity()
+    var isBusy: Bool { activity.isBusy }
+    var filingFailure: String? { activity.filingFailure }
+    /// This setter and `designSnapshotErrorMessage`'s skip equal writes, so
+    /// the readers of `editor` re-render only on a real change.
+    var hasPendingLabelDraft: Bool {
+        get { editor.hasPendingLabelDraft }
+        set { if editor.hasPendingLabelDraft != newValue { editor.hasPendingLabelDraft = newValue } }
+    }
     var errorMessage: String?
-    private(set) var designSnapshotErrorMessage: String?
+    private(set) var designSnapshotErrorMessage: String? {
+        get { editor.designSnapshotError }
+        set { if editor.designSnapshotError != newValue { editor.designSnapshotError = newValue } }
+    }
     /// Menu commands live outside ContentView, so the End Review confirmation
     /// flag sits on the model where both the window and the menu can drive it.
     var endReviewConfirmationRequested = false
@@ -100,12 +94,33 @@ final class AppModel {
 
     /// The active Review Session: Build + project pinned at Start review,
     /// and the session tray its captures accumulate in.
-    /// The capture hotkey follows this one property so every open/close
-    /// edge stays in a single choke point; the stored value mutates often,
-    /// but registration only cares whether a session exists.
+    /// The capture hotkey and every per-session reset follow this one
+    /// property, so every open/close edge stays in a single choke point.
     private(set) var session: ReviewSession? {
-        didSet { captureHotkey.setActive(session != nil) }
+        didSet {
+            let isOpen = session != nil
+            // Before the edge guard: a registration refused at open retries
+            // on the next edit, and an active one returns early.
+            captureHotkey.setActive(isOpen)
+            guard isOpen != sessionIsOpen else { return }
+            sessionIsOpen = isOpen
+            if isOpen {
+                // A held filing result never shows beside a live session.
+                filingResult = nil
+            } else {
+                // Start review launches the Build and reads the triage schema
+                // before it opens the session, so only a close drops them.
+                reviewRun = nil
+                sessionSchema = ProjectSchema()
+            }
+            // Or the next session would open on a stale "File N remaining".
+            activity.forgetFilingFailure()
+            clearSelection()
+        }
     }
+    /// The didSet reads this instead of `oldValue`: an `oldValue` read keeps
+    /// a second reference to the tray, so every Summary keystroke would copy it.
+    @ObservationIgnored private var sessionIsOpen = false
     /// The held result of a successful file-all run: the just-filed
     /// session as History's newest entry, shown in place until the designer
     /// chooses Done or drops the next Build. The live session has already
@@ -326,21 +341,30 @@ final class AppModel {
 
     var startReviewTitle: String { session == nil ? "Start review" : "Resume review" }
 
-    /// Mirrored by the window's Start/Resume button and the Review menu
-    /// item — the hero group shows the button before a Build exists, so
-    /// the Build is part of the predicate, keeping the menu honest too.
-    var canStartReview: Bool {
-        build != nil
-            && !isReviewing
-            && filingResult == nil
-            && selectedDevice?.isRuntimeAvailable == true
-            && (session != nil || selectedProject != nil)
-            && !isBusy
+    var canStartReview: Bool { reviewStart != nil }
+
+    private var reviewStart: ReviewStart? {
+        ReviewStart(
+            build: build,
+            isReviewing: isReviewing,
+            holdsFilingResult: filingResult != nil,
+            device: selectedDevice,
+            session: session,
+            selectedProject: selectedProject,
+            isBusy: isBusy
+        )
     }
 
     var canCapture: Bool { isReviewing && !isBusy && !hasPendingLabelDraft }
 
     var canEndReview: Bool { session != nil && !isBusy }
+
+    var canIngest: Bool { !isBusy }
+
+    /// A drop that bounces while work runs says why, like a refused `perform`.
+    func reportBusyDrop() {
+        errorMessage = ShellActivity.Busy().localizedDescription
+    }
 
     var selectedProject: YouTrackProject? {
         youTrack?.projects.first { $0.id == selectedProjectID }
@@ -407,12 +431,8 @@ final class AppModel {
         await perform {
             guard let restored = try core.loadOpenSession() else { return }
             // Filing must never pair the session's pinned project with a
-            // connection that lacks it. A held filing result must be cleared
-            // before the restored session becomes live again, so the shell
-            // shows only one truth at a time.
+            // connection that lacks it.
             if let youTrack, !youTrack.projects.contains(restored.project) { return }
-            filingResult = nil
-            filingStoppedByFailure = false
             session = restored
             build = restored.build
             selectedProjectID = restored.project.id
@@ -476,9 +496,7 @@ final class AppModel {
     func ingest(_ url: URL) async {
         await perform {
             build = try await core.ingestBuild(at: url)
-            isReviewing = false
-            reviewDevice = nil
-            reviewHost = nil
+            reviewRun = nil
             // A Build dropped onto the in-place filing result dismisses it:
             // the next review starts from the plain home drop zone, exactly
             // as a drop on home does (issue 03). Already nil on home.
@@ -500,26 +518,21 @@ final class AppModel {
     /// resumes instead: its pinned project and tray stay; only the
     /// simulator is relaunched.
     func startReview() async {
-        guard canStartReview, let build, let project = session?.project ?? selectedProject else { return }
+        guard let start = reviewStart else { return }
         await perform {
             // Session-start prerequisite check (issue 10): a missing Xcode
             // or runtime surfaces as guidance before any boot is attempted.
             guard try await refreshSetup() else { return }
             guard let device = selectedDevice, device.isRuntimeAvailable else { return }
-            reviewHost = try await core.launch(build, on: device)
-            reviewDevice = device
+            reviewRun = ReviewRun(device: device, host: try await core.launch(start.build, on: device))
             recordRecentDevice(device)
-            isReviewing = true
             // Session-setup schema read (ADR-0008): learn the project's
             // Priority scale so the Editor's control is populated before the
             // first capture. Non-fatal — an empty schema hides the control,
             // and capture and filing proceed regardless (PRD story 22).
-            sessionSchema = await core.loadProjectSchema(for: project)
+            sessionSchema = await core.loadProjectSchema(for: start.project)
             if session == nil {
-                filingResult = nil
-                filingStoppedByFailure = false
-                session = ReviewSession(build: build, project: project)
-                clearSelection()
+                session = ReviewSession(build: start.build, project: start.project)
                 persistOpenSession()
             }
         }
@@ -554,11 +567,10 @@ final class AppModel {
               let device = devices.first(where: { $0.id == id }),
               device.isRuntimeAvailable
         else { return }
-        selectedDeviceID = id
         await perform {
+            selectedDeviceID = id
             do {
-                reviewHost = try await core.launch(build, on: device)
-                reviewDevice = device
+                reviewRun = ReviewRun(device: device, host: try await core.launch(build, on: device))
                 recordRecentDevice(device)
             } catch {
                 selectedDeviceID = reviewDevice?.id
@@ -598,20 +610,17 @@ final class AppModel {
                 // The capture drops straight into the tray as a Finding — no
                 // filing dialog (PRD story 22) — and opens in the editor,
                 // stamped with the Device Context in effect right now.
-                selectedItemID = session?.addFinding(Finding(
+                guard let id = session?.addFinding(Finding(
                     summary: "",
                     description: "",
                     screenshotPNG: png,
                     deviceContext: DeviceContext(device: device, settings: deviceSettings)
-                ))
+                )) else { return }
                 persistOpenSession()
-                captureID = UUID()
-                selectedAnnotationIndex = nil
-                annotationDrag = nil
                 // The surface resets its live draft off captureID, but if it
                 // was unmounted first its onChange never fires — the model
-                // owns the gate, so the model resets it.
-                hasPendingLabelDraft = false
+                // owns the label-draft gate, so the fresh editor resets it.
+                editor = EditorState(opening: id)
                 refreshAnnotatedImage()
                 didCapture = true
             } catch {
@@ -620,9 +629,7 @@ final class AppModel {
                 // review pauses into the restored-session state — session
                 // and tray intact, Resume review relaunches the Build.
                 if case SimulatorError.deviceNotBooted = error {
-                    isReviewing = false
-                    reviewDevice = nil
-                    reviewHost = nil
+                    reviewRun = nil
                 }
                 throw error
             }
@@ -659,38 +666,30 @@ final class AppModel {
     /// review starts fresh.
     func fileAllFindings() async {
         guard canFileAll, let session else { return }
-        await perform {
-            filingRunActive = true
-            filingStoppedByFailure = false
+        await perform(.filing) {
             droppedFieldNotice = nil
             let outcome = await core.fileAll(in: session, onProgress: { self.session = $0 })
-            filingRunActive = false
             // Report any triage fields the run had to drop (PRD story 28,
             // ADR-0008) before anything else: a field dropped on an
             // already-filed Finding must still surface even when a later
             // Finding stops the run — the drop won't recur on retry.
             presentDroppedFieldNotice(from: outcome.droppedFields)
             if let failure = outcome.failure {
-                filingStoppedByFailure = true
+                activity.recordFilingFailure(failure.localizedDescription)
                 self.session = outcome.session
                 refreshHistory()
                 throw failure
             }
 
             // The whole tray filed: the live Review Session is over. End it
-            // — the capture hotkey unregisters as `session` clears, the
-            // device is dropped — and hold the just-filed session as the
+            // — the capture hotkey unregisters and the device is dropped as
+            // `session` clears — and hold the just-filed session as the
             // in-place result: History's newest entry, shown read-only until
             // the designer chooses Done or drops the next Build (PRD stories
             // 1, 2, 25). No timer; nothing disappears on its own. The held
             // result is transient and in-memory — the session survives on
             // disk as the newest History entry regardless.
             self.session = nil
-            isReviewing = false
-            reviewDevice = nil
-            reviewHost = nil
-            sessionSchema = ProjectSchema()
-            clearSelection()
             // Re-read History from disk and hold its newest entry — the
             // session that just filed (its start moment is the latest, so it
             // sorts to the head). A throwing read means a successful file-all
@@ -702,21 +701,13 @@ final class AppModel {
     }
     private func endSession(clearingPersisted: Bool) throws {
         session = nil
-        isReviewing = false
-        reviewDevice = nil
-        reviewHost = nil
-        // The session's triage schema and any dropped-field notice belong
-        // to this session; the next one reads a fresh schema at Start review.
-        sessionSchema = ProjectSchema()
+        // A dropped-field notice belongs to this session. It is not an
+        // edge reset: a successful File all ends its session yet still
+        // shows the notice.
         droppedFieldNotice = nil
-        // The comeback label belongs to the run that failed — a session
-        // ending takes it along, or the next session would open on a
-        // stale "File N remaining".
-        filingStoppedByFailure = false
         if clearingPersisted {
             try core.clearOpenSession()
         }
-        clearSelection()
     }
 
     /// True when file-all can run: something is left to file and no
@@ -745,8 +736,8 @@ final class AppModel {
     /// a read-only History row, so it needs no phase.
     var filingPhase: FilingPhase? {
         session?.filingPhase(
-            isRunning: filingRunActive,
-            stoppedByFailure: filingStoppedByFailure
+            isRunning: activity.isFiling,
+            stoppedByFailure: activity.filingFailure != nil
         )
     }
 
@@ -798,22 +789,24 @@ final class AppModel {
     }
 
     private func clearSelection() {
+        editor = EditorState()
         capturedImage = nil
         capturePixelSize = nil
-        selectedItemID = nil
-        selectedAnnotationIndex = nil
-        annotationDrag = nil
-        hasPendingLabelDraft = false
-        designSnapshotErrorMessage = nil
     }
 
     private func perform(
+        _ work: ShellActivity.Work = .other,
         reportingTo errorKeyPath: ReferenceWritableKeyPath<AppModel, String?> = \.errorMessage,
         _ action: () async throws -> Void
     ) async {
-        isBusy = true
+        do {
+            try activity.begin(work)
+        } catch {
+            self[keyPath: errorKeyPath] = error.localizedDescription
+            return
+        }
         self[keyPath: errorKeyPath] = nil
-        defer { isBusy = false }
+        defer { activity.end() }
         do {
             try await action()
         } catch {
@@ -836,21 +829,17 @@ extension AppModel {
     /// pending: the surface still owns the typed text, and retargeting
     /// first would land its commit on the wrong Finding.
     func selectItem(_ id: TrayItem.ID) {
-        guard session != nil, selectedItemID != id, !hasPendingLabelDraft else { return }
-        selectedItemID = id
-        captureID = UUID()
-        selectedAnnotationIndex = nil
-        annotationDrag = nil
-        hasPendingLabelDraft = false
-        designSnapshotErrorMessage = nil
+        guard let next = editor.selecting(id, in: session) else { return }
+        editor = next
         refreshAnnotatedImage()
     }
 
+    var canDiscard: Bool { editor.allowsDiscard(during: activity) }
+
     /// Removes a Finding from the tray; the core refuses to discard
-    /// anything filing has already touched. Refused while a label draft
-    /// is pending, like every other editor-retargeting mutation.
+    /// anything filing has already touched.
     func discardFinding(id: TrayItem.ID) {
-        guard !isBusy, !hasPendingLabelDraft else { return }
+        guard canDiscard else { return }
         session?.discardFinding(id: id)
         persistOpenSession()
         if selectedItemID == id, selectedItem == nil {
@@ -863,28 +852,26 @@ extension AppModel {
     /// otherwise a pristine Finding — the mis-capture case — dies
     /// instantly. The core's predicate decides pristine.
     func handleEditorEscape() {
-        if annotationDrag != nil || selectedAnnotationIndex != nil {
-            deselectAnnotation()
-        } else if let item = selectedItem, item.isPristine {
-            discardFinding(id: item.id)
+        switch surfaceEscape {
+        case .releaseAnnotation: deselectAnnotation()
+        case .discard(let id): discardFinding(id: id)
+        case nil: break
         }
     }
 
     /// Whether Esc would act from the annotation surface's own focus
-    /// scope: release an in-flight or selected Annotation first, else the
-    /// pristine discard. The shell installs its Esc handler only when
-    /// true — an installed no-op would still consume the command.
-    var editorEscapeWouldAct: Bool {
-        annotationDrag != nil || selectedAnnotationIndex != nil || editorEscapeWouldDiscard
-    }
+    /// scope. The shell installs its Esc handler only when true — an
+    /// installed no-op would still consume the command.
+    var editorEscapeWouldAct: Bool { surfaceEscape != nil }
 
     /// Whether Esc would act from the editor scope at large, where a text
     /// field may hold focus: only the pristine mis-capture discard.
-    /// Releasing an Annotation selection belongs to the surface's focus
-    /// scope — Esc in Summary or Description must keep standard field
-    /// behavior (PRD story 11). Mirrors `discardFinding`'s guards.
     var editorEscapeWouldDiscard: Bool {
-        !isBusy && !hasPendingLabelDraft && selectedItem?.isPristine == true
+        EditorEscape.inEditor(editor, session: session, activity: activity) != nil
+    }
+
+    private var surfaceEscape: EditorEscape? {
+        EditorEscape.onSurface(editor, selection: annotationSelection, session: session, activity: activity)
     }
 
     func addAnnotation(_ shape: Annotation.Shape) {
@@ -895,15 +882,13 @@ extension AppModel {
     func undoAnnotation() {
         // History moves indices arbitrarily — a stale selection must
         // never point Delete at the wrong Annotation.
-        selectedAnnotationIndex = nil
-        annotationDrag = nil
+        annotationSelection = nil
         editSelectedFinding { $0.undo() }
         refreshAnnotatedImage()
     }
 
     func redoAnnotation() {
-        selectedAnnotationIndex = nil
-        annotationDrag = nil
+        annotationSelection = nil
         editSelectedFinding { $0.redo() }
         refreshAnnotatedImage()
     }
@@ -929,12 +914,13 @@ extension AppModel {
     /// A Select-tool click, in image pixels: selects the topmost
     /// Annotation under the point, or — on empty surface — deselects.
     func selectAnnotation(at point: CGPoint) {
-        selectedAnnotationIndex = annotationIndex(at: point)
+        cancelAnnotationDrag()
+        annotationSelection = annotationIndex(at: point).map { AnnotationSelection(index: $0, in: editor) }
     }
 
     func deselectAnnotation() {
         cancelAnnotationDrag()
-        selectedAnnotationIndex = nil
+        annotationSelection = nil
     }
 
     /// Delete/Backspace on the selection.
@@ -954,13 +940,7 @@ extension AppModel {
               annotations.indices.contains(index)
         else { return }
         cancelAnnotationDrag()
-        if let selected = selectedAnnotationIndex {
-            if selected == index {
-                selectedAnnotationIndex = nil
-            } else if selected > index {
-                selectedAnnotationIndex = selected - 1
-            }
-        }
+        annotationSelection = annotationSelection?.removingAnnotation(at: index)
         editSelectedFinding { $0.removeAnnotation(at: index) }
         refreshAnnotatedImage()
     }
@@ -987,25 +967,10 @@ extension AppModel {
         refreshAnnotatedImage()
     }
 
-    /// A rigid move of the selected Annotation, in flight from the first
-    /// cursor movement on the shape until release. The shape leaves the
-    /// flattened base (exclude-one render) and rides as a renderer-drawn
-    /// overlay the view shifts — never double-drawn, never ghosted at its
-    /// old position. While held it composites above the whole base, so a
+    /// While held, the overlay composites above the whole base, so a
     /// mid-stack shape shows over later marks for the drag's duration;
     /// release re-renders true stacking.
-    struct AnnotationDrag {
-        let index: Int
-        /// The Annotation as the drag found it — release translates this,
-        /// and commits only if it is still in place.
-        let annotation: Annotation
-        /// The shape alone on transparency at its pre-drag position,
-        /// rendered by the core so the preview is pixel truth.
-        let overlayImage: NSImage
-        /// Whole image pixels — rounded on update, the single source for
-        /// the live preview and the committed move alike.
-        var offset = CGVector.zero
-    }
+    typealias AnnotationDrag = NitpickCore.AnnotationDrag<NSImage>
 
     /// Begins a rigid move when `point` (image pixels) falls on the
     /// selected Annotation; returns whether the move owns the gesture.
@@ -1019,8 +984,7 @@ extension AppModel {
               annotation.hitTest(point, metrics: metrics),
               let overlay = annotation.renderedAlone(canvasSize: pixelSize)
         else { return false }
-        annotationDrag = AnnotationDrag(
-            index: index,
+        annotationSelection?.drag = AnnotationDrag(
             annotation: annotation,
             overlayImage: NSImage(cgImage: overlay, size: pixelSize)
         )
@@ -1033,7 +997,7 @@ extension AppModel {
     /// rendering is translation-invariant on the pixel lattice, and the
     /// rounded value is what preview and commit alike use.
     func updateAnnotationDrag(offset: CGVector) {
-        annotationDrag?.offset = CGVector(dx: offset.dx.rounded(), dy: offset.dy.rounded())
+        annotationSelection?.drag?.offset = CGVector(dx: offset.dx.rounded(), dy: offset.dy.rounded())
     }
 
     /// Release: the whole move is one `replaceAnnotation` — one undo
@@ -1042,14 +1006,14 @@ extension AppModel {
     /// an interleaved mutation (an undo mid-drag) drops the move rather
     /// than landing it on the wrong shape.
     func endAnnotationDrag() {
-        guard let drag = annotationDrag else { return }
-        annotationDrag = nil
+        guard let selection = annotationSelection, let drag = selection.drag else { return }
+        annotationSelection?.drag = nil
         if drag.offset.dx != 0 || drag.offset.dy != 0,
            let annotations = selectedItem?.finding.annotations,
-           annotations.indices.contains(drag.index),
-           annotations[drag.index] == drag.annotation {
+           annotations.indices.contains(selection.index),
+           annotations[selection.index] == drag.annotation {
             editSelectedFinding {
-                $0.replaceAnnotation(at: drag.index, with: drag.annotation.translated(by: drag.offset))
+                $0.replaceAnnotation(at: selection.index, with: drag.annotation.translated(by: drag.offset))
             }
         }
         refreshAnnotatedImage()
@@ -1059,7 +1023,7 @@ extension AppModel {
     /// to the full render, the shape to its pre-drag position.
     func cancelAnnotationDrag() {
         guard annotationDrag != nil else { return }
-        annotationDrag = nil
+        annotationSelection?.drag = nil
         refreshAnnotatedImage()
     }
 

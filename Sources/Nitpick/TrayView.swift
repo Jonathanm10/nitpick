@@ -173,13 +173,9 @@ struct TrayView: View {
                         NeedsSummaryMark()
                     }
                     // Discard is a hover/selection × (ADR-0010) that stages
-                    // the confirmation — never a one-click destroy. Gated
-                    // exactly as the old swipe was: no × while a File all run
-                    // is busy or a label draft is pending.
+                    // the confirmation — never a one-click destroy.
                     if isHovered || isSelected {
-                        TrayDiscardButton(
-                            disabled: model.isBusy || model.hasPendingLabelDraft
-                        ) {
+                        TrayDiscardButton(disabled: !model.canDiscard) {
                             pendingDiscardID = item.id
                         }
                     }
@@ -197,13 +193,13 @@ struct TrayView: View {
                         .foregroundStyle(.orange)
                         .fixedSize()
                         .layoutPriority(2)
-                } else if model.filingStoppedByFailure, let message = model.errorMessage {
-                    Text(message)
+                } else if let failure = model.filingFailure {
+                    Text(failure)
                         .font(.system(size: 13))
                         .foregroundStyle(.red)
                         .lineLimit(1)
                         .layoutPriority(1)
-                        .help(message)
+                        .help(failure)
                 } else {
                     Text("Filing interrupted — retry")
                         .font(.system(size: 13))
