@@ -192,6 +192,56 @@ struct YouTrackConnectionTests {
         #expect(credentials.storedSecrets == ["youtrack-token": "perm:old"])
     }
 
+    @Test("a connection change whose typed text cannot be saved keeps the old credentials and the session file as they were")
+    func connectionChangeStopsOnFailedSessionSave() async throws {
+        let workspace = try Fixtures.makeTemporaryDirectory()
+        let credentials = FakeCredentialStore()
+        let transport = FakeHTTPTransport()
+        let core = AppCore(
+            environment: .fake(httpTransport: transport, credentialStore: credentials),
+            workspaceDirectory: workspace
+        )
+        transport.enqueue(json: Self.userJSON)
+        transport.enqueue(json: Self.projectsJSON)
+        try await core.connectYouTrack(instanceURL: "https://old.example", token: "perm:old")
+
+        var session = IssueFilingTests.session
+        let id = session.addFinding(IssueFilingTests.finding(summary: "Saved"))
+        try core.saveOpenSession(session)
+        session.updateFinding(id: id) { $0.summary = "Saved, then typed" }
+
+        let openSession = workspace.appendingPathComponent("open-session")
+        let manifest = openSession.appendingPathComponent("session.json")
+        let savedManifest = try Data(contentsOf: manifest)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: openSession.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: openSession.path)
+        }
+        let otherProjects = #"[{"id":"0-7","name":"Elsewhere","shortName":"EL","$type":"Project"}]"#
+        transport.enqueue(json: Self.userJSON)
+        transport.enqueue(json: otherProjects)
+        await #expect(throws: (any Error).self) {
+            try await core.connectYouTrack(
+                instanceURL: "https://new.example", token: "perm:new", unsavedSession: session
+            )
+        }
+
+        #expect(try core.youTrackInstanceURL() == URL(string: "https://old.example"))
+        #expect(credentials.storedSecrets == ["youtrack-token": "perm:old"])
+        #expect(try Data(contentsOf: manifest) == savedManifest)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: openSession.path)
+        transport.enqueue(json: Self.userJSON)
+        transport.enqueue(json: otherProjects)
+        try await core.connectYouTrack(
+            instanceURL: "https://new.example", token: "perm:new", unsavedSession: session
+        )
+
+        #expect(try core.youTrackInstanceURL() == URL(string: "https://new.example"))
+        #expect(credentials.storedSecrets == ["youtrack-token": "perm:new"])
+        #expect(try core.loadOpenSession()?.tray.first?.finding.summary == "Saved, then typed")
+    }
+
     @Test(
         "a malformed instance URL fails before any request",
         arguments: ["", "   ", "not a url", "ftp://youtrack.example.com", "https://"]

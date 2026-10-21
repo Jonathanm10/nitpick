@@ -466,8 +466,10 @@ final class AppModel {
         await perform(reportingTo: \.youTrackErrorMessage) {
             let connection = try await core.connectYouTrack(
                 instanceURL: youTrackInstanceURLField,
-                token: youTrackTokenField
+                token: youTrackTokenField,
+                unsavedSession: typingSave.isPending ? session : nil
             )
+            typingSave.saved()
             youTrackTokenField = ""
             try connected(connection)
         }
