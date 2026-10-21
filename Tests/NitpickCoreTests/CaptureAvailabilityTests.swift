@@ -25,8 +25,8 @@ struct CaptureAvailabilityTests {
 
     @Test("a taken chord's help offers ⌘S only while the review runs")
     func takenExplanationFollowsTheReview() {
-        #expect(CaptureHotkeyState.takenExplanation(isReviewing: true) == "nitpick could not register ⌃⌥⌘N, most likely because another app holds it, so capture from the Simulator is off. ⌘S still captures while nitpick is in front.")
-        #expect(CaptureHotkeyState.takenExplanation(isReviewing: false) == "nitpick could not register ⌃⌥⌘N, most likely because another app holds it, so capture from the Simulator is off. Resume review to capture with ⌘S.")
+        #expect(CaptureHotkeyState.takenExplanation(isReviewing: true) == "nitpick could not register ⌃⌥⌘N, another app may be using it, so capture from the Simulator is off. ⌘S still captures while nitpick is in front.")
+        #expect(CaptureHotkeyState.takenExplanation(isReviewing: false) == "nitpick could not register ⌃⌥⌘N, another app may be using it, so capture from the Simulator is off. Resume review to capture with ⌘S.")
     }
 
     @Test("a chord not yet registered is neither promised nor warned about")
@@ -53,7 +53,7 @@ struct CaptureAvailabilityTests {
         let placeholder = CapturePlaceholder(isReviewing: true, hotkey: .taken)
 
         #expect(placeholder.title == "⌘S to capture")
-        #expect(placeholder.note == "nitpick could not register ⌃⌥⌘N, most likely because another app holds it, so capture from the Simulator is off. ⌘S still captures while nitpick is in front.")
+        #expect(placeholder.note == "nitpick could not register ⌃⌥⌘N, another app may be using it, so capture from the Simulator is off. ⌘S still captures while nitpick is in front.")
     }
 
     @Test("a paused review's empty pane points at Resume review, whatever the chord", arguments: [CaptureHotkeyState.registered, .taken, .inactive])
