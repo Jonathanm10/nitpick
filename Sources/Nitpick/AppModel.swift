@@ -830,11 +830,12 @@ extension AppModel {
         refreshAnnotatedImage()
     }
 
+    var canDiscard: Bool { editor.allowsDiscard(during: activity) }
+
     /// Removes a Finding from the tray; the core refuses to discard
-    /// anything filing has already touched. Refused while a label draft
-    /// is pending, like every other editor-retargeting mutation.
+    /// anything filing has already touched.
     func discardFinding(id: TrayItem.ID) {
-        guard !isBusy, !hasPendingLabelDraft else { return }
+        guard canDiscard else { return }
         session?.discardFinding(id: id)
         persistOpenSession()
         if selectedItemID == id, selectedItem == nil {

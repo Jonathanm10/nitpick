@@ -74,6 +74,22 @@ struct EditorEscapeTests {
         #expect(EditorEscape.inEditor(editor, session: session, activity: ShellActivity()) == nil)
     }
 
+    @Test(
+        "Esc discards a pristine Finding exactly when the Tray's discard is allowed",
+        arguments: [ShellActivity.Work?.none, .other, .filing], [false, true]
+    )
+    func escFollowsTheDiscardRule(running: ShellActivity.Work?, labelDraft: Bool) throws {
+        var (editor, session, id) = try Self.editor()
+        editor.hasPendingLabelDraft = labelDraft
+        var activity = ShellActivity()
+        if let running { _ = activity.begin(running) }
+
+        let allowed = editor.allowsDiscard(during: activity)
+
+        #expect(allowed == (running == nil && !labelDraft))
+        #expect(EditorEscape.inEditor(editor, session: session, activity: activity) == (allowed ? .discard(id) : nil))
+    }
+
     @Test("with no Finding in the editor, Esc does nothing")
     func noTargetNoAction() {
         let session = IssueFilingTests.session

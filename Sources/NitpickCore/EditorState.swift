@@ -39,6 +39,14 @@ public struct EditorState: Equatable, Sendable {
         guard session != nil, target != item, !hasPendingLabelDraft else { return nil }
         return EditorState(target: item)
     }
+
+    /// Whether a Finding may be discarded now. Never while a label draft
+    /// pins the Editor, and never while work runs: filing works on a copy
+    /// of the session. Esc, the Tray's discard button, and the discard
+    /// itself all read this one rule.
+    public func allowsDiscard(during activity: ShellActivity) -> Bool {
+        !hasPendingLabelDraft && !activity.isBusy
+    }
 }
 
 /// The Annotation picked with the Select tool, and the rigid move in flight
@@ -109,15 +117,15 @@ public enum EditorEscape: Equatable, Sendable {
     case discard(TrayItem.ID)
 
     /// The editor scope at large, where a text field may hold focus: only
-    /// the pristine discard, never while work runs or a label draft pins the
-    /// Editor. Releasing a selection belongs to the surface's own scope, so
-    /// Esc in Summary or Description keeps standard field behavior.
+    /// the pristine discard, and only when a discard is allowed. Releasing a
+    /// selection belongs to the surface's own scope, so Esc in Summary or
+    /// Description keeps standard field behavior.
     public static func inEditor(
         _ editor: EditorState,
         session: ReviewSession?,
         activity: ShellActivity
     ) -> EditorEscape? {
-        guard !activity.isBusy, !editor.hasPendingLabelDraft,
+        guard editor.allowsDiscard(during: activity),
               let target = editor.target,
               let item = session?.tray.first(where: { $0.id == target }),
               item.isPristine
