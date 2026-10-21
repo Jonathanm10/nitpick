@@ -528,6 +528,12 @@ extension AppModel {
     }
 
     func stageFeedbackSnapshot(_ state: String) async {
+        // Attaching the sheet pulls the parked window on screen.
+        guard !WindowSnapshot.isQuiet else {
+            print("feedback snapshot: refused, attaching the sheet would pull windows onto the screen")
+            fflush(stdout)
+            return
+        }
         await presentFeedback()
         guard let feedback else { return }
         guard state != "not-connected" else {
