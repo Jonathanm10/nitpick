@@ -30,9 +30,7 @@ public struct EditorState: Equatable, Sendable {
     /// A capture landed: the Editor opens it. Never refused here, since the
     /// shell's capture gate already refuses a pinned Editor.
     public func capturing(_ item: TrayItem.ID) -> EditorState {
-        var next = EditorState(target: item)
-        next.designSnapshotError = designSnapshotError
-        return next
+        EditorState(target: item)
     }
 
     /// A tray click, or nil when refused: no open session, the item is

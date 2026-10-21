@@ -25,6 +25,15 @@ struct EditorStateTests {
         #expect(!next.hasPendingLabelDraft)
     }
 
+    @Test("a capture never shows the previous Finding's Design Snapshot error")
+    func captureClearsTheDesignSnapshotError() throws {
+        let (session, ids) = Self.session(findings: 2)
+        var editor = try #require(EditorState().selecting(ids[0], in: session))
+        editor.designSnapshotError = "Moodboard.gif: unsupported format"
+
+        #expect(editor.capturing(ids[1]).designSnapshotError == nil)
+    }
+
     @Test("a tray selection opens a fresh editor and clears the Design Snapshot error")
     func selectionOpensAFreshEditor() throws {
         let (session, ids) = Self.session(findings: 2)
