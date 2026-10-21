@@ -4,7 +4,8 @@ public enum CaptureHotkeyState: Equatable, Sendable {
     /// Not registered: no Review Session, or one still opening.
     case inactive
     case registered
-    /// Another app holds the chord, so only ⌘S captures.
+    /// Carbon refused the chord, so only ⌘S captures. Another app holding it
+    /// is the usual cause, but a refusal does not say so.
     case taken
 
     public static let chord = "⌃⌥⌘N"
@@ -22,10 +23,16 @@ public enum CaptureHotkeyState: Equatable, Sendable {
 
     /// The topbar's warning while the chord is taken.
     public var takenWarning: String? {
-        self == .taken ? "\(Self.chord) is taken by another app" : nil
+        self == .taken ? "\(Self.chord) is unavailable" : nil
     }
 
-    public static let takenExplanation = "Another app holds \(chord), so capture from the Simulator is off. ⌘S still captures while nitpick is in front."
+    /// A paused review captures nothing, so its help does not offer ⌘S.
+    public static func takenExplanation(isReviewing: Bool) -> String {
+        let refusal = "nitpick could not register \(chord), most likely because another app holds it, so capture from the Simulator is off."
+        return isReviewing
+            ? "\(refusal) ⌘S still captures while nitpick is in front."
+            : "\(refusal) Resume review to capture with ⌘S."
+    }
 }
 
 /// The empty capture pane's prompt. A paused review captures nothing, so it
@@ -43,7 +50,7 @@ public struct CapturePlaceholder: Equatable, Sendable {
         title = "⌘S to capture"
         note = switch hotkey {
         case .registered: "or \(CaptureHotkeyState.chord) from the Simulator"
-        case .taken: CaptureHotkeyState.takenExplanation
+        case .taken: CaptureHotkeyState.takenExplanation(isReviewing: true)
         case .inactive: nil
         }
     }

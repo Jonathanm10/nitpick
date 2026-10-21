@@ -56,7 +56,7 @@ struct SessionTopBar: View {
                     .font(NitpickTheme.secondary)
                     .foregroundStyle(NitpickTheme.secondaryText)
                     .lineLimit(1)
-                    .help(CaptureHotkeyState.takenExplanation)
+                    .help(CaptureHotkeyState.takenExplanation(isReviewing: model.isReviewing))
             }
         }
     }
