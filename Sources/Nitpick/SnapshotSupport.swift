@@ -35,7 +35,8 @@ enum WindowSnapshot {
     /// main view at exactly that size instead of the real window: layout QA
     /// no longer depends on the window manager (a tiler can pin the real
     /// frame), and the inactive-window look the designer sees while working
-    /// in the Simulator is deterministic.
+    /// in the Simulator is deterministic. A quiet run's parked main window
+    /// already is both, so it renders that window at the size instead.
     static let requestedSize: NSSize? = {
         guard let value = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_SIZE"] else { return nil }
         let parts = value.split(separator: "x").compactMap { Double($0) }
@@ -49,7 +50,7 @@ enum WindowSnapshot {
     /// window parked off every screen. Called once, after launch restored
     /// the session, so the copy renders the same state as the real window.
     static func stageOffscreenCopy(model: AppModel) {
-        guard offscreenWindow == nil, let size = requestedSize else { return }
+        guard !isQuiet, offscreenWindow == nil, let size = requestedSize else { return }
         let window = ParkedWindow(size: size)
         window.contentView = NSHostingView(rootView: ContentView(model: model, isSnapshotCopy: true))
         window.orderBack(nil)
@@ -75,8 +76,8 @@ enum WindowSnapshot {
     }
 
     static func render(to path: String) {
-        if let window = offscreenWindow, let size = requestedSize {
-            // Start-review growth resizes the copy too; pin it back first.
+        if let window = offscreenWindow ?? parkedMainWindow, let size = requestedSize {
+            // Start-review growth resizes it too; pin it back first.
             window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 guard let view = window.contentView,
@@ -301,6 +302,10 @@ extension AppModel {
                     Self.send(characters: String(character), keyCode: 0, flags: [], to: window)
                 }
             case "key":
+                if !window.isKeyWindow, window.firstResponder is NSText, ["cmd+z", "cmd+shift+z"].contains(argument) {
+                    print("keys: \(step) skipped, ⌘Z routing to a focused field reads NSApp.keyWindow, which a quiet run never has")
+                    continue
+                }
                 Self.sendChord(argument, to: window)
             default:
                 print("keys: unknown step \(step)")
