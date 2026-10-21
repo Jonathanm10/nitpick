@@ -778,15 +778,12 @@ final class AppModel {
 
     /// Sessions persist as they are created (issue 07).
     private func persistOpenSession() {
+        typingSave.saved()
         typingSaveTask?.cancel()
         typingSaveTask = nil
-        guard let session else {
-            typingSave.saved()
-            return
-        }
+        guard let session else { return }
         do {
             try core.saveOpenSession(session)
-            typingSave.saved()
         } catch {
             errorMessage = error.localizedDescription
         }
