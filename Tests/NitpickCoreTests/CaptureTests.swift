@@ -104,7 +104,8 @@ struct CaptureTests {
     @Test("a screenshot failure surfaces at once while a settings read is stuck in a live process")
     func screenshotFailureDoesNotWaitForAStuckRead() async throws {
         let stalling = StalledSettingsRunner(
-            deviceList: Data(Fixtures.deviceListJSON(udid: device.udid, name: device.name, state: "Booted").utf8)
+            deviceList: Data(Fixtures.deviceListJSON(udid: device.udid, name: device.name, state: "Booted").utf8),
+            markersIn: try Fixtures.makeTemporaryDirectory()
         )
         let core = AppCore(environment: .fake(subprocess: stalling), workspaceDirectory: workspace)
         let clock = ContinuousClock()
@@ -207,30 +208,27 @@ private final class OverlapRunner: SubprocessRunner {
     }
 }
 
-/// Runs every settings read as a live `/bin/sleep 30`, the stand-in for a
-/// stuck `simctl ui`, and fails the screenshot once all three are running.
+/// Runs every settings read as a live 30 s sleep, the stand-in for a stuck
+/// `simctl ui`, and fails the screenshot once all three are running.
 private final class StalledSettingsRunner: SubprocessRunner {
     private let deviceList: Data
-    private let readsStarted = Mutex(0)
-    private let live = ProcessSubprocessRunner()
+    private let markers: [String: URL]
 
-    init(deviceList: Data) {
+    init(deviceList: Data, markersIn directory: URL) {
         self.deviceList = deviceList
+        markers = Dictionary(uniqueKeysWithValues: ["content_size", "appearance", "increase_contrast"].map {
+            ($0, directory.appendingPathComponent($0))
+        })
     }
 
     func run(_ command: SubprocessCommand) async throws -> SubprocessResult {
-        if command.arguments.contains("ui") {
-            readsStarted.withLock { $0 += 1 }
-            return try await live.run(SubprocessCommand(executablePath: "/bin/sleep", arguments: ["30"]))
+        if let option = command.arguments.last, let marker = markers[option] {
+            return try await ProcessSubprocessRunner().run(.sleep(touching: marker))
         }
         guard command.arguments.contains("screenshot") else {
             return SubprocessResult(exitCode: 0, standardOutput: deviceList)
         }
-        let deadline = ContinuousClock.now + .seconds(1)
-        while readsStarted.withLock({ $0 }) < 3, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(2))
-        }
-        try await Task.sleep(for: .milliseconds(200))
+        try await Fixtures.waitForFiles(Array(markers.values))
         return SubprocessResult(exitCode: 1, standardError: Data("No devices are booted.".utf8))
     }
 }

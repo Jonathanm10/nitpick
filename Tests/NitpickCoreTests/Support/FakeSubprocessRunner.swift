@@ -115,6 +115,26 @@ extension SubprocessCommand {
     static func settingsReads(of device: SimulatorDevice) -> [SubprocessCommand] {
         ["content_size", "appearance", "increase_contrast"].map { uiRead($0, of: device) }
     }
+
+    /// A live 30 s sleep that touches `marker` once it runs, so a test can
+    /// cancel a process that has really started. `exec` keeps an ignored
+    /// SIGTERM ignored in the sleep itself.
+    static func sleep(touching marker: URL, ignoringSIGTERM: Bool = false) -> SubprocessCommand {
+        let script = (ignoringSIGTERM ? "trap '' TERM; " : "") + "touch \"$1\"; exec /bin/sleep 30"
+        return SubprocessCommand(executablePath: "/bin/sh", arguments: ["-c", script, "sh", marker.path])
+    }
+}
+
+extension Fixtures {
+    static func waitForFiles(_ files: [URL], timeout: Duration = .seconds(5)) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !files.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) {
+            guard ContinuousClock.now < deadline else { throw WaitTimedOut() }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    struct WaitTimedOut: Error {}
 }
 
 extension CoreEnvironment {

@@ -4,13 +4,18 @@ import Testing
 
 @Suite("Cancelling a running subprocess")
 struct SubprocessCancellationTests {
-    let runner = ProcessSubprocessRunner()
+    let marker: URL
 
-    private func cancelWhileRunning(_ command: SubprocessCommand) async -> (error: (any Error)?, elapsed: Duration) {
+    init() throws {
+        marker = try Fixtures.makeTemporaryDirectory().appendingPathComponent("running")
+    }
+
+    private func cancelOnceRunning(ignoringSIGTERM: Bool = false) async throws -> (error: (any Error)?, elapsed: Duration) {
+        let command = SubprocessCommand.sleep(touching: marker, ignoringSIGTERM: ignoringSIGTERM)
+        let task = Task { try await ProcessSubprocessRunner().run(command) }
+        try await Fixtures.waitForFiles([marker])
         let clock = ContinuousClock()
         let start = clock.now
-        let task = Task { try await runner.run(command) }
-        try? await Task.sleep(for: .milliseconds(200))
         task.cancel()
         let result = await task.result
         if case .failure(let error) = result { return (error, clock.now - start) }
@@ -18,23 +23,19 @@ struct SubprocessCancellationTests {
     }
 
     @Test("a cancelled run terminates the process and returns at once")
-    func cancelTerminates() async {
-        let (error, elapsed) = await cancelWhileRunning(
-            SubprocessCommand(executablePath: "/bin/sleep", arguments: ["30"])
-        )
+    func cancelTerminates() async throws {
+        let (error, elapsed) = try await cancelOnceRunning()
 
         #expect(error is CancellationError)
-        #expect(elapsed < .seconds(2))
+        #expect(elapsed < .seconds(1))
     }
 
     @Test("a process that ignores SIGTERM is killed after the grace period")
-    func cancelKillsAStubbornProcess() async {
-        let (error, elapsed) = await cancelWhileRunning(
-            SubprocessCommand(executablePath: "/bin/sh", arguments: ["-c", "trap '' TERM; exec /bin/sleep 30"])
-        )
+    func cancelKillsAStubbornProcess() async throws {
+        let (error, elapsed) = try await cancelOnceRunning(ignoringSIGTERM: true)
 
         #expect(error is CancellationError)
         #expect(elapsed >= .seconds(2))
-        #expect(elapsed < .seconds(5))
+        #expect(elapsed < .seconds(4))
     }
 }
