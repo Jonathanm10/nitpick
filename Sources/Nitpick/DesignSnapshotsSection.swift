@@ -195,7 +195,7 @@ private struct DesignSnapshotRemoveButton: View {
                 .font(NitpickTheme.smallGlyph)
                 .foregroundStyle(NitpickTheme.secondaryText)
                 .frame(width: 18, height: 18)
-                .background(hovering ? NitpickTheme.hover : NitpickTheme.raised.opacity(0.8), in: Circle())
+                .background(hovering ? NitpickTheme.hover : NitpickTheme.raised, in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
