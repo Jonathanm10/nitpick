@@ -39,12 +39,24 @@ public enum DesignSnapshotMediaType: String, Codable, Sendable {
 
 public struct DesignSnapshot: Equatable, Sendable, Identifiable {
     public let id: UUID
+    /// Names these exact bytes: Replace keeps `id` but mints a new
+    /// `dataVersion`, a rename keeps both. Anything derived from `data`
+    /// (the file on disk, a thumbnail) is keyed by it and never re-reads
+    /// the bytes to check. Starts equal to `id`.
+    public let dataVersion: UUID
     public internal(set) var name: String
-    public internal(set) var mediaType: DesignSnapshotMediaType
-    public internal(set) var data: Data
+    public let mediaType: DesignSnapshotMediaType
+    public let data: Data
 
-    init(id: UUID = UUID(), name: String, mediaType: DesignSnapshotMediaType, data: Data) {
+    init(
+        id: UUID = UUID(),
+        dataVersion: UUID? = nil,
+        name: String,
+        mediaType: DesignSnapshotMediaType,
+        data: Data
+    ) {
         self.id = id
+        self.dataVersion = dataVersion ?? id
         self.name = name
         self.mediaType = mediaType
         self.data = data
@@ -110,6 +122,7 @@ public struct DesignSnapshotImportResult: Equatable, Sendable {
 extension DesignSnapshot {
     static func validated(
         id: UUID = UUID(),
+        dataVersion: UUID? = nil,
         name: String,
         mediaType: DesignSnapshotMediaType,
         data: Data
@@ -127,7 +140,13 @@ extension DesignSnapshot {
         else {
             throw DesignSnapshotError.mediaTypeMismatch(expected: mediaType)
         }
-        return DesignSnapshot(id: id, name: normalizedName, mediaType: mediaType, data: data)
+        return DesignSnapshot(
+            id: id,
+            dataVersion: dataVersion,
+            name: normalizedName,
+            mediaType: mediaType,
+            data: data
+        )
     }
 
     static func normalizedName(
@@ -236,6 +255,7 @@ extension ReviewSession {
         let current = tray[location.finding].finding.designSnapshots[location.snapshot]
         tray[location.finding].finding.designSnapshots[location.snapshot] = try DesignSnapshot.validated(
             id: current.id,
+            dataVersion: UUID(),
             name: current.name,
             mediaType: mediaType,
             data: data
