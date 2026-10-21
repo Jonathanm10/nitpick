@@ -76,22 +76,48 @@ public struct ProcessSubprocessRunner: SubprocessRunner {
         let stderr = PipeDrain(stderrPipe)
 
         // The termination handler is installed before run() so a subprocess
-        // that exits instantly can't slip past it.
-        let exitCode: Int32 = try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
-            do {
-                try process.run()
-            } catch {
-                process.terminationHandler = nil
-                continuation.resume(throwing: error)
+        // that exits instantly can't slip past it. Cancellation stops the
+        // process, so a stuck command never holds a caller that gave up on it.
+        let launch = Mutex(Launch.pending)
+        let exitCode: Int32 = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+                do {
+                    try launch.withLock { state in
+                        guard state == .pending else { throw CancellationError() }
+                        try process.run()
+                        state = .running
+                    }
+                } catch {
+                    process.terminationHandler = nil
+                    continuation.resume(throwing: error)
+                }
+            }
+        } onCancel: {
+            launch.withLock { state in
+                if state == .running { Self.stop(process) }
+                state = .cancelled
             }
         }
+        try Task.checkCancellation()
 
         return SubprocessResult(
             exitCode: exitCode,
             standardOutput: await stdout.drainToEnd(),
             standardError: await stderr.drainToEnd()
         )
+    }
+
+    private enum Launch {
+        case pending, running, cancelled
+    }
+
+    private static func stop(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(2)) {
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
     }
 }
 
