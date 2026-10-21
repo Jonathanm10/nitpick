@@ -67,7 +67,7 @@ final class AppModel {
     /// Only `perform` begins and ends work.
     private(set) var activity = ShellActivity()
     var isBusy: Bool { activity.isBusy }
-    var filingFailure: FilingFailure? { activity.filingFailure }
+    var filingFailure: String? { activity.filingFailure }
     /// This setter and `designSnapshotErrorMessage`'s skip equal writes, so
     /// the readers of `editor` re-render only on a real change.
     var hasPendingLabelDraft: Bool {

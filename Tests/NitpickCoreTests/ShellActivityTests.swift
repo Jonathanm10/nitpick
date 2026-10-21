@@ -86,7 +86,7 @@ struct ShellActivityTests {
         try activity.begin(.other)
         activity.end()
 
-        #expect(activity.filingFailure?.message == "The network connection was lost.")
+        #expect(activity.filingFailure == "The network connection was lost.")
     }
 
     @Test("the next File all run forgets the last failure")

@@ -12,7 +12,7 @@ public struct ShellActivity: Equatable, Sendable {
     public private(set) var running: Work?
     /// Unrelated work leaves it alone, so the Tray row that shows it keeps
     /// showing it.
-    public private(set) var filingFailure: FilingFailure?
+    public private(set) var filingFailure: String?
 
     public init() {}
 
@@ -40,14 +40,10 @@ public struct ShellActivity: Equatable, Sendable {
     }
 
     public mutating func recordFilingFailure(_ message: String) {
-        filingFailure = FilingFailure(message: message)
+        filingFailure = message
     }
 
     public mutating func forgetFilingFailure() {
         filingFailure = nil
     }
-}
-
-public struct FilingFailure: Equatable, Sendable {
-    public let message: String
 }
