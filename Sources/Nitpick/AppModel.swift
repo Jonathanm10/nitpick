@@ -326,15 +326,19 @@ final class AppModel {
     var startReviewTitle: String { session == nil ? "Start review" : "Resume review" }
 
     /// Mirrored by the window's Start/Resume button and the Review menu
-    /// item — the hero group shows the button before a Build exists, so
-    /// the Build is part of the predicate, keeping the menu honest too.
-    var canStartReview: Bool {
-        build != nil
-            && !isReviewing
-            && filingResult == nil
-            && selectedDevice?.isRuntimeAvailable == true
-            && (session != nil || selectedProject != nil)
-            && !isBusy
+    /// item; `startReview` acts on the same decision.
+    var canStartReview: Bool { reviewStart != nil }
+
+    private var reviewStart: ReviewStart? {
+        ReviewStart(
+            build: build,
+            run: reviewRun,
+            filingResult: filingResult,
+            device: selectedDevice,
+            session: session,
+            selectedProject: selectedProject,
+            activity: activity
+        )
     }
 
     var canCapture: Bool { isReviewing && !isBusy && !hasPendingLabelDraft }
@@ -497,21 +501,21 @@ final class AppModel {
     /// resumes instead: its pinned project and tray stay; only the
     /// simulator is relaunched.
     func startReview() async {
-        guard canStartReview, let build, let project = session?.project ?? selectedProject else { return }
+        guard let start = reviewStart else { return }
         await perform {
             // Session-start prerequisite check (issue 10): a missing Xcode
             // or runtime surfaces as guidance before any boot is attempted.
             guard try await refreshSetup() else { return }
             guard let device = selectedDevice, device.isRuntimeAvailable else { return }
-            reviewRun = ReviewRun(device: device, host: try await core.launch(build, on: device))
+            reviewRun = ReviewRun(device: device, host: try await core.launch(start.build, on: device))
             recordRecentDevice(device)
             // Session-setup schema read (ADR-0008): learn the project's
             // Priority scale so the Editor's control is populated before the
             // first capture. Non-fatal — an empty schema hides the control,
             // and capture and filing proceed regardless (PRD story 22).
-            sessionSchema = await core.loadProjectSchema(for: project)
+            sessionSchema = await core.loadProjectSchema(for: start.project)
             if session == nil {
-                session = ReviewSession(build: build, project: project)
+                session = ReviewSession(build: start.build, project: start.project)
                 persistOpenSession()
             }
         }
