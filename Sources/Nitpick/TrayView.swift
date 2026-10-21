@@ -197,7 +197,7 @@ struct TrayView: View {
                         .foregroundStyle(.orange)
                         .fixedSize()
                         .layoutPriority(2)
-                } else if model.filingStoppedByFailure, let message = model.errorMessage {
+                } else if model.filingFailure != nil, let message = model.errorMessage {
                     Text(message)
                         .font(.system(size: 13))
                         .foregroundStyle(.red)

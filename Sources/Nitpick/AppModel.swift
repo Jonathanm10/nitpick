@@ -71,15 +71,11 @@ final class AppModel {
     /// the selection it belongs to, ephemeral workspace state.
     private(set) var annotationDrag: AnnotationDrag?
     var annotationColor: AnnotationColor = .default
-    /// True only while the shell is inside file-all's core call — a
-    /// dedicated run bit so the button phase can distinguish filing from
-    /// unrelated busy work like device switches.
-    private(set) var filingRunActive = false
-    /// Remembers that the most recent file-all run came back with a
-    /// failure, so the shell can say "File N remaining" until the next run
-    /// starts and clears the comeback label.
-    private(set) var filingStoppedByFailure = false
-    private(set) var isBusy = false
+    /// What is running, filing included, and how the last File all ended.
+    /// Only `perform` begins and ends work.
+    private(set) var activity = ShellActivity()
+    var isBusy: Bool { activity.isBusy }
+    var filingFailure: FilingFailure? { activity.filingFailure }
     /// True while a text label is waiting for commit; every editor-retarget
     /// path keeps it intact so a visible draft never lands on the wrong row.
     var hasPendingLabelDraft = false
@@ -412,7 +408,7 @@ final class AppModel {
             // shows only one truth at a time.
             if let youTrack, !youTrack.projects.contains(restored.project) { return }
             filingResult = nil
-            filingStoppedByFailure = false
+            activity.forgetFilingFailure()
             session = restored
             build = restored.build
             selectedProjectID = restored.project.id
@@ -517,7 +513,7 @@ final class AppModel {
             sessionSchema = await core.loadProjectSchema(for: project)
             if session == nil {
                 filingResult = nil
-                filingStoppedByFailure = false
+                activity.forgetFilingFailure()
                 session = ReviewSession(build: build, project: project)
                 clearSelection()
                 persistOpenSession()
@@ -659,19 +655,16 @@ final class AppModel {
     /// review starts fresh.
     func fileAllFindings() async {
         guard canFileAll, let session else { return }
-        await perform {
-            filingRunActive = true
-            filingStoppedByFailure = false
+        await perform(.filing) {
             droppedFieldNotice = nil
             let outcome = await core.fileAll(in: session, onProgress: { self.session = $0 })
-            filingRunActive = false
             // Report any triage fields the run had to drop (PRD story 28,
             // ADR-0008) before anything else: a field dropped on an
             // already-filed Finding must still surface even when a later
             // Finding stops the run — the drop won't recur on retry.
             presentDroppedFieldNotice(from: outcome.droppedFields)
             if let failure = outcome.failure {
-                filingStoppedByFailure = true
+                activity.recordFilingFailure(failure.localizedDescription)
                 self.session = outcome.session
                 refreshHistory()
                 throw failure
@@ -712,7 +705,7 @@ final class AppModel {
         // The comeback label belongs to the run that failed — a session
         // ending takes it along, or the next session would open on a
         // stale "File N remaining".
-        filingStoppedByFailure = false
+        activity.forgetFilingFailure()
         if clearingPersisted {
             try core.clearOpenSession()
         }
@@ -745,8 +738,8 @@ final class AppModel {
     /// a read-only History row, so it needs no phase.
     var filingPhase: FilingPhase? {
         session?.filingPhase(
-            isRunning: filingRunActive,
-            stoppedByFailure: filingStoppedByFailure
+            isRunning: activity.isFiling,
+            stoppedByFailure: activity.filingFailure != nil
         )
     }
 
@@ -808,12 +801,13 @@ final class AppModel {
     }
 
     private func perform(
+        _ work: ShellActivity.Work = .other,
         reportingTo errorKeyPath: ReferenceWritableKeyPath<AppModel, String?> = \.errorMessage,
         _ action: () async throws -> Void
     ) async {
-        isBusy = true
+        activity.begin(work)
         self[keyPath: errorKeyPath] = nil
-        defer { isBusy = false }
+        defer { activity.end() }
         do {
             try await action()
         } catch {
