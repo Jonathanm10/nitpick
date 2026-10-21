@@ -359,7 +359,11 @@ final class AppModel {
         )
     }
 
-    var canCapture: Bool { isReviewing && !isBusy && !hasPendingLabelDraft }
+    var canCapture: Bool { captureRefusal == nil }
+
+    private var captureRefusal: CaptureRefusal? {
+        CaptureRefusal(isReviewing: isReviewing, isBusy: isBusy, hasPendingLabelDraft: hasPendingLabelDraft)
+    }
 
     var canEndReview: Bool { session != nil && !isBusy }
 
@@ -671,11 +675,19 @@ final class AppModel {
     }
 
     /// The hotkey follows the same capture path as ⌘S, then only on
-    /// success brings Nitpick forward to the session window.
+    /// success brings Nitpick forward to the session window. A refused
+    /// capture leaves focus where the designer is: it beeps, bounces the
+    /// Dock icon once, and the session screen says why.
     private func captureFromHotkey() async {
-        guard await captureScreen() else { return }
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.mainWindow?.makeKeyAndOrderFront(nil)
+        if let refusal = captureRefusal {
+            errorMessage = refusal.hotkeyMessage
+        } else if await captureScreen() {
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.showNitpickMainWindow()
+            return
+        }
+        NSSound.beep()
+        NSApp.requestUserAttention(.informationalRequest)
     }
 
     /// Files every remaining Finding in the tray — the moment their

@@ -32,3 +32,36 @@ public enum CaptureHotkeyState: Equatable, Sendable {
 
     public static let takenExplanation = "Another app holds \(chord), so capture from the Simulator is off. ⌘S still captures while nitpick is in front."
 }
+
+/// Why a capture cannot start. ⌘S and the Capture button are disabled while
+/// one holds, so only the global chord meets it and needs it said.
+public enum CaptureRefusal: Equatable, Sendable {
+    case reviewPaused
+    case busy
+    case labelDraftPending
+
+    /// Nil when a capture can start. A paused review comes first, since
+    /// waiting out the other two would not help.
+    public init?(isReviewing: Bool, isBusy: Bool, hasPendingLabelDraft: Bool) {
+        if !isReviewing {
+            self = .reviewPaused
+        } else if isBusy {
+            self = .busy
+        } else if hasPendingLabelDraft {
+            self = .labelDraftPending
+        } else {
+            return nil
+        }
+    }
+
+    public var hotkeyMessage: String {
+        switch self {
+        case .reviewPaused:
+            "\(CaptureHotkeyState.chord) captured nothing because the review is paused. Resume review, then capture again."
+        case .busy:
+            "\(CaptureHotkeyState.chord) captured nothing because nitpick was busy. Try again in a moment."
+        case .labelDraftPending:
+            "\(CaptureHotkeyState.chord) captured nothing because a text label is still open. Finish it, then capture again."
+        }
+    }
+}

@@ -91,17 +91,26 @@ struct FeedbackCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .help) {
             Button("Send Feedback…") {
-                // A minimized window is not `isVisible`; opening another
-                // would duplicate the sheet and re-run launch.
-                if let window = NSApp.nitpickMainWindow, window.isVisible || window.isMiniaturized {
-                    window.deminiaturize(nil)
-                    window.makeKeyAndOrderFront(nil)
-                } else {
+                if !NSApp.showNitpickMainWindow() {
                     openWindow(id: "main")
                 }
                 Task { await model.presentFeedback() }
             }
         }
+    }
+}
+
+extension NSApplication {
+    /// Brings the main window forward, restoring it from the Dock when
+    /// minimized. A minimized window is not `isVisible`, yet opening another
+    /// would duplicate the sheet and re-run launch. False when there is no
+    /// main window to show.
+    @discardableResult
+    func showNitpickMainWindow() -> Bool {
+        guard let window = nitpickMainWindow, window.isVisible || window.isMiniaturized else { return false }
+        window.deminiaturize(nil)
+        window.makeKeyAndOrderFront(nil)
+        return true
     }
 }
 
