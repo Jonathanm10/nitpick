@@ -4,17 +4,21 @@ import SwiftUI
 @main
 struct NitpickApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = AppModel()
+    @State private var model: AppModel
     @State private var updater = UpdaterModel()
+
+    init() {
+        let model = AppModel()
+        _model = State(initialValue: model)
+        WindowSnapshot.parkMainWindowIfQuiet(model: model)
+    }
 
     var body: some Scene {
         WindowGroup("nitpick", id: "main") {
-            ContentView(model: model)
-                .sheet(item: $model.feedback) { feedback in
-                    FeedbackSheet(feedback: feedback, isConnected: model.isFeedbackConnected)
-                }
+            MainWindowContent(model: model)
         }
         .defaultSize(width: 1140, height: 760)
+        .defaultLaunchBehavior(WindowSnapshot.isQuiet ? .suppressed : .automatic)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { updater.checkForUpdates() }
@@ -36,6 +40,17 @@ struct NitpickApp: App {
         Settings {
             SettingsView(model: model)
         }
+    }
+}
+
+struct MainWindowContent: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        ContentView(model: model)
+            .sheet(item: $model.feedback) { feedback in
+                FeedbackSheet(feedback: feedback, isConnected: model.isFeedbackConnected)
+            }
     }
 }
 
@@ -92,10 +107,21 @@ struct FeedbackCommands: Commands {
 
 /// Running from `swift run` there is no app bundle, so the process starts as
 /// a background executable; promote it to a regular, activated app.
+/// A quiet snapshot run is prohibited instead: no Dock tile, and the system
+/// never activates it, not even when the frontmost app that launched it
+/// hands activation on.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if WindowSnapshot.isQuiet {
+            NSApp.setActivationPolicy(.prohibited)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate()
+        if !WindowSnapshot.isQuiet {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate()
+        }
         // nitpick's palette is a bespoke light theme (near-white window, white
         // fields). Its text leans on adaptive semantic colors, so under system
         // Dark Mode every label resolves light and vanishes on the light

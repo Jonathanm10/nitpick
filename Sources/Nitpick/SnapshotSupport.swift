@@ -8,6 +8,29 @@ import SwiftUI
 
 @MainActor
 enum WindowSnapshot {
+    /// Any `NITPICK_SNAPSHOT_*` variable makes the run quiet, so proof runs never
+    /// take the designer's focus: no Dock tile, never activated, and the main
+    /// view hosted in a window parked off every screen instead of the
+    /// WindowGroup's. `NITPICK_SNAPSHOT_VISIBLE=1` opts back into a normal launch.
+    static let isQuiet: Bool = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["NITPICK_SNAPSHOT_VISIBLE"] != "1"
+            && environment.keys.contains { $0.hasPrefix("NITPICK_SNAPSHOT_") }
+    }()
+
+    private static var parkedMainWindow: NSWindow?
+
+    static func parkMainWindowIfQuiet(model: AppModel) {
+        guard isQuiet else { return }
+        DispatchQueue.main.async {
+            let window = ParkedWindow(size: requestedSize ?? NSSize(width: 1140, height: 760))
+            window.identifier = NSUserInterfaceItemIdentifier("main-parked")
+            window.contentView = NSHostingView(rootView: MainWindowContent(model: model))
+            window.orderBack(nil)
+            parkedMainWindow = window
+        }
+    }
+
     /// `NITPICK_SNAPSHOT_SIZE=WxH` renders an offscreen, never-key copy of the
     /// main view at exactly that size instead of the real window: layout QA
     /// no longer depends on the window manager (a tiler can pin the real
@@ -27,14 +50,9 @@ enum WindowSnapshot {
     /// the session, so the copy renders the same state as the real window.
     static func stageOffscreenCopy(model: AppModel) {
         guard offscreenWindow == nil, let size = requestedSize else { return }
-        let window = NSWindow(
-            contentRect: NSRect(origin: CGPoint(x: -10_000, y: 0), size: size),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
+        let window = ParkedWindow(size: size)
         window.contentView = NSHostingView(rootView: ContentView(model: model, isSnapshotCopy: true))
-        window.orderFront(nil)
+        window.orderBack(nil)
         offscreenWindow = window
     }
 
@@ -249,17 +267,6 @@ extension AppModel {
                     Self.send(characters: String(character), keyCode: 0, flags: [], to: window)
                 }
             case "key":
-                // Key equivalents reach only the key window, and other apps
-                // launched meanwhile can take focus between steps.
-                for _ in 0..<10 where !window.isKeyWindow {
-                    NSApp.activate(ignoringOtherApps: true)
-                    window.makeKeyAndOrderFront(nil)
-                    try? await Task.sleep(for: .seconds(0.3))
-                }
-                guard window.isKeyWindow else {
-                    print("keys: \(step) skipped, the main window never became key")
-                    continue
-                }
                 Self.sendChord(argument, to: window)
             default:
                 print("keys: unknown step \(step)")
@@ -267,6 +274,8 @@ extension AppModel {
             try? await Task.sleep(for: .seconds(0.4))
             logKeyState(step, window: window)
         }
+        print("keys: done")
+        fflush(stdout)
     }
 
     private func logKeyState(_ step: String, window: NSWindow) {
@@ -274,7 +283,7 @@ extension AppModel {
         let annotations = selectedItem.map { String($0.finding.annotations.count) } ?? "-"
         let editor = window.firstResponder as? NSTextView
         let field = editor.map { "\"\($0.string)\"" } ?? "none"
-        print("keys: \(step) -> selected=\(summary) annotations=\(annotations) focusedText=\(field) active=\(NSApp.isActive) key=\(window.isKeyWindow)")
+        print("keys: \(step) -> selected=\(summary) annotations=\(annotations) tool=\(annotationTool.rawValue) firstResponder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") focusedText=\(field) active=\(NSApp.isActive) key=\(window.isKeyWindow)")
         fflush(stdout)
     }
 
@@ -300,7 +309,7 @@ extension AppModel {
             default: key = part
             }
         }
-        let arrows: [String: CGKeyCode] = ["up": 126, "down": 125, "left": 123, "right": 124]
+        let arrows: [String: CGKeyCode] = ["up": 126, "down": 125, "left": 123, "right": 124, "tab": 48, "esc": 53]
         guard let keyCode = arrows[key] ?? layoutKeyCode(for: key),
               let cgEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true)
         else {
@@ -310,8 +319,35 @@ extension AppModel {
         if keyCode >= 123 { flags.formUnion([.maskSecondaryFn, .maskNumericPad]) }
         cgEvent.flags = flags
         guard let event = NSEvent(cgEvent: cgEvent) else { return }
-        print("keys: sending \(chord) characters=\(event.characters ?? "") ignoringModifiers=\(event.charactersIgnoringModifiers ?? "")")
-        NSApp.postEvent(event, atStart: false)
+        print("keys: sending \(chord) characters=\(event.characters ?? "") ignoringModifiers=\(event.charactersIgnoringModifiers ?? "") via \(deliver(event, to: window))")
+    }
+
+    /// A key window takes the event through the app's queue, as hardware
+    /// input arrives. A quiet run's window never becomes key, since the app
+    /// is never active, so the window and the menu bar get it directly in
+    /// AppKit's key-equivalent order instead.
+    private static func deliver(_ event: NSEvent, to window: NSWindow) -> String {
+        if window.isKeyWindow {
+            NSApp.postEvent(event, atStart: false)
+            return "queue"
+        }
+        if window.performKeyEquivalent(with: event) { return "window-equivalent" }
+        if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return "menu" }
+        // The window drops a key event addressed to no window.
+        guard let addressed = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: event.modifierFlags,
+            timestamp: event.timestamp,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: event.characters ?? "",
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
+            isARepeat: false,
+            keyCode: event.keyCode
+        ) else { return "dropped" }
+        window.sendEvent(addressed)
+        return "window-event"
     }
 
     /// The current layout's key for a character: Z sits on a different key
@@ -336,7 +372,7 @@ extension AppModel {
             isARepeat: false,
             keyCode: keyCode
         ) else { return }
-        NSApp.postEvent(event, atStart: false)
+        _ = deliver(event, to: window)
     }
 }
 extension AppModel {
@@ -398,5 +434,30 @@ extension AppModel {
         }
         print("feedback snapshot: state=\(state) canSend=\(feedback.canSend) hasText=\(feedback.payload.hasText)")
         fflush(stdout)
+    }
+}
+
+/// Borderless and parked off every screen whatever frame it is given, so
+/// session growth, which clamps a window into the screen it lands on, resizes
+/// it without bringing it on screen.
+final class ParkedWindow: NSWindow {
+    init(size: NSSize) {
+        super.init(contentRect: Self.parked(size), styleMask: [.borderless], backing: .buffered, defer: false)
+        isReleasedWhenClosed = false
+        isExcludedFromWindowsMenu = true
+        collectionBehavior = [.transient, .ignoresCycle]
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(Self.parked(frameRect.size), display: flag)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
+        super.setFrame(Self.parked(frameRect.size), display: displayFlag, animate: false)
+    }
+
+    private static func parked(_ size: NSSize) -> NSRect {
+        let desktop = NSScreen.screens.reduce(NSRect.null) { $0.union($1.frame) }
+        return NSRect(origin: CGPoint(x: desktop.minX - size.width - 1_000, y: desktop.minY), size: size)
     }
 }
