@@ -20,9 +20,13 @@ scrubbing the local-only `.scratch/` and `.codegraph/` paths from git.
 The steps, for reference:
 
 1. **Developer ID certificate.** Install a "Developer ID Application"
-   certificate + private key in the login Keychain. Copy its name from
+   certificate from the **G2 Sub-CA** + private key in the login Keychain.
+   Copy its SHA-1 fingerprint from
    `security find-identity -v -p codesigning` into `NITPICK_SIGNING_IDENTITY`
-   in `release.env`.
+   in `release.env`. The fingerprint selects the exact certificate when old
+   and replacement certificates have identical names. Check the certificate's
+   actual expiration date when planning renewal; keep the old certificate
+   until expiry rather than revoking it, so shipped releases remain usable.
 2. **Notary credentials.** Create an app-specific password for your Apple ID,
    then store it:
    `xcrun notarytool store-credentials nitpick-notary --apple-id <id> --team-id <team>`.

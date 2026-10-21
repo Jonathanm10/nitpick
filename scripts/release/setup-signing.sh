@@ -376,7 +376,10 @@ fi
 stage "Developer ID Application certificate" 10
 say "Apps shared outside the App Store are signed with a 'Developer ID"
 say "Application' certificate (Apple Development / Distribution won't do)."
-IDENTITY="$(dev_id_identities | head -n1 || true)"
+IDENTITY="$(release_env_get NITPICK_SIGNING_IDENTITY)"
+if [[ -z "$IDENTITY" ]] || ! security find-identity -v -p codesigning 2>/dev/null | grep -qF "$IDENTITY"; then
+  IDENTITY="$(dev_id_identities | head -n1 || true)"
+fi
 if [[ -n "$IDENTITY" ]]; then
   say "Already in your Keychain — nothing to create:"
   note "$(dev_id_identities)"
@@ -389,7 +392,7 @@ else
   say ""
   say "If Xcode doesn't offer that entry, use the developer portal:"
   open_url "https://developer.apple.com/account/resources/certificates/add"
-  step "Choose 'Developer ID Application' (default G2 Sub-CA profile is fine)."
+  step "Choose 'Developer ID Application', then explicitly select 'G2 Sub-CA'."
   step "It asks for a CSR: Keychain Access → Certificate Assistant →"
   step "Request a Certificate from a Certificate Authority… → save to disk."
   step "Upload the CSR, download the .cer, double-click to install it."
@@ -402,10 +405,11 @@ else
   done
   say "Detected: $IDENTITY"
 fi
-ask_default NITPICK_SIGNING_IDENTITY "Signing identity:" "$IDENTITY"
+ask_default NITPICK_SIGNING_IDENTITY "Signing identity (SHA-1 fingerprint preferred):" "$IDENTITY"
 release_env_set NITPICK_SIGNING_IDENTITY "$NITPICK_SIGNING_IDENTITY"
-TEAM_ID="$(printf '%s' "$NITPICK_SIGNING_IDENTITY" |
-  sed -n 's/.*(\([A-Z0-9]\{10\}\))$/\1/p')"
+TEAM_ID="$(security find-identity -v -p codesigning 2>/dev/null |
+  grep -F "$NITPICK_SIGNING_IDENTITY" |
+  sed -n 's/.*(\([A-Z0-9]\{10\}\))"$/\1/p' | head -n1)"
 
 # ── Stage 3: notary credentials ───────────────────────────────────────────
 stage "Notary credentials" 5
@@ -487,7 +491,7 @@ check() {
 }
 check_identity() {
   local id; id="$(release_env_get NITPICK_SIGNING_IDENTITY)"
-  [[ -n "$id" ]] && security find-identity -v -p codesigning | grep -qF "\"$id\""
+  [[ -n "$id" ]] && security find-identity -v -p codesigning | grep -qF "$id"
 }
 check_notary() {
   xcrun notarytool history \
