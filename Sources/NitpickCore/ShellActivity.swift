@@ -4,7 +4,7 @@ import Foundation
 /// ended. One value, so "busy" and "filing" can never disagree.
 public struct ShellActivity: Equatable, Sendable {
     /// Filing is the only work a reader tells apart: the File all button
-    /// counts its progress and frozen Tray rows say "Filing…".
+    /// shows its progress.
     public enum Work: Equatable, Sendable {
         case filing
         case other
