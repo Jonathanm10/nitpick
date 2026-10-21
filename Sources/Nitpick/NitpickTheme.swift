@@ -1,12 +1,15 @@
+import AppKit
+import NitpickCore
 import SwiftUI
 
 enum NitpickTheme {
-    static let window = Color(red: 251 / 255, green: 251 / 255, blue: 252 / 255)
-    static let inset = Color(red: 244 / 255, green: 245 / 255, blue: 247 / 255)
-    static let hover = Color(red: 236 / 255, green: 238 / 255, blue: 241 / 255)
-    static let border = Color(red: 227 / 255, green: 229 / 255, blue: 234 / 255)
-    static let strongBorder = Color(red: 212 / 255, green: 215 / 255, blue: 222 / 255)
-    static let secondaryText = Color(red: 93 / 255, green: 99 / 255, blue: 111 / 255)
+    static let window = Color(.window)
+    static let inset = Color(.inset)
+    static let raised = Color(.raised)
+    static let hover = Color(.hover)
+    static let border = Color(.border)
+    static let strongBorder = Color(.strongBorder)
+    static let secondaryText = Color(.secondaryText)
 
     static let radiusSmall: CGFloat = 5
     static let radiusMedium: CGFloat = 7
@@ -57,7 +60,7 @@ private struct NitpickFieldModifier: ViewModifier {
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .frame(minHeight: minHeight, alignment: alignment)
-            .background(.white, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall))
+            .background(NitpickTheme.raised, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall))
             .overlay {
                 RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall)
                     .strokeBorder(NitpickTheme.strongBorder, lineWidth: 1)
@@ -82,5 +85,16 @@ extension View {
 
     func nitpickSectionLabel() -> some View {
         modifier(NitpickSectionLabelModifier())
+    }
+}
+
+private extension Color {
+    /// A palette colour that resolves per appearance whenever it is drawn.
+    init(_ token: ThemeColor) {
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let rgb = token.value(in: isDark ? .dark : .light)
+            return NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
+        })
     }
 }

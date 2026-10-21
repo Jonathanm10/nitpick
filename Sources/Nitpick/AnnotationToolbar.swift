@@ -69,7 +69,7 @@ struct AnnotationToolbar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(.white, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusMedium))
+        .background(NitpickTheme.raised, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusMedium))
         .overlay {
             RoundedRectangle(cornerRadius: NitpickTheme.radiusMedium)
                 .strokeBorder(NitpickTheme.border, lineWidth: 1)

@@ -92,7 +92,7 @@ struct FeedbackSheet: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 7)
                 .frame(height: 96)
-                .background(.white, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall))
+                .background(NitpickTheme.raised, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall))
                 .overlay {
                     RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall)
                         .strokeBorder(NitpickTheme.strongBorder, lineWidth: 1)
