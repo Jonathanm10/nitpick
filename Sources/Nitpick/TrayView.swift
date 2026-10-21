@@ -55,29 +55,14 @@ struct TrayView: View {
     @State private var renderedHeight: CGFloat = 0
 
     var body: some View {
-        List {
-            // Capture order is the core's truth (filing walks the tray in
-            // order, ADR-0004); the DISPLAY is newest-first so a fresh
-            // capture's row slides into the top of the Tray, where the
-            // designer's eye already is (PRD story 6).
-            ForEach(tray.reversed()) { item in
-                trayRow(item)
-                    .frame(height: Self.rowHeight)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                    .transition(trayRowTransition)
-            }
+        ScrollViewReader { proxy in
+            trayList
+                // A jump, not an animated scroll, so Reduce Motion needs
+                // no branch.
+                .onChange(of: model.selectedItemID) { _, id in
+                    if let id { proxy.scrollTo(id) }
+                }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, Self.rowHeight)
-        .contentMargins(.vertical, 0, for: .scrollContent)
-        // Scroll only when rows are actually hidden — past the visible cap, or
-        // when the column has compressed the tray below its content. A tray
-        // that shows everything stays inert so the trackpad can't rubber-band
-        // over nothing.
-        .scrollDisabled(renderedHeight + 0.5 >= contentHeight)
         // Flexible, not fixed: the tray sits at its natural (capped) height
         // when the column has room and shrinks toward a ~2-row floor when the
         // fixed compose fields need the space. A lower layoutPriority than
@@ -109,6 +94,32 @@ struct TrayView: View {
         } message: { id in
             Text(discardConfirmationMessage(for: id))
         }
+    }
+
+    private var trayList: some View {
+        List {
+            // Capture order is the core's truth (filing walks the tray in
+            // order, ADR-0004); the DISPLAY is newest-first so a fresh
+            // capture's row slides into the top of the Tray, where the
+            // designer's eye already is (PRD story 6).
+            ForEach(tray.reversed()) { item in
+                trayRow(item)
+                    .frame(height: Self.rowHeight)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .transition(trayRowTransition)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, Self.rowHeight)
+        .contentMargins(.vertical, 0, for: .scrollContent)
+        // Scroll only when rows are actually hidden — past the visible cap, or
+        // when the column has compressed the tray below its content. A tray
+        // that shows everything stays inert so the trackpad can't rubber-band
+        // over nothing.
+        .scrollDisabled(renderedHeight + 0.5 >= contentHeight)
     }
 
     /// The confirmation's body: names the Finding when it carries a summary
@@ -153,12 +164,12 @@ struct TrayView: View {
             if let filed = item.filedIssue {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(NitpickTheme.secondaryEmphasis)
                         .foregroundStyle(.green)
                     Link(filed.idReadable, destination: filed.url)
                         .motionPressFeedback()
                 }
-                .font(.system(size: 13))
+                .font(NitpickTheme.body)
                 .fixedSize()
                 .layoutPriority(2)
                 .transition(
@@ -189,21 +200,21 @@ struct TrayView: View {
                 // it carries the error itself (PRD story 22).
                 if model.isBusy {
                     Text("Filing…")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.orange)
+                        .font(NitpickTheme.body)
+                        .foregroundStyle(NitpickTheme.warning)
                         .fixedSize()
                         .layoutPriority(2)
                 } else if let failure = model.filingFailure {
                     Text(failure)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.red)
+                        .font(NitpickTheme.body)
+                        .foregroundStyle(NitpickTheme.error)
                         .lineLimit(1)
                         .layoutPriority(1)
                         .help(failure)
                 } else {
                     Text("Filing interrupted — retry")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.orange)
+                        .font(NitpickTheme.body)
+                        .foregroundStyle(NitpickTheme.warning)
                         .fixedSize()
                         .layoutPriority(2)
                 }
@@ -238,18 +249,26 @@ struct TrayView: View {
     private func rowTitle(_ item: TrayItem, isSelected: Bool) -> some View {
         let summary = item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = Text(summary.isEmpty ? "Untitled Finding" : summary)
-            .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+            .font(isSelected ? NitpickTheme.bodyMedium : NitpickTheme.body)
             .lineLimit(1)
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
+        // A Button, not bare text, so VoiceOver can open the row and hear
+        // which one is selected; the row's tap gesture still covers the rest.
+        return Button {
+            model.selectItem(item.id)
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    title
+                    Text(item.finding.deviceContext.deviceModel)
+                        .font(NitpickTheme.bodyMedium)
+                        .foregroundStyle(NitpickTheme.secondaryText)
+                        .lineLimit(1)
+                }
                 title
-                Text(item.finding.deviceContext.deviceModel)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(NitpickTheme.secondaryText)
-                    .lineLimit(1)
             }
-            title
         }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private func rowBackground(isSelected: Bool, isHovered: Bool) -> Color {
@@ -269,8 +288,8 @@ struct TrayView: View {
 private struct NeedsSummaryMark: View {
     var body: some View {
         Image(systemName: "exclamationmark.circle.fill")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.orange)
+            .font(NitpickTheme.secondaryEmphasis)
+            .foregroundStyle(NitpickTheme.warning)
             .help("Needs a summary before it can be filed")
             .accessibilityLabel("Needs a summary")
     }
@@ -288,7 +307,7 @@ private struct TrayDiscardButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .semibold))
+                .font(NitpickTheme.smallGlyph)
                 .foregroundStyle(NitpickTheme.secondaryText)
                 .frame(width: 18, height: 18)
                 .background(hovering ? NitpickTheme.hover : .clear, in: Circle())

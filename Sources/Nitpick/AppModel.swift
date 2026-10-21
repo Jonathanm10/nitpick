@@ -78,6 +78,7 @@ final class AppModel {
         set { if editor.hasPendingLabelDraft != newValue { editor.hasPendingLabelDraft = newValue } }
     }
     var errorMessage: String?
+    private(set) var captureHotkeyState: CaptureHotkeyState = .inactive
     private(set) var designSnapshotErrorMessage: String? {
         get { editor.designSnapshotError }
         set { if editor.designSnapshotError != newValue { editor.designSnapshotError = newValue } }
@@ -102,11 +103,9 @@ final class AppModel {
     private(set) var session: ReviewSession? {
         didSet {
             let isOpen = session != nil
-            // Before the edge guard: a registration refused at open retries
-            // on the next edit, and an active one returns early.
-            captureHotkey.setActive(isOpen)
             guard isOpen != sessionIsOpen else { return }
             sessionIsOpen = isOpen
+            captureHotkey.setActive(isOpen)
             if isOpen {
                 // A held filing result never shows beside a live session.
                 filingResult = nil
@@ -321,6 +320,9 @@ final class AppModel {
                 await self.captureFromHotkey()
             }
         }
+        captureHotkey.onStateChange = { [weak self] state in
+            self?.captureHotkeyState = state
+        }
         for name in [NSApplication.willTerminateNotification, NSWindow.willCloseNotification] {
             _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.flushTypingSave() }
@@ -367,7 +369,11 @@ final class AppModel {
         )
     }
 
-    var canCapture: Bool { isReviewing && !isBusy && !hasPendingLabelDraft }
+    var canCapture: Bool { captureRefusal == nil }
+
+    private var captureRefusal: CaptureRefusal? {
+        CaptureRefusal(isReviewing: isReviewing, isBusy: isBusy, hasPendingLabelDraft: hasPendingLabelDraft)
+    }
 
     var canEndReview: Bool { session != nil && !isBusy }
 
@@ -401,6 +407,46 @@ final class AppModel {
         }
         if let state = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_FEEDBACK"] {
             await stageFeedbackSnapshot(state)
+        }
+        if ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_REVIEWING"] != nil {
+            stageReviewRun()
+        }
+        if let status = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_STATUS"] {
+            stageStatus(status)
+        }
+        if let script = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_KEYS"] {
+            await runKeyScript(script)
+        }
+    }
+
+    /// Dev-only, `NITPICK_SNAPSHOT_REVIEWING`: shows the reviewing screen for
+    /// a restored session without launching anything in a simulator. The
+    /// device is invented, so a capture from this state fails.
+    private func stageReviewRun() {
+        let developer = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
+        guard session != nil, let host = SimulatorHostApp.discover(inDeveloperDirectory: developer) else { return }
+        reviewRun = ReviewRun(
+            device: SimulatorDevice(udid: "STAGED-DEVICE", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: true),
+            host: host
+        )
+    }
+
+    /// Dev-only, `NITPICK_SNAPSHOT_STATUS`: `filing` holds a File all run open
+    /// that never files, `failed` fills every error line with invented copy,
+    /// and `result` shows the newest History entry as the filing result.
+    private func stageStatus(_ status: String) {
+        switch status {
+        case "filing":
+            try? activity.begin(.filing)
+        case "failed":
+            activity.recordFilingFailure("YouTrack refused the attachment (HTTP 413).")
+            errorMessage = "The Build could not be launched: the simulator stopped responding."
+            designSnapshotErrorMessage = "Forecast hero v4.png is not a PNG or JPEG image."
+            youTrackErrorMessage = "YouTrack rejected the token: it has expired."
+        case "result":
+            filingResult = history.first
+        default:
+            break
         }
     }
 
@@ -663,11 +709,19 @@ final class AppModel {
     }
 
     /// The hotkey follows the same capture path as ⌘S, then only on
-    /// success brings Nitpick forward to the session window.
+    /// success brings Nitpick forward to the session window. A refused
+    /// capture leaves focus where the designer is: it beeps, bounces the
+    /// Dock icon once, and the session screen says why.
     private func captureFromHotkey() async {
-        guard await captureScreen() else { return }
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.mainWindow?.makeKeyAndOrderFront(nil)
+        if let refusal = captureRefusal {
+            errorMessage = refusal.hotkeyMessage
+        } else if await captureScreen() {
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.showNitpickMainWindow()
+            return
+        }
+        NSSound.beep()
+        NSApp.requestUserAttention(.informationalRequest)
     }
 
     /// Files every remaining Finding in the tray — the moment their
@@ -880,6 +934,16 @@ extension AppModel {
     }
 
     var canDiscard: Bool { editor.allowsDiscard(during: activity) }
+
+    func selectFinding(_ step: TrayStep) {
+        guard let next = editor.stepping(step, in: session) else { return }
+        editor = next
+        refreshAnnotatedImage()
+    }
+
+    func canSelectFinding(_ step: TrayStep) -> Bool {
+        editor.stepping(step, in: session) != nil
+    }
 
     /// Removes a Finding from the tray; the core refuses to discard
     /// anything filing has already touched.

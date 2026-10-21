@@ -72,6 +72,70 @@ struct SessionTrayScenarioTests {
         #expect(item.isPristine)
     }
 
+    @Test("Esc keeps a Finding that carries only a pasted Design Snapshot")
+    func designSnapshotBlocksDiscard() throws {
+        var session = IssueFilingTests.session
+        let id = session.addFinding(IssueFilingTests.finding(summary: "", description: ""))
+
+        try session.addDesignSnapshot(
+            to: id,
+            name: "checkout-spec.png",
+            mediaType: .png,
+            data: try ImageFixtures.solidPNG(width: 80, height: 60)
+        )
+
+        let item = try #require(session.tray.first { $0.id == id })
+        #expect(!item.isPristine)
+    }
+
+    @Test("Esc keeps a Finding that carries only its own Design Reference")
+    func designReferenceBlocksDiscard() throws {
+        var session = IssueFilingTests.session
+        let id = session.addFinding(IssueFilingTests.finding(summary: "", description: ""))
+
+        session.updateFinding(id: id) {
+            $0.designReference = URL(string: "https://www.figma.com/design/abc123/Checkout")
+        }
+
+        let item = try #require(session.tray.first { $0.id == id })
+        #expect(!item.isPristine)
+    }
+
+    @Test("Esc keeps a Finding the designer switched to Improvement")
+    func improvementTypeBlocksDiscard() throws {
+        var session = IssueFilingTests.session
+        let id = session.addFinding(IssueFilingTests.finding(summary: "", description: ""))
+
+        session.updateFinding(id: id) { $0.type = .improvement }
+
+        let item = try #require(session.tray.first { $0.id == id })
+        #expect(!item.isPristine)
+    }
+
+    @Test("Esc keeps a Finding that carries only a Priority")
+    func priorityBlocksDiscard() throws {
+        var session = IssueFilingTests.session
+        let id = session.addFinding(IssueFilingTests.finding(summary: "", description: ""))
+
+        session.updateFinding(id: id) { $0.priority = FindingPriority(name: "Critical") }
+
+        let item = try #require(session.tray.first { $0.id == id })
+        #expect(!item.isPristine)
+    }
+
+    @Test("Esc keeps a Finding that carries only an Assignee")
+    func assigneeBlocksDiscard() throws {
+        var session = IssueFilingTests.session
+        let id = session.addFinding(IssueFilingTests.finding(summary: "", description: ""))
+
+        session.updateFinding(id: id) {
+            $0.assignee = FindingAssignee(login: "mira.sol", fullName: "Mira Sol")
+        }
+
+        let item = try #require(session.tray.first { $0.id == id })
+        #expect(!item.isPristine)
+    }
+
     @Test("any filing mark makes a tray item permanently non-pristine")
     func filingMarksNeverReturnToPristine() async throws {
         let transport = FakeHTTPTransport()

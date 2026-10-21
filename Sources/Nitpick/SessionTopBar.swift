@@ -10,7 +10,8 @@ import SwiftUI
 ///
 /// The one filled-accent action on the whole screen is File all, down in the
 /// inspector — so the pill's Capture stays a prominent-but-quiet `.bordered`
-/// button (⌘S is the global capture hotkey, ADR-0006; the keycap is a hint).
+/// button. Its keycaps are hints: ⌘S is the local menu shortcut and ⌃⌥⌘N the
+/// global capture hotkey from any app (ADR-0006).
 struct SessionTopBar: View {
     @Bindable var model: AppModel
 
@@ -50,6 +51,13 @@ struct SessionTopBar: View {
                 .font(NitpickTheme.secondary)
                 .foregroundStyle(NitpickTheme.secondaryText)
                 .lineLimit(1)
+            if let warning = model.captureHotkeyState.takenWarning {
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .font(NitpickTheme.secondary)
+                    .foregroundStyle(NitpickTheme.secondaryText)
+                    .lineLimit(1)
+                    .help(CaptureHotkeyState.takenExplanation(isReviewing: model.isReviewing))
+            }
         }
     }
 
@@ -74,13 +82,16 @@ struct SessionTopBar: View {
                     Image(systemName: "camera")
                     Text("Capture")
                     Text("⌘S")
-                        .font(.system(size: 11).monospaced())
-                        .foregroundStyle(.tertiary)
+                        .font(NitpickTheme.keycap)
+                    if let chord = model.captureHotkeyState.chordKeycap {
+                        Text(chord)
+                            .font(NitpickTheme.keycap)
+                    }
                 }
             }
             .buttonStyle(.bordered)
             .disabled(!model.canCapture)
-            .help("Capture the current screen (⌘S).")
+            .help(model.captureHotkeyState.captureHelp)
             .motionPressFeedback()
         }
     }

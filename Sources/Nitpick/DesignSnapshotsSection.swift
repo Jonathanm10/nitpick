@@ -36,7 +36,7 @@ struct DesignSnapshotsSection: View {
             if model.designSnapshots.isEmpty {
                 Text("Add a PNG from the design.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(NitpickTheme.secondaryText)
             } else {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
@@ -60,7 +60,7 @@ struct DesignSnapshotsSection: View {
             if let message = model.designSnapshotErrorMessage {
                 Text(message)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(NitpickTheme.error)
                     .textSelection(.enabled)
             }
         }
@@ -162,6 +162,8 @@ private struct DesignSnapshotCard: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Design Snapshot \(snapshot.name)")
+                .accessibilityHint("Opens a larger preview")
                 DesignSnapshotRemoveButton(action: remove)
                     .focused($removeFocused)
                     .opacity(hovering || removeFocused ? 1 : 0)
@@ -216,10 +218,10 @@ private struct DesignSnapshotRemoveButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .semibold))
+                .font(NitpickTheme.smallGlyph)
                 .foregroundStyle(NitpickTheme.secondaryText)
                 .frame(width: 18, height: 18)
-                .background(hovering ? NitpickTheme.hover : Color.white.opacity(0.8), in: Circle())
+                .background(hovering ? NitpickTheme.hover : NitpickTheme.raised, in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

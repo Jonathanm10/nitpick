@@ -4,17 +4,21 @@ import SwiftUI
 @main
 struct NitpickApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = AppModel()
+    @State private var model: AppModel
     @State private var updater = UpdaterModel()
+
+    init() {
+        let model = AppModel()
+        _model = State(initialValue: model)
+        WindowSnapshot.parkWindowsIfQuiet(model: model)
+    }
 
     var body: some Scene {
         WindowGroup("nitpick", id: "main") {
-            ContentView(model: model)
-                .sheet(item: $model.feedback) { feedback in
-                    FeedbackSheet(feedback: feedback, isConnected: model.isFeedbackConnected)
-                }
+            MainWindowContent(model: model)
         }
         .defaultSize(width: 1140, height: 760)
+        .defaultLaunchBehavior(WindowSnapshot.isQuiet ? .suppressed : .automatic)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { updater.checkForUpdates() }
@@ -39,6 +43,17 @@ struct NitpickApp: App {
     }
 }
 
+struct MainWindowContent: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        ContentView(model: model)
+            .sheet(item: $model.feedback) { feedback in
+                FeedbackSheet(feedback: feedback, isConnected: model.isFeedbackConnected)
+            }
+    }
+}
+
 struct ReviewCommands: Commands {
     @Bindable var model: AppModel
 
@@ -55,6 +70,24 @@ struct ReviewCommands: Commands {
             }
             .keyboardShortcut("s", modifiers: [.command])
             .disabled(!model.canCapture)
+
+            Divider()
+
+            // Option-Command arrows because AppKit's standard key bindings
+            // give the other arrow chords to text fields and leave these free.
+            Button("Previous Finding") {
+                model.selectFinding(.previous)
+            }
+            .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+            .disabled(!model.canSelectFinding(.previous))
+
+            Button("Next Finding") {
+                model.selectFinding(.next)
+            }
+            .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+            .disabled(!model.canSelectFinding(.next))
+
+            Divider()
 
             Button("File All") {
                 Task { await model.fileAllFindings() }
@@ -76,12 +109,7 @@ struct FeedbackCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .help) {
             Button("Send Feedback…") {
-                // A minimized window is not `isVisible`; opening another
-                // would duplicate the sheet and re-run launch.
-                if let window = NSApp.nitpickMainWindow, window.isVisible || window.isMiniaturized {
-                    window.deminiaturize(nil)
-                    window.makeKeyAndOrderFront(nil)
-                } else {
+                if !NSApp.showNitpickMainWindow() {
                     openWindow(id: "main")
                 }
                 Task { await model.presentFeedback() }
@@ -90,18 +118,40 @@ struct FeedbackCommands: Commands {
     }
 }
 
+extension NSApplication {
+    /// Brings the main window forward, restoring it from the Dock when
+    /// minimized. A minimized window is not `isVisible`, yet opening another
+    /// would duplicate the sheet and re-run launch. False when there is no
+    /// main window to show.
+    @discardableResult
+    func showNitpickMainWindow() -> Bool {
+        guard let window = nitpickMainWindow, window.isVisible || window.isMiniaturized else { return false }
+        window.deminiaturize(nil)
+        window.makeKeyAndOrderFront(nil)
+        return true
+    }
+}
+
 /// Running from `swift run` there is no app bundle, so the process starts as
 /// a background executable; promote it to a regular, activated app.
+/// A quiet snapshot run is prohibited instead: no Dock tile, and the system
+/// never activates it, not even when the frontmost app that launched it
+/// hands activation on.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate()
-        // nitpick's palette is a bespoke light theme (near-white window, white
-        // fields). Its text leans on adaptive semantic colors, so under system
-        // Dark Mode every label resolves light and vanishes on the light
-        // surfaces. Pin the whole app to aqua so appearance matches the design.
-        NSApp.appearance = NSAppearance(named: .aqua)
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if WindowSnapshot.isQuiet {
+            NSApp.setActivationPolicy(.prohibited)
+        }
+    }
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if !WindowSnapshot.isQuiet {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate()
+        }
+        WindowSnapshot.applyAppearanceIfRequested()
+
+        WindowSnapshot.occupyCaptureHotkeyIfRequested()
         WindowSnapshot.scheduleIfRequested()
     }
 }

@@ -92,7 +92,7 @@ struct FeedbackSheet: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 7)
                 .frame(height: 96)
-                .background(.white, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall))
+                .background(NitpickTheme.raised, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall))
                 .overlay {
                     RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall)
                         .strokeBorder(NitpickTheme.strongBorder, lineWidth: 1)
@@ -119,7 +119,7 @@ struct FeedbackSheet: View {
 
             if let message = feedback.failureMessage {
                 Text(message)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(NitpickTheme.error)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -179,7 +179,7 @@ struct FeedbackSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(sent.warnings, id: \.self) { warning in
                         Label(warning, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(NitpickTheme.warning)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

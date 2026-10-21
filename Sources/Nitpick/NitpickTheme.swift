@@ -1,12 +1,17 @@
+import AppKit
+import NitpickCore
 import SwiftUI
 
 enum NitpickTheme {
-    static let window = Color(red: 251 / 255, green: 251 / 255, blue: 252 / 255)
-    static let inset = Color(red: 244 / 255, green: 245 / 255, blue: 247 / 255)
-    static let hover = Color(red: 236 / 255, green: 238 / 255, blue: 241 / 255)
-    static let border = Color(red: 227 / 255, green: 229 / 255, blue: 234 / 255)
-    static let strongBorder = Color(red: 212 / 255, green: 215 / 255, blue: 222 / 255)
-    static let secondaryText = Color(red: 93 / 255, green: 99 / 255, blue: 111 / 255)
+    static let window = Color(.window)
+    static let inset = Color(.inset)
+    static let raised = Color(.raised)
+    static let hover = Color(.hover)
+    static let border = Color(.border)
+    static let strongBorder = Color(.strongBorder)
+    static let secondaryText = Color(.secondaryText)
+    static let error = Color(.error)
+    static let warning = Color(.warning)
 
     static let radiusSmall: CGFloat = 5
     static let radiusMedium: CGFloat = 7
@@ -35,11 +40,19 @@ enum NitpickTheme {
     }
 
     // Type scale. macOS control text is 13pt (`NSFont.systemFontSize`); the
-    // session screen aligns to it rather than sitting oversized above it. Three
-    // steps — the genuinely app-wide-portable bit of the visual language.
+    // session screen aligns to it rather than sitting oversized above it, with
+    // 12pt for secondary text and smaller sizes only for keycaps and glyphs.
     static let emphasis = Font.system(size: 13, weight: .semibold)
     static let body = Font.system(size: 13)
+    static let bodyMedium = Font.system(size: 13, weight: .medium)
+    static let heading = Font.system(size: 13, weight: .bold)
     static let secondary = Font.system(size: 12)
+    static let secondaryMedium = Font.system(size: 12, weight: .medium)
+    static let secondaryEmphasis = Font.system(size: 12, weight: .semibold)
+    static let secondaryMono = Font.system(size: 12).monospaced()
+    static let keycap = Font.system(size: 11).monospaced()
+    static let smallGlyph = Font.system(size: 10, weight: .semibold)
+    static let heroGlyph = Font.system(size: 36, weight: .light)
 }
 
 private struct NitpickFieldModifier: ViewModifier {
@@ -57,7 +70,7 @@ private struct NitpickFieldModifier: ViewModifier {
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .frame(minHeight: minHeight, alignment: alignment)
-            .background(.white, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall))
+            .background(NitpickTheme.raised, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall))
             .overlay {
                 RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall)
                     .strokeBorder(NitpickTheme.strongBorder, lineWidth: 1)
@@ -68,7 +81,7 @@ private struct NitpickFieldModifier: ViewModifier {
 private struct NitpickSectionLabelModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .font(.system(size: 12, weight: .semibold))
+            .font(NitpickTheme.secondaryEmphasis)
             .textCase(.uppercase)
             .kerning(0.6)
             .foregroundStyle(NitpickTheme.secondaryText)
@@ -82,5 +95,16 @@ extension View {
 
     func nitpickSectionLabel() -> some View {
         modifier(NitpickSectionLabelModifier())
+    }
+}
+
+private extension Color {
+    /// A palette colour that resolves per appearance whenever it is drawn.
+    init(_ token: ThemeColor) {
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let rgb = token.value(in: isDark ? .dark : .light)
+            return NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
+        })
     }
 }
