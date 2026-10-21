@@ -96,14 +96,4 @@ struct ShellActivityTests {
 
         #expect(activity.filingFailure == nil)
     }
-
-    @Test("a session edge forgets the last failure")
-    func sessionEdgeForgetsTheFailure() {
-        var activity = ShellActivity()
-        activity.recordFilingFailure("The request timed out.")
-
-        activity.forgetFilingFailure()
-
-        #expect(activity.filingFailure == nil)
-    }
 }

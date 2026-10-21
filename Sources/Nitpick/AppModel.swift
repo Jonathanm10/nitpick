@@ -96,15 +96,17 @@ final class AppModel {
     /// The active Review Session: Build + project pinned at Start review,
     /// and the session tray its captures accumulate in.
     /// The capture hotkey and every per-session reset follow this one
-    /// property, so every open/close edge stays in a single choke point;
-    /// the stored value mutates often, but the edge only cares whether a
-    /// session exists.
+    /// property, so every open/close edge stays in a single choke point.
     private(set) var session: ReviewSession? {
         didSet {
-            captureHotkey.setActive(session != nil)
-            if (oldValue == nil) != (session == nil) { sessionOpenedOrClosed() }
+            guard let edge = SessionEdge(wasOpen: sessionIsOpen, isOpen: session != nil) else { return }
+            sessionIsOpen = session != nil
+            apply(edge)
         }
     }
+    /// The edge reads this instead of `oldValue`: an `oldValue` read keeps
+    /// a second reference to the tray, so every Summary keystroke would copy it.
+    @ObservationIgnored private var sessionIsOpen = false
     /// The held result of a successful file-all run: the just-filed
     /// session as History's newest entry, shown in place until the designer
     /// chooses Done or drops the next Build. The live session has already
@@ -693,19 +695,13 @@ final class AppModel {
         }
     }
 
-    /// Everything that belongs to one Review Session starts over when a
-    /// session opens or closes, whichever path got there. A held filing
-    /// result never shows beside a live session. The comeback label belongs
-    /// to the run that failed, or the next session would open on a stale
-    /// "File N remaining". A closed session takes its running Build and its
-    /// triage schema along; the next one reads a fresh schema at Start review.
-    private func sessionOpenedOrClosed() {
-        if session == nil {
+    private func apply(_ edge: SessionEdge) {
+        captureHotkey.setActive(edge == .opened)
+        if edge.dropsRunAndSchema {
             reviewRun = nil
             sessionSchema = ProjectSchema()
-        } else {
-            filingResult = nil
         }
+        if edge.dismissesFilingResult { filingResult = nil }
         activity.forgetFilingFailure()
         clearSelection()
     }
