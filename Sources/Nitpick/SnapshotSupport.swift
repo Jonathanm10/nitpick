@@ -9,9 +9,10 @@ import SwiftUI
 @MainActor
 enum WindowSnapshot {
     /// Any `NITPICK_SNAPSHOT_*` variable makes the run quiet, so proof runs never
-    /// take the designer's focus: no Dock tile, never activated, and the main
+    /// take the designer's focus: no Dock tile, never activated, the main
     /// view hosted in a window parked off every screen instead of the
-    /// WindowGroup's. `NITPICK_SNAPSHOT_VISIBLE=1` opts back into a normal launch.
+    /// WindowGroup's, and no other window on screen.
+    /// `NITPICK_SNAPSHOT_VISIBLE=1` opts back into a normal launch.
     static let isQuiet: Bool = {
         let environment = ProcessInfo.processInfo.environment
         return environment["NITPICK_SNAPSHOT_VISIBLE"] != "1"
@@ -20,7 +21,7 @@ enum WindowSnapshot {
 
     private static var parkedMainWindow: NSWindow?
 
-    static func parkMainWindowIfQuiet(model: AppModel) {
+    static func parkWindowsIfQuiet(model: AppModel) {
         guard isQuiet else { return }
         DispatchQueue.main.async {
             let window = ParkedWindow(size: requestedSize ?? NSSize(width: 1140, height: 760))
@@ -29,6 +30,17 @@ enum WindowSnapshot {
             window.orderBack(nil)
             parkedMainWindow = window
         }
+        // History, Settings, sheets and any panel would open on screen: AppKit
+        // keeps 40 pt of a titled window on screen however far it is moved,
+        // and a window ordered out after the fact has already reached the
+        // window server. So every order-in passes through `quietOrder`, which
+        // lets only the parked windows in. The rest stay live but unshown;
+        // a render still composites a sheet, and `window:<title>=<file>`
+        // renders the others.
+        guard let shipped = class_getInstanceMethod(NSWindow.self, #selector(NSWindow.order(_:relativeTo:))),
+              let quiet = class_getInstanceMethod(NSWindow.self, #selector(NSWindow.quietOrder(_:relativeTo:)))
+        else { return }
+        method_exchangeImplementations(shipped, quiet)
     }
 
     /// `NITPICK_SNAPSHOT_SIZE=WxH` renders an offscreen, never-key copy of the
@@ -95,6 +107,20 @@ enum WindowSnapshot {
         else { return }
         try? rep.representation(using: .png, properties: [:])?
             .write(to: URL(fileURLWithPath: path))
+    }
+
+    static func render(windowTitled title: String, to path: String) {
+        guard let window = NSApp.windows.first(where: { $0.title == title }),
+              let rep = snapshot(of: window)
+        else {
+            print("snapshot: no window titled \"\(title)\" among \(NSApp.windows.map(\.title))")
+            fflush(stdout)
+            return
+        }
+        try? rep.representation(using: .png, properties: [:])?
+            .write(to: URL(fileURLWithPath: path))
+        print("snapshot: \"\(title)\" \(rep.pixelsWide)×\(rep.pixelsHigh) px from frame \(window.frame)")
+        fflush(stdout)
     }
 
     /// Attached sheets are separate windows `cacheDisplay` omits, so each is
@@ -261,8 +287,9 @@ enum MenuDump {
 /// each step. Steps are `;`-separated: `wait:<seconds>`, `mark` (adds an
 /// undoable rectangle to the selected Finding), `focus:<placeholder>` (a text
 /// field), `type:<text>`, `key:<chord>` such as `cmd+z` or `opt+cmd+down`,
-/// `refuse` (sets the paused-review hotkey refusal without its beep), and
-/// `snap:`, `ax:` or `menu:<file>` to render or dump the state at that step.
+/// `refuse` (sets the paused-review hotkey refusal without its beep),
+/// `snap:`, `ax:` or `menu:<file>` to render or dump the state at that step,
+/// and `window:<title>=<file>` to render another window, such as History.
 extension AppModel {
     func runKeyScript(_ script: String) async {
         guard ProcessInfo.processInfo.environment["NITPICK_WORKSPACE"] != nil else {
@@ -295,6 +322,9 @@ extension AppModel {
             case "snap":
                 WindowSnapshot.render(to: argument)
                 try? await Task.sleep(for: .seconds(1))
+            case "window":
+                let target = argument.split(separator: "=", maxSplits: 1).map(String.init)
+                WindowSnapshot.render(windowTitled: target.first ?? "", to: target.count > 1 ? target[1] : "")
             case "ax":
                 AccessibilityDump.write(to: argument)
                 try? await Task.sleep(for: .seconds(2))
@@ -492,9 +522,23 @@ extension AppModel {
     }
 }
 
+extension NSWindow {
+    /// Swapped with `order(_:relativeTo:)` in a quiet run, so calling itself
+    /// calls AppKit's.
+    @objc fileprivate func quietOrder(_ place: NSWindow.OrderingMode, relativeTo otherWindow: Int) {
+        guard place == .out || self is ParkedWindow else {
+            print("quiet: kept \"\(title)\" \(Int(frame.width))×\(Int(frame.height)) off screen")
+            fflush(stdout)
+            return
+        }
+        quietOrder(place, relativeTo: otherWindow)
+    }
+}
+
 /// Borderless and parked off every screen whatever frame it is given, so
 /// session growth, which clamps a window into the screen it lands on, resizes
-/// it without bringing it on screen.
+/// it without bringing it on screen, and a sheet, which AppKit slides its
+/// parent on screen for through `setFrameOrigin`, opens off screen too.
 final class ParkedWindow: NSWindow {
     init(size: NSSize) {
         super.init(contentRect: Self.parked(size), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -509,6 +553,10 @@ final class ParkedWindow: NSWindow {
 
     override func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
         super.setFrame(Self.parked(frameRect.size), display: displayFlag, animate: false)
+    }
+
+    override func setFrameOrigin(_ point: NSPoint) {
+        super.setFrameOrigin(Self.parked(frame.size).origin)
     }
 
     private static func parked(_ size: NSSize) -> NSRect {

@@ -10,7 +10,7 @@ struct NitpickApp: App {
     init() {
         let model = AppModel()
         _model = State(initialValue: model)
-        WindowSnapshot.parkMainWindowIfQuiet(model: model)
+        WindowSnapshot.parkWindowsIfQuiet(model: model)
     }
 
     var body: some Scene {
