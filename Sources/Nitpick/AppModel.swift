@@ -605,7 +605,7 @@ final class AppModel {
                 // The surface resets its live draft off captureID, but if it
                 // was unmounted first its onChange never fires — the model
                 // owns the label-draft gate, so the fresh editor resets it.
-                editor = editor.capturing(id)
+                editor = EditorState(opening: id)
                 refreshAnnotatedImage()
                 didCapture = true
             } catch {

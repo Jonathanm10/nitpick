@@ -18,26 +18,21 @@ public struct EditorState: Equatable, Sendable {
     /// The last Design Snapshot failure on this target.
     public var designSnapshotError: String?
 
-    public init() {
-        self.init(target: nil)
-    }
-
-    private init(target: TrayItem.ID?) {
+    /// An Editor open on `target`, or a closed one. A capture opens its
+    /// Finding this way, never refused: the shell's capture gate already
+    /// refuses a pinned Editor.
+    public init(opening target: TrayItem.ID? = nil) {
         self.target = target
         generation = UUID()
     }
 
-    /// A capture landed: the Editor opens it. Never refused here, since the
-    /// shell's capture gate already refuses a pinned Editor.
-    public func capturing(_ item: TrayItem.ID) -> EditorState {
-        EditorState(target: item)
-    }
-
-    /// A tray click, or nil when refused: no open session, the item is
-    /// already the target, or a label draft pins the Editor.
+    /// A tray click, or nil when refused: the item is not in the session's
+    /// tray, it is already the target, or a label draft pins the Editor.
     public func selecting(_ item: TrayItem.ID, in session: ReviewSession?) -> EditorState? {
-        guard session != nil, target != item, !hasPendingLabelDraft else { return nil }
-        return EditorState(target: item)
+        guard target != item, !hasPendingLabelDraft,
+              session?.tray.contains(where: { $0.id == item }) == true
+        else { return nil }
+        return EditorState(opening: item)
     }
 
     /// Whether a Finding may be discarded now. Never while a label draft

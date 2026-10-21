@@ -12,26 +12,17 @@ struct EditorStateTests {
         return (session, ids)
     }
 
-    @Test("a capture opens a fresh editor with a new captureID and no label draft")
+    @Test("a capture opens its Finding in a fresh editor: a new captureID, no label draft, no Design Snapshot error")
     func captureOpensAFreshEditor() throws {
         let (session, ids) = Self.session(findings: 2)
-        var editor = try #require(EditorState().selecting(ids[0], in: session))
-        editor.hasPendingLabelDraft = true
+        let editor = try #require(EditorState().selecting(ids[0], in: session))
 
-        let next = editor.capturing(ids[1])
+        let next = EditorState(opening: ids[1])
 
         #expect(next.target == ids[1])
         #expect(next.generation != editor.generation)
         #expect(!next.hasPendingLabelDraft)
-    }
-
-    @Test("a capture never shows the previous Finding's Design Snapshot error")
-    func captureClearsTheDesignSnapshotError() throws {
-        let (session, ids) = Self.session(findings: 2)
-        var editor = try #require(EditorState().selecting(ids[0], in: session))
-        editor.designSnapshotError = "Moodboard.gif: unsupported format"
-
-        #expect(editor.capturing(ids[1]).designSnapshotError == nil)
+        #expect(next.designSnapshotError == nil)
     }
 
     @Test("a tray selection opens a fresh editor and clears the Design Snapshot error")
@@ -66,6 +57,14 @@ struct EditorStateTests {
         #expect(editor.selecting(ids[1], in: nil) == nil)
     }
 
+    @Test("selecting an item that is not in the session's tray is refused")
+    func selectionIsRefusedOutsideTheTray() {
+        let (session, _) = Self.session(findings: 1)
+        let (_, elsewhere) = Self.session(findings: 1)
+
+        #expect(EditorState().selecting(elsewhere[0], in: session) == nil)
+    }
+
     @Test("closing the editor drops the target, the label draft, and the Design Snapshot error")
     func closingStartsOver() throws {
         let (session, ids) = Self.session(findings: 1)
@@ -90,7 +89,7 @@ struct EditorStateTests {
         drafting.hasPendingLabelDraft = true
 
         #expect(selection.belongs(to: drafting))
-        #expect(!selection.belongs(to: editor.capturing(ids[1])))
+        #expect(!selection.belongs(to: EditorState(opening: ids[1])))
         #expect(try !selection.belongs(to: #require(editor.selecting(ids[1], in: session))))
         #expect(!selection.belongs(to: EditorState()))
     }
