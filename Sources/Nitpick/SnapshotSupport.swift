@@ -230,17 +230,7 @@ extension AppModel {
             fflush(stdout)
             return
         }
-        for _ in 0..<10 where !window.isKeyWindow {
-            NSApp.activate(ignoringOtherApps: true)
-            window.makeKeyAndOrderFront(nil)
-            try? await Task.sleep(for: .seconds(0.5))
-        }
         logKeyState("start", window: window)
-        guard window.isKeyWindow else {
-            print("keys: main window never became key; another app holds focus, so no key event would reach it")
-            fflush(stdout)
-            return
-        }
         for step in script.split(separator: ";").map(String.init) {
             let parts = step.split(separator: ":", maxSplits: 1).map(String.init)
             let verb = parts.first ?? ""
@@ -259,6 +249,17 @@ extension AppModel {
                     Self.send(characters: String(character), keyCode: 0, flags: [], to: window)
                 }
             case "key":
+                // Key equivalents reach only the key window, and other apps
+                // launched meanwhile can take focus between steps.
+                for _ in 0..<10 where !window.isKeyWindow {
+                    NSApp.activate(ignoringOtherApps: true)
+                    window.makeKeyAndOrderFront(nil)
+                    try? await Task.sleep(for: .seconds(0.3))
+                }
+                guard window.isKeyWindow else {
+                    print("keys: \(step) skipped, the main window never became key")
+                    continue
+                }
                 Self.sendChord(argument, to: window)
             default:
                 print("keys: unknown step \(step)")
@@ -310,7 +311,7 @@ extension AppModel {
         cgEvent.flags = flags
         guard let event = NSEvent(cgEvent: cgEvent) else { return }
         print("keys: sending \(chord) characters=\(event.characters ?? "") ignoringModifiers=\(event.charactersIgnoringModifiers ?? "")")
-        NSApp.sendEvent(event)
+        NSApp.postEvent(event, atStart: false)
     }
 
     /// The current layout's key for a character: Z sits on a different key
@@ -335,7 +336,7 @@ extension AppModel {
             isARepeat: false,
             keyCode: keyCode
         ) else { return }
-        NSApp.sendEvent(event)
+        NSApp.postEvent(event, atStart: false)
     }
 }
 extension AppModel {
