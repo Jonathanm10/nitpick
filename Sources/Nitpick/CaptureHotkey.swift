@@ -1,5 +1,5 @@
+import AppKit
 import Carbon.HIToolbox
-import Foundation
 import NitpickCore
 
 /// Permission-free global hotkey for the review loop.
@@ -14,7 +14,8 @@ final class CaptureHotkey: @unchecked Sendable {
     private(set) var state: CaptureHotkeyState = .inactive
 
     /// A taken chord stays taken until deactivated, so repeat calls never
-    /// re-run the Carbon registration; the next Review Session retries it.
+    /// re-run the Carbon registration. Coming back to nitpick retries it,
+    /// since the other app may have let it go meanwhile.
     @MainActor
     func setActive(_ active: Bool) {
         if active {
@@ -26,9 +27,27 @@ final class CaptureHotkey: @unchecked Sendable {
         }
     }
 
+    init() {
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.state == .taken else { return }
+                self.update(self.register())
+            }
+        }
+    }
+
     deinit {
+        if let activationObserver {
+            NotificationCenter.default.removeObserver(activationObserver)
+        }
         unregister()
     }
+
+    private var activationObserver: NSObjectProtocol?
 
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
