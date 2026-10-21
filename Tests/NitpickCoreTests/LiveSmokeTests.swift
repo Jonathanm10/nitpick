@@ -45,7 +45,7 @@ struct LiveSmokeTests {
             // Give the freshly launched app a beat to draw.
             try await Task.sleep(for: .seconds(3))
 
-            let png = try await core.captureScreen(of: device)
+            let png = try await core.captureScreen(of: device).screenshotPNG
             let pngSignature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
             #expect(png.prefix(8) == pngSignature)
 

@@ -35,6 +35,9 @@ final class AppModel {
     /// stamped. nitpick no longer pushes these (ADR-0009); the designer
     /// drives accessibility in the simulator.
     private(set) var deviceSettings = DeviceSettings()
+    @ObservationIgnored private var typingSave = TypingSave()
+    @ObservationIgnored private var typingSaveTask: Task<Void, Never>?
+    @ObservationIgnored private var decodedCapture: (id: TrayItem.ID, screenshot: DecodedScreenshot)?
     /// The core-rendered annotated capture — what the designer sees while
     /// editing, and exactly what filing flattens.
     private(set) var capturedImage: NSImage?
@@ -111,6 +114,9 @@ final class AppModel {
                 // before it opens the session, so only a close drops them.
                 reviewRun = nil
                 sessionSchema = ProjectSchema()
+                typingSave = TypingSave()
+                typingSaveTask?.cancel()
+                typingSaveTask = nil
             }
             // Or the next session would open on a stale "File N remaining".
             activity.forgetFilingFailure()
@@ -154,12 +160,12 @@ final class AppModel {
     /// fields — every edit writes straight into the tray item.
     var summaryField: String {
         get { selectedItem?.finding.summary ?? "" }
-        set { editSelectedFinding { $0.summary = newValue } }
+        set { editSelectedFinding(typing: true) { $0.summary = newValue } }
     }
 
     var descriptionField: String {
         get { selectedItem?.finding.description ?? "" }
-        set { editSelectedFinding { $0.description = newValue } }
+        set { editSelectedFinding(typing: true) { $0.description = newValue } }
     }
 
     /// The selected Finding's Type, bound to the Editor's Type control
@@ -195,7 +201,7 @@ final class AppModel {
         set {
             guard !isBusy, session != nil else { return }
             session?.designReference = Self.designReference(from: newValue)
-            persistOpenSession()
+            persistOpenSessionAfterTyping()
         }
     }
 
@@ -203,7 +209,7 @@ final class AppModel {
     /// session-level one for that Finding only.
     var findingDesignReferenceField: String {
         get { selectedItem?.finding.designReference?.absoluteString ?? "" }
-        set { editSelectedFinding { $0.designReference = Self.designReference(from: newValue) } }
+        set { editSelectedFinding(typing: true) { $0.designReference = Self.designReference(from: newValue) } }
     }
 
     var designSnapshots: [DesignSnapshot] {
@@ -317,9 +323,15 @@ final class AppModel {
         captureHotkey.onStateChange = { [weak self] state in
             self?.captureHotkeyState = state
         }
+        for name in [NSApplication.willTerminateNotification, NSWindow.willCloseNotification] {
+            _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.flushTypingSave() }
+            }
+        }
     }
     
     deinit {
+        typingSaveTask?.cancel()
         let hotkey = captureHotkey
         Task { @MainActor in
             hotkey.setActive(false)
@@ -501,8 +513,10 @@ final class AppModel {
         await perform(reportingTo: \.youTrackErrorMessage) {
             let connection = try await core.connectYouTrack(
                 instanceURL: youTrackInstanceURLField,
-                token: youTrackTokenField
+                token: youTrackTokenField,
+                unsavedSession: typingSave.isPending ? session : nil
             )
+            typingSave.saved()
             youTrackTokenField = ""
             try connected(connection)
         }
@@ -648,18 +662,18 @@ final class AppModel {
         var didCapture = false
         await perform {
             do {
-                let png = try await core.captureScreen(of: device)
-                // Read the simulator's live accessibility state now, so the
-                // Finding is stamped with exactly the conditions the
-                // screenshot was taken under (ADR-0009).
-                deviceSettings = try await core.observedSettings(of: device)
+                // The capture reads the simulator's live accessibility state
+                // with the screenshot, so the Finding is stamped with exactly
+                // the conditions it was taken under (ADR-0009).
+                let capture = try await core.captureScreen(of: device)
+                deviceSettings = capture.settings
                 // The capture drops straight into the tray as a Finding — no
                 // filing dialog (PRD story 22) — and opens in the editor,
                 // stamped with the Device Context in effect right now.
                 guard let id = session?.addFinding(Finding(
                     summary: "",
                     description: "",
-                    screenshotPNG: png,
+                    screenshotPNG: capture.screenshotPNG,
                     deviceContext: DeviceContext(device: device, settings: deviceSettings)
                 )) else { return }
                 persistOpenSession()
@@ -754,6 +768,11 @@ final class AppModel {
         }
     }
     private func endSession(clearingPersisted: Bool) throws {
+        // A session left on disk to resume must carry what was typed, so a
+        // failed save stops the transition and shows its error.
+        if !clearingPersisted, typingSave.isPending, let session {
+            try core.saveOpenSession(session)
+        }
         session = nil
         // A dropped-field notice belongs to this session. It is not an
         // edge reset: a successful File all ends its session yet still
@@ -822,16 +841,35 @@ final class AppModel {
             : "Couldn’t set some triage fields (\(list)) — set them in YouTrack by hand."
     }
 
-    /// Sessions persist as they are created (issue 07): every mutation
-    /// lands on disk before the designer's next action, so a quit or crash
-    /// costs nothing.
+    /// Sessions persist as they are created (issue 07).
     private func persistOpenSession() {
+        typingSaveTask?.cancel()
+        typingSaveTask = nil
         guard let session else { return }
         do {
             try core.saveOpenSession(session)
+            typingSave.saved()
         } catch {
             errorMessage = error.localizedDescription
+            scheduleTypingSave(at: typingSave.failed(at: .now))
         }
+    }
+
+    private func persistOpenSessionAfterTyping() {
+        scheduleTypingSave(at: typingSave.keystroke(at: .now))
+    }
+
+    private func scheduleTypingSave(at due: ContinuousClock.Instant) {
+        typingSaveTask?.cancel()
+        typingSaveTask = Task { [weak self] in
+            try? await Task.sleep(until: due)
+            guard !Task.isCancelled else { return }
+            self?.flushTypingSave()
+        }
+    }
+
+    private func flushTypingSave() {
+        if typingSave.flushes(during: activity) { persistOpenSession() }
     }
 
     private func refreshHistory() {
@@ -846,6 +884,7 @@ final class AppModel {
         editor = EditorState()
         capturedImage = nil
         capturePixelSize = nil
+        decodedCapture = nil
     }
 
     private func perform(
@@ -853,19 +892,24 @@ final class AppModel {
         reportingTo errorKeyPath: ReferenceWritableKeyPath<AppModel, String?> = \.errorMessage,
         _ action: () async throws -> Void
     ) async {
+        self[keyPath: errorKeyPath] = nil
+        // Before `begin`, so File all's copy of the session is on disk
+        // before filing owns persistence; after `end`, so a save skipped
+        // or failed meanwhile retries at once.
+        flushTypingSave()
         do {
             try activity.begin(work)
         } catch {
             self[keyPath: errorKeyPath] = error.localizedDescription
             return
         }
-        self[keyPath: errorKeyPath] = nil
-        defer { activity.end() }
         do {
             try await action()
         } catch {
             self[keyPath: errorKeyPath] = error.localizedDescription
         }
+        activity.end()
+        flushTypingSave()
     }
 }
 
@@ -884,6 +928,7 @@ extension AppModel {
     /// first would land its commit on the wrong Finding.
     func selectItem(_ id: TrayItem.ID) {
         guard let next = editor.selecting(id, in: session) else { return }
+        flushTypingSave()
         editor = next
         refreshAnnotatedImage()
     }
@@ -1095,19 +1140,31 @@ extension AppModel {
     /// to items filing has already touched. Edits also freeze while filing
     /// is in flight: the run works on a copy of the session, so a late
     /// edit would show in the preview yet be missing from the filed issue.
-    private func editSelectedFinding(_ edit: (inout Finding) -> Void) {
+    private func editSelectedFinding(typing: Bool = false, _ edit: (inout Finding) -> Void) {
         guard !isBusy, let selectedItemID else { return }
         session?.updateFinding(id: selectedItemID, edit)
-        persistOpenSession()
+        if typing {
+            persistOpenSessionAfterTyping()
+        } else {
+            persistOpenSession()
+        }
     }
 
     private func refreshAnnotatedImage(excludingAnnotationAt excluded: Int? = nil) {
-        guard let finding = selectedItem?.finding else {
+        guard let item = selectedItem else {
             capturedImage = nil
             capturePixelSize = nil
+            decodedCapture = nil
             return
         }
-        if let image = try? finding.annotatedScreenshotImage(excludingAnnotationAt: excluded) {
+        let finding = item.finding
+        if decodedCapture?.id != item.id {
+            decodedCapture = (try? DecodedScreenshot(png: finding.screenshotPNG)).map { (item.id, $0) }
+        }
+        if let image = try? decodedCapture?.screenshot.annotated(
+            with: finding.annotations,
+            excludingAnnotationAt: excluded
+        ) {
             capturedImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
             capturePixelSize = CGSize(width: image.width, height: image.height)
         } else {

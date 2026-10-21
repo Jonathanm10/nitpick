@@ -129,6 +129,7 @@ private struct DesignSnapshotCard: View {
     @State private var name: String
     @State private var hovering = false
     @FocusState private var removeFocused: Bool
+    @Environment(\.displayScale) private var displayScale
 
     init(
         snapshot: DesignSnapshot,
@@ -151,11 +152,11 @@ private struct DesignSnapshotCard: View {
         VStack(alignment: .leading, spacing: 4) {
             ZStack(alignment: .topTrailing) {
                 Button(action: preview) {
-                    if let image = NSImage(data: snapshot.data) {
+                    if let image = DesignSnapshotThumbnails.image(for: snapshot, scale: displayScale) {
                         Image(nsImage: image)
                             .resizable()
                             .scaledToFill()
-                            .frame(width: 104, height: 72)
+                            .frame(width: DesignSnapshotThumbnails.size.width, height: DesignSnapshotThumbnails.size.height)
                             .clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
@@ -182,6 +183,31 @@ private struct DesignSnapshotCard: View {
         }
         .disabled(disabled)
         .onHover { hovering = $0 }
+    }
+}
+
+/// The card body re-runs on every session edit, so each `dataVersion`
+/// decodes once.
+@MainActor
+private enum DesignSnapshotThumbnails {
+    static let size = CGSize(width: 104, height: 72)
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+
+    static func image(for snapshot: DesignSnapshot, scale: CGFloat) -> NSImage? {
+        let key = "\(snapshot.dataVersion.uuidString)@\(scale)" as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        let pixelSize = CGSize(width: size.width * scale, height: size.height * scale)
+        guard let thumbnail = snapshot.thumbnail(filling: pixelSize) else { return nil }
+        let image = NSImage(
+            cgImage: thumbnail,
+            size: NSSize(width: CGFloat(thumbnail.width) / scale, height: CGFloat(thumbnail.height) / scale)
+        )
+        cache.setObject(image, forKey: key)
+        return image
     }
 }
 

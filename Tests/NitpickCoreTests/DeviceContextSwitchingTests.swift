@@ -35,26 +35,21 @@ struct DeviceContextSwitchingTests {
 
     @Test("observedSettings issues the three no-argument ui reads and parses their output")
     func observedSettingsReadsAndParses() async throws {
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("accessibility-large\n".utf8)))
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("dark\n".utf8)))
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("enabled\n".utf8)))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("accessibility-large\n".utf8)), for: .uiRead("content_size", of: iPhone))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("dark\n".utf8)), for: .uiRead("appearance", of: iPhone))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("enabled\n".utf8)), for: .uiRead("increase_contrast", of: iPhone))
 
         let settings = try await core.observedSettings(of: iPhone)
 
         #expect(settings == DeviceSettings(dynamicTypeSize: .accessibilityLarge, appearance: .dark, increaseContrast: true))
-        let xcrun = "/usr/bin/xcrun"
-        #expect(runner.executedCommands == [
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "content_size"]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "appearance"]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "increase_contrast"]),
-        ])
+        runner.expectExecuted(inSteps: [SubprocessCommand.settingsReads(of: iPhone)])
     }
 
     @Test("unsupported, unknown, and unparseable reads each map to the dimension's default")
     func observedSettingsMapsUnreadableToDefault() async throws {
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("unsupported\n".utf8)))  // content_size
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("unknown\n".utf8)))       // appearance
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("wobble\n".utf8)))        // increase_contrast
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("unsupported\n".utf8)), for: .uiRead("content_size", of: iPhone))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("unknown\n".utf8)), for: .uiRead("appearance", of: iPhone))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("wobble\n".utf8)), for: .uiRead("increase_contrast", of: iPhone))
 
         let settings = try await core.observedSettings(of: iPhone)
 
@@ -66,9 +61,9 @@ struct DeviceContextSwitchingTests {
 
     @Test("an unreadable dimension defaults independently — its valid siblings are still stamped")
     func observedSettingsDefaultsPerDimension() async throws {
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("extra-large\n".utf8)))  // content_size, valid
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("unsupported\n".utf8)))  // appearance, unreadable
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("enabled\n".utf8)))       // increase_contrast, valid
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("extra-large\n".utf8)), for: .uiRead("content_size", of: iPhone))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("unsupported\n".utf8)), for: .uiRead("appearance", of: iPhone))
+        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("enabled\n".utf8)), for: .uiRead("increase_contrast", of: iPhone))
 
         let settings = try await core.observedSettings(of: iPhone)
 
@@ -91,19 +86,15 @@ struct DeviceContextSwitchingTests {
         // Reviewing on the iPhone: the capture reads back default
         // accessibility, so the Finding carries no Accessibility line.
         let iPhonePNG = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
-        runner.enqueue(SubprocessResult(
-            exitCode: 0,
-            standardOutput: Data(Fixtures.deviceListJSON(udid: iPhone.udid, name: iPhone.name, state: "Booted").utf8)
-        ))
-        runner.enqueue(SubprocessResult(exitCode: 0)) { _ in try iPhonePNG.write(to: capturePath) }
-        let iPhoneScreenshot = try await core.captureScreen(of: iPhone)
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("large\n".utf8)))
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("light\n".utf8)))
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("disabled\n".utf8)))
+        runner.enqueueCapture(
+            of: iPhone, png: iPhonePNG, at: capturePath,
+            settings: ("large", "light", "disabled")
+        )
+        let iPhoneCapture = try await core.captureScreen(of: iPhone)
         session.addFinding(Finding(
             summary: "Toolbar icons misaligned", description: "",
-            screenshotPNG: iPhoneScreenshot,
-            deviceContext: DeviceContext(device: iPhone, settings: try await core.observedSettings(of: iPhone))
+            screenshotPNG: iPhoneCapture.screenshotPNG,
+            deviceContext: DeviceContext(device: iPhone, settings: iPhoneCapture.settings)
         ))
 
         // The designer switches to the iPad — the same Build relaunches, no
@@ -119,42 +110,34 @@ struct DeviceContextSwitchingTests {
         // …then, having bumped Dynamic Type, dark mode, and Increase Contrast
         // in the simulator, captures again — the read-back stamps all three.
         let iPadPNG = Data([0x89, 0x50, 0x4E, 0x47, 0x02])
-        runner.enqueue(SubprocessResult(
-            exitCode: 0,
-            standardOutput: Data(Fixtures.deviceListJSON(udid: iPad.udid, name: iPad.name, state: "Booted").utf8)
-        ))
-        runner.enqueue(SubprocessResult(exitCode: 0)) { _ in try iPadPNG.write(to: capturePath) }
-        let iPadScreenshot = try await core.captureScreen(of: iPad)
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("accessibility-large\n".utf8)))
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("dark\n".utf8)))
-        runner.enqueue(SubprocessResult(exitCode: 0, standardOutput: Data("enabled\n".utf8)))
+        runner.enqueueCapture(
+            of: iPad, png: iPadPNG, at: capturePath,
+            settings: ("accessibility-large", "dark", "enabled")
+        )
+        let iPadCapture = try await core.captureScreen(of: iPad)
         session.addFinding(Finding(
             summary: "Sidebar overlaps content", description: "",
-            screenshotPNG: iPadScreenshot,
-            deviceContext: DeviceContext(device: iPad, settings: try await core.observedSettings(of: iPad))
+            screenshotPNG: iPadCapture.screenshotPNG,
+            deviceContext: DeviceContext(device: iPad, settings: iPadCapture.settings)
         ))
 
         // The exact wire story: each capture's booted re-check + screenshot +
         // three no-argument accessibility reads, and the switch's relaunch —
         // with no content_size / appearance set command anywhere.
-        let listCommand = SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "list", "devices", "--json"])
-        #expect(runner.executedCommands == [
-            listCommand,
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "io", "AAAA-1111", "screenshot", "--type=png", capturePath.path]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "content_size"]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "appearance"]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "AAAA-1111", "increase_contrast"]),
+        let relaunch = [
             SubprocessCommand(executablePath: "/usr/bin/xcode-select", arguments: ["-p"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "boot", "BBBB-2222"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "bootstatus", "BBBB-2222", "-b"]),
             SubprocessCommand(executablePath: "/usr/bin/open", arguments: ["-a", hostAppURL.path]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "install", "BBBB-2222", build.appBundleURL.path]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "launch", "BBBB-2222", "ch.liip.reviewme"]),
-            listCommand,
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "io", "BBBB-2222", "screenshot", "--type=png", capturePath.path]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "BBBB-2222", "content_size"]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "BBBB-2222", "appearance"]),
-            SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "ui", "BBBB-2222", "increase_contrast"]),
+        ]
+        runner.expectExecuted(inSteps: [
+            [.deviceList],
+            [.screenshot(iPhone, to: capturePath)] + SubprocessCommand.settingsReads(of: iPhone),
+        ] + relaunch.map { [$0] } + [
+            [.deviceList],
+            [.screenshot(iPad, to: capturePath)] + SubprocessCommand.settingsReads(of: iPad),
         ])
 
         // The session survived the switch: both Findings in one tray,

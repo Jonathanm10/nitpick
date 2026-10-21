@@ -58,20 +58,22 @@ public struct HistoryEntry: Equatable, Sendable, Identifiable {
 }
 
 /// Review Sessions persist locally as they are created (PRD durability):
-/// the shell saves the open session after every mutation, filing saves
-/// after every server-acknowledged step, and a relaunch resumes whatever a
-/// quit or crash left behind. A fully filed session moves from the open
+/// the shell saves typed text through `TypingSave` and every other edit at
+/// once, filing saves after every server-acknowledged step, and a relaunch
+/// resumes whatever a quit or crash left behind. A fully filed session moves from the open
 /// slot into the history log. All of it plain files under the workspace —
 /// in-process filesystem effects, unseamed by design.
 extension AppCore {
-    /// Persists the open session — cheap enough to call on every mutation.
-    /// The manifest is JSON; each capture is written once as a sidecar PNG
-    /// (a Finding's screenshot never changes), so a per-keystroke save
-    /// rewrites kilobytes, never megapixels.
+    /// Persists the open session. The manifest is JSON. Captures and
+    /// Design Snapshots are sidecar files written once, because the bytes
+    /// under a name never change: a Finding's screenshot is fixed, and a
+    /// Design Snapshot Replace mints a new `dataVersion`, so a new file. A
+    /// later save rewrites only the manifest, which grows with the
+    /// session's Annotation points.
     public func saveOpenSession(_ session: ReviewSession) throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: openSessionCapturesDirectory, withIntermediateDirectories: true)
-        // Captures before the manifest: a manifest must never name a PNG
+        // Sidecars before the manifest: a manifest must never name a file
         // that is not on disk yet.
         for item in session.tray {
             let file = captureFile(for: item.id)
@@ -79,14 +81,13 @@ extension AppCore {
                 try item.finding.screenshotPNG.write(to: file, options: .atomic)
             }
             for snapshot in item.finding.designSnapshots {
-                let file = designSnapshotFile(for: snapshot.id, in: item.id, mediaType: snapshot.mediaType)
+                let file = designSnapshotFile(for: snapshot, in: item.id)
+                guard !fileManager.fileExists(atPath: file.path) else { continue }
                 try fileManager.createDirectory(
                     at: file.deletingLastPathComponent(),
                     withIntermediateDirectories: true
                 )
-                if (try? Data(contentsOf: file)) != snapshot.data {
-                    try snapshot.data.write(to: file, options: .atomic)
-                }
+                try snapshot.data.write(to: file, options: .atomic)
             }
         }
         let data = try Self.storageEncoder().encode(StoredSession(session))
@@ -110,7 +111,7 @@ extension AppCore {
         // the very save that wrote it.
         let liveSnapshots = Set(session.tray.flatMap { item in
             item.finding.designSnapshots.map {
-                Self.snapshotKey(designSnapshotFile(for: $0.id, in: item.id, mediaType: $0.mediaType))
+                Self.snapshotKey(designSnapshotFile(for: $0, in: item.id))
             }
         })
         if let files = fileManager.enumerator(
@@ -155,12 +156,14 @@ extension AppCore {
             )
             finding.annotations = item.annotations
             finding.designSnapshots = try (item.designSnapshots ?? []).map { snapshot in
-                try DesignSnapshot.validated(
+                let dataVersion = snapshot.dataVersion ?? snapshot.id
+                return try DesignSnapshot.validated(
                     id: snapshot.id,
+                    dataVersion: dataVersion,
                     name: snapshot.name,
                     mediaType: snapshot.mediaType,
                     data: Data(contentsOf: designSnapshotFile(
-                        for: snapshot.id,
+                        named: dataVersion,
                         in: item.id,
                         mediaType: snapshot.mediaType
                     ))
@@ -269,14 +272,18 @@ extension AppCore {
         openSessionDirectory.appendingPathComponent("design-snapshots", isDirectory: true)
     }
 
+    private func designSnapshotFile(for snapshot: DesignSnapshot, in findingID: TrayItem.ID) -> URL {
+        designSnapshotFile(named: snapshot.dataVersion, in: findingID, mediaType: snapshot.mediaType)
+    }
+
     private func designSnapshotFile(
-        for id: DesignSnapshot.ID,
+        named dataVersion: UUID,
         in findingID: TrayItem.ID,
         mediaType: DesignSnapshotMediaType
     ) -> URL {
         openSessionDesignSnapshotsDirectory
             .appendingPathComponent(findingID.uuidString, isDirectory: true)
-            .appendingPathComponent("\(id.uuidString).\(mediaType.fileExtension)")
+            .appendingPathComponent("\(dataVersion.uuidString).\(mediaType.fileExtension)")
     }
 
     /// A snapshot file's identity independent of how the workspace path is
@@ -388,11 +395,16 @@ private struct StoredTrayItem: Codable {
 
 private struct StoredDesignSnapshot: Codable {
     var id: UUID
+    /// Absent in manifests written before Replace minted versions; those
+    /// named the file by `id`, which is a snapshot's first version.
+    /// Additive, so schema version 1 stands.
+    var dataVersion: UUID?
     var name: String
     var mediaType: DesignSnapshotMediaType
 
     init(_ snapshot: DesignSnapshot) {
         id = snapshot.id
+        dataVersion = snapshot.dataVersion
         name = snapshot.name
         mediaType = snapshot.mediaType
     }

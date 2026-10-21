@@ -105,10 +105,20 @@ extension AppCore {
 
     /// Verifies the pasted URL + token by fetching the connected user and
     /// the projects the designer can file into, then persists both halves —
-    /// the token to the credential store, the URL to the workspace. Nothing
-    /// is persisted unless the whole verification succeeds.
+    /// the token to the credential store, the URL to the workspace. Neither
+    /// half is persisted unless the whole verification succeeds.
+    ///
+    /// `unsavedSession` is the open session when it holds typed text not
+    /// yet on disk. It saves before anything else: the new connection can
+    /// end that session and leave it on disk to resume, so a failed save
+    /// throws before any credential changes.
     @discardableResult
-    public func connectYouTrack(instanceURL: String, token: String) async throws -> YouTrackConnection {
+    public func connectYouTrack(
+        instanceURL: String,
+        token: String,
+        unsavedSession: ReviewSession? = nil
+    ) async throws -> YouTrackConnection {
+        if let unsavedSession { try saveOpenSession(unsavedSession) }
         let baseURL = try Self.normalizedInstanceURL(from: instanceURL)
         let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         let connection = try await verifyYouTrack(instanceURL: baseURL, token: token)

@@ -48,19 +48,13 @@ struct WalkingSkeletonScenarioTests {
         // is still booted (a closed simulator must refuse, not hang).
         let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF])
         let capturePath = workspace.appendingPathComponent("captures/capture.png").path
-        runner.enqueue(SubprocessResult(
-            exitCode: 0,
-            standardOutput: Data(Fixtures.deviceListJSON(udid: "AAAA-1111", name: "iPhone 17 Pro", state: "Booted").utf8)
-        ))
-        runner.enqueue(SubprocessResult(exitCode: 0)) { _ in
-            try pngBytes.write(to: URL(fileURLWithPath: capturePath))
-        }
+        runner.enqueueCapture(of: device, png: pngBytes, at: URL(fileURLWithPath: capturePath))
         let captured = try await core.captureScreen(of: device)
-        #expect(captured == pngBytes)
+        #expect(captured.screenshotPNG == pngBytes)
 
         let xcrun = "/usr/bin/xcrun"
         let appPath = extractionDirectory.appendingPathComponent("ReviewMe.app").path
-        #expect(runner.executedCommands == [
+        let serial: [SubprocessCommand] = [
             SubprocessCommand(
                 executablePath: "/usr/bin/tar",
                 arguments: ["-x", "-f", zipURL.path, "-C", extractionDirectory.path]
@@ -73,10 +67,12 @@ struct WalkingSkeletonScenarioTests {
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "install", "AAAA-1111", appPath]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "launch", "AAAA-1111", "ch.liip.reviewme"]),
             SubprocessCommand(executablePath: xcrun, arguments: ["simctl", "list", "devices", "--json"]),
+        ]
+        runner.expectExecuted(inSteps: serial.map { [$0] } + [[
             SubprocessCommand(
                 executablePath: xcrun,
                 arguments: ["simctl", "io", "AAAA-1111", "screenshot", "--type=png", capturePath]
             ),
-        ])
+        ] + SubprocessCommand.settingsReads(of: device)])
     }
 }

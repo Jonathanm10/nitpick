@@ -1,5 +1,6 @@
 import Foundation
 import NitpickCore
+import Synchronization
 import Testing
 
 @Suite("Capturing the simulator screen")
@@ -8,6 +9,7 @@ struct CaptureTests {
     let runner = FakeSubprocessRunner()
     let core: AppCore
     let device = SimulatorDevice(udid: "AAAA-1111", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: true)
+    let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01, 0x02, 0x03])
 
     init() throws {
         workspace = try Fixtures.makeTemporaryDirectory()
@@ -15,14 +17,9 @@ struct CaptureTests {
         core = AppCore(environment: .fake(subprocess: runner), workspaceDirectory: workspace)
     }
 
-    private var expectedCapturePath: String {
-        workspace.appendingPathComponent("captures/capture.png").path
+    private var capturePath: URL {
+        workspace.appendingPathComponent("captures/capture.png")
     }
-
-    private static let listCommand = SubprocessCommand(
-        executablePath: "/usr/bin/xcrun",
-        arguments: ["simctl", "list", "devices", "--json"]
-    )
 
     /// Scripts the capture preflight's device-list check: the device
     /// reports the given state, whatever stale `isBooted` the passed-in
@@ -34,33 +31,107 @@ struct CaptureTests {
         ))
     }
 
-    @Test("a capture checks the device is booted, runs simctl screenshot, and returns the PNG bytes")
-    func capture() async throws {
-        let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01, 0x02, 0x03])
-        let path = expectedCapturePath
-        enqueueDeviceList(state: "Booted")
-        runner.enqueue(SubprocessResult(exitCode: 0)) { _ in
-            try pngBytes.write(to: URL(fileURLWithPath: path))
+    private func enqueueSettingsReads(failing failed: Set<String> = []) {
+        for (option, value) in [("content_size", "accessibility-large"), ("appearance", "dark"), ("increase_contrast", "enabled")] {
+            runner.enqueue(
+                failed.contains(option)
+                    ? SubprocessResult(exitCode: 1, standardError: Data("\(option) failed".utf8))
+                    : SubprocessResult(exitCode: 0, standardOutput: Data("\(value)\n".utf8)),
+                for: .uiRead(option, of: device)
+            )
         }
+    }
+
+    private func enqueueScreenshot(exitCode: Int32 = 0, writing png: Data?) {
+        let path = capturePath
+        runner.enqueue(
+            SubprocessResult(exitCode: exitCode, standardError: Data((exitCode == 0 ? "" : "No devices are booted.").utf8)),
+            for: .screenshot(device, to: path)
+        ) { _ in
+            try png?.write(to: path)
+        }
+    }
+
+    @Test("a capture checks the device is booted, then takes the screenshot and reads the accessibility state")
+    func capture() async throws {
+        enqueueDeviceList(state: "Booted")
+        enqueueScreenshot(writing: pngBytes)
+        enqueueSettingsReads()
 
         let captured = try await core.captureScreen(of: device)
 
-        #expect(runner.executedCommands == [
-            Self.listCommand,
-            SubprocessCommand(
-                executablePath: "/usr/bin/xcrun",
-                arguments: ["simctl", "io", "AAAA-1111", "screenshot", "--type=png", path]
-            ),
+        runner.expectExecuted(inSteps: [
+            [.deviceList],
+            [.screenshot(device, to: capturePath)] + SubprocessCommand.settingsReads(of: device),
         ])
-        #expect(captured == pngBytes)
+        #expect(captured == ScreenCapture(
+            screenshotPNG: pngBytes,
+            settings: DeviceSettings(dynamicTypeSize: .accessibilityLarge, appearance: .dark, increaseContrast: true)
+        ))
     }
 
-    @Test("a screenshot failure surfaces as a subprocess failure")
+    @Test("the screenshot and the three settings reads are all in flight at once")
+    func screenshotAndSettingsOverlap() async throws {
+        let overlapping = OverlapRunner(
+            gated: Set([.screenshot(device, to: capturePath)] + SubprocessCommand.settingsReads(of: device)),
+            deviceList: Data(Fixtures.deviceListJSON(udid: device.udid, name: device.name, state: "Booted").utf8),
+            png: pngBytes
+        )
+        let core = AppCore(environment: .fake(subprocess: overlapping), workspaceDirectory: workspace)
+
+        let captured = try await core.captureScreen(of: device)
+
+        #expect(captured.screenshotPNG == pngBytes)
+        #expect(overlapping.maxInFlight == 4)
+        #expect(overlapping.started.first == .deviceList)
+    }
+
+    @Test("a screenshot failure surfaces as the screenshot's subprocess failure, even when a settings read fails too")
     func screenshotFailure() async throws {
         enqueueDeviceList(state: "Booted")
-        runner.enqueue(SubprocessResult(exitCode: 1, standardError: Data("No devices are booted.".utf8)))
+        enqueueScreenshot(exitCode: 1, writing: nil)
+        enqueueSettingsReads(failing: ["content_size"])
 
-        await #expect(throws: SubprocessFailure.self) {
+        await #expect(throws: SubprocessFailure(
+            command: .screenshot(device, to: capturePath),
+            exitCode: 1,
+            standardError: "No devices are booted."
+        )) {
+            try await core.captureScreen(of: device)
+        }
+    }
+
+    @Test("a screenshot failure surfaces at once while a settings read is stuck in a live process")
+    func screenshotFailureDoesNotWaitForAStuckRead() async throws {
+        let stalling = StalledSettingsRunner(
+            deviceList: Data(Fixtures.deviceListJSON(udid: device.udid, name: device.name, state: "Booted").utf8),
+            markersIn: try Fixtures.makeTemporaryDirectory()
+        )
+        let core = AppCore(environment: .fake(subprocess: stalling), workspaceDirectory: workspace)
+        let clock = ContinuousClock()
+        let start = clock.now
+
+        await #expect(throws: SubprocessFailure(
+            command: .screenshot(device, to: capturePath),
+            exitCode: 1,
+            standardError: "No devices are booted."
+        )) {
+            try await core.captureScreen(of: device)
+        }
+        #expect(clock.now - start < .seconds(10))
+    }
+
+    @Test("a failed settings read surfaces as that read's failure, the first in content_size, appearance, increase_contrast order")
+    func settingsFailure() async throws {
+        enqueueDeviceList(state: "Booted")
+        enqueueScreenshot(writing: pngBytes)
+        enqueueSettingsReads(failing: ["appearance", "increase_contrast"])
+
+        await #expect(throws: SubprocessFailure(
+            command: .uiRead("appearance", of: device),
+            exitCode: 1,
+            standardError: "appearance failed"
+        )) {
             try await core.captureScreen(of: device)
         }
     }
@@ -68,9 +139,10 @@ struct CaptureTests {
     @Test("a screenshot that reports success but writes nothing is a clear error")
     func missingCaptureFile() async throws {
         enqueueDeviceList(state: "Booted")
-        runner.enqueue(SubprocessResult(exitCode: 0))
+        enqueueScreenshot(writing: nil)
+        enqueueSettingsReads()
 
-        await #expect(throws: SimulatorError.captureUnreadable(path: expectedCapturePath)) {
+        await #expect(throws: SimulatorError.captureUnreadable(path: capturePath.path)) {
             try await core.captureScreen(of: device)
         }
     }
@@ -84,7 +156,79 @@ struct CaptureTests {
         }
 
         // The guard, not the message, is the fix: `simctl io screenshot`
-        // waits forever for a booted device, so it must never be reached.
-        #expect(runner.executedCommands == [Self.listCommand])
+        // waits forever for a booted device, so it must never be reached,
+        // and neither is any settings read.
+        #expect(runner.executedCommands == [.deviceList])
+    }
+}
+
+/// Holds each gated command until every gated command has started (or a
+/// second passes), recording how many ran at once. Serial code would
+/// reach a peak of 1.
+private final class OverlapRunner: SubprocessRunner {
+    private struct State {
+        var started: [SubprocessCommand] = []
+        var inFlight = 0
+        var maxInFlight = 0
+    }
+
+    private let gated: Set<SubprocessCommand>
+    private let deviceList: Data
+    private let png: Data
+    private let state = Mutex(State())
+
+    init(gated: Set<SubprocessCommand>, deviceList: Data, png: Data) {
+        self.gated = gated
+        self.deviceList = deviceList
+        self.png = png
+    }
+
+    var maxInFlight: Int { state.withLock { $0.maxInFlight } }
+    var started: [SubprocessCommand] { state.withLock { $0.started } }
+
+    func run(_ command: SubprocessCommand) async throws -> SubprocessResult {
+        state.withLock { $0.started.append(command) }
+        guard gated.contains(command) else {
+            return SubprocessResult(exitCode: 0, standardOutput: deviceList)
+        }
+        state.withLock {
+            $0.inFlight += 1
+            $0.maxInFlight = max($0.maxInFlight, $0.inFlight)
+        }
+        let deadline = ContinuousClock.now + .seconds(1)
+        while maxInFlight < gated.count, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        state.withLock { $0.inFlight -= 1 }
+        if command.arguments.contains("screenshot"), let path = command.arguments.last {
+            try png.write(to: URL(fileURLWithPath: path))
+            return SubprocessResult(exitCode: 0)
+        }
+        return SubprocessResult(exitCode: 0, standardOutput: Data("large\n".utf8))
+    }
+}
+
+/// Runs every settings read as a live 30 s sleep, the stand-in for a stuck
+/// `simctl ui`, and fails the screenshot once all three are running.
+private final class StalledSettingsRunner: SubprocessRunner {
+    private let deviceList: Data
+    private let markers: [String: URL]
+
+    init(deviceList: Data, markersIn directory: URL) {
+        self.deviceList = deviceList
+        markers = Dictionary(uniqueKeysWithValues: ["content_size", "appearance", "increase_contrast"].map {
+            ($0, directory.appendingPathComponent($0))
+        })
+    }
+
+    func run(_ command: SubprocessCommand) async throws -> SubprocessResult {
+        if let option = command.arguments.last, let marker = markers[option] {
+            return try await ProcessSubprocessRunner().run(.sleep(touching: marker))
+        }
+        guard command.arguments.contains("screenshot") else {
+            return SubprocessResult(exitCode: 0, standardOutput: deviceList)
+        }
+        try await Fixtures.waitForFiles(Array(markers.values))
+        return SubprocessResult(exitCode: 1, standardError: Data("No devices are booted.".utf8))
     }
 }

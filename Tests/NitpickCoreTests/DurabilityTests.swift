@@ -288,6 +288,40 @@ struct DurabilityTests {
         #expect(history[0].findings.map(\.issue.idReadable) == ["RM-421", "RM-422", "RM-423"])
     }
 
+    @Test("a File all whose session cannot be saved stops before any request: no orphan issue, the session file as it was")
+    func fileAllStopsOnFailedSessionSave() async throws {
+        let workspace = try Fixtures.makeTemporaryDirectory()
+        let transport = FakeHTTPTransport()
+        let core = try await Self.connectedCore(
+            transport: transport, workspace: workspace, credentials: FakeCredentialStore()
+        )
+        var session = IssueFilingTests.session
+        let id = session.addFinding(IssueFilingTests.finding(summary: "Saved"))
+        try core.saveOpenSession(session)
+        session.updateFinding(id: id) { $0.summary = "Saved, then typed" }
+
+        let openSession = workspace.appendingPathComponent("open-session")
+        let manifest = openSession.appendingPathComponent("session.json")
+        let savedManifest = try Data(contentsOf: manifest)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: openSession.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: openSession.path)
+        }
+        SessionTrayScenarioTests.enqueueTagLookups(on: transport)
+        SessionTrayScenarioTests.enqueueLadder(on: transport, created: SessionTrayScenarioTests.createdIssue421)
+        let failed = await core.fileAll(in: session)
+
+        #expect(failed.failure != nil)
+        #expect(transport.sentRequests.count == 2)
+        #expect(try Data(contentsOf: manifest) == savedManifest)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: openSession.path)
+        let filed = await core.fileAll(in: session)
+
+        #expect(filed.failure == nil)
+        #expect(try core.sessionHistory().first?.findings.map(\.summary) == ["Saved, then typed"])
+    }
+
     // MARK: - History
 
     @Test("filed sessions land in history with their issue links — read from disk, never from YouTrack")
