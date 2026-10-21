@@ -64,6 +64,44 @@ struct AnnotationFlatteningTests {
         )
     }
 
+    @Test("one decoded capture re-flattened across edits matches a fresh flatten of every state, pixel for pixel")
+    func decodedCaptureReuse() throws {
+        var finding = Self.finding(screenshotPNG: try ImageFixtures.solidPNG(width: 480, height: 960))
+        let decoded = try DecodedScreenshot(png: finding.screenshotPNG)
+
+        func expectSamePixels(excluding excluded: Int? = nil) throws {
+            let reused = try ImageFixtures.rgba(
+                decoded.annotated(with: finding.annotations, excludingAnnotationAt: excluded)
+            )
+            let fresh = try ImageFixtures.rgba(finding.annotatedScreenshotImage(excludingAnnotationAt: excluded))
+            #expect(reused.width == fresh.width && reused.height == fresh.height)
+            #expect(reused.pixels == fresh.pixels)
+        }
+
+        try expectSamePixels()
+        finding.add(Self.fourTools[0])
+        finding.add(Self.fourTools[1])
+        try expectSamePixels()
+        finding.add(Self.fourTools[2])
+        finding.add(Self.fourTools[3])
+        try expectSamePixels()
+        try expectSamePixels(excluding: 1)
+        finding.undo()
+        try expectSamePixels()
+
+        try ImageFixtures.expectMatchesSnapshot(
+            ImageFixtures.encodePNG(decoded.annotated(with: Self.fourTools)),
+            named: "flattened-four-tools"
+        )
+    }
+
+    @Test("an unreadable capture fails to decode with the flattening error")
+    func unreadableDecodedCapture() {
+        #expect(throws: AnnotationRenderingError.unreadableScreenshot) {
+            try DecodedScreenshot(png: Data([0x89, 0x50, 0x4E, 0x47]))
+        }
+    }
+
     @Test("an unreadable screenshot is a thrown error, not a crash")
     func unreadableScreenshot() throws {
         var finding = Self.finding(screenshotPNG: Data([0x89, 0x50, 0x4E, 0x47]))

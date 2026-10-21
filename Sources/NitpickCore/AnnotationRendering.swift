@@ -62,9 +62,34 @@ extension Finding {
     public func annotatedScreenshotImage(
         excludingAnnotationAt excludedIndex: Int? = nil
     ) throws -> CGImage {
+        try DecodedScreenshot(png: screenshotPNG)
+            .annotated(with: annotations, excludingAnnotationAt: excludedIndex)
+    }
+}
+
+/// A capture decoded once, so an Editor that re-flattens on every
+/// Annotation edit pays only the compositing, not the PNG decode.
+public struct DecodedScreenshot {
+    private let base: CGImage
+
+    public init(png: Data) throws {
         guard
-            let source = CGImageSourceCreateWithData(screenshotPNG as CFData, nil),
-            let base = CGImageSourceCreateImageAtIndex(source, 0, nil),
+            let source = CGImageSourceCreateWithData(png as CFData, nil),
+            let base = CGImageSourceCreateImageAtIndex(
+                source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+            )
+        else { throw AnnotationRenderingError.unreadableScreenshot }
+        self.base = base
+    }
+
+    /// The capture with `annotations` flattened in, at native resolution.
+    /// With `excludedIndex`, that one Annotation is left out (see
+    /// `Finding.annotatedScreenshotImage`).
+    public func annotated(
+        with annotations: [Annotation],
+        excludingAnnotationAt excludedIndex: Int? = nil
+    ) throws -> CGImage {
+        guard
             let context = CGContext(
                 data: nil, width: base.width, height: base.height,
                 bitsPerComponent: 8, bytesPerRow: 0,

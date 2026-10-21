@@ -35,6 +35,9 @@ final class AppModel {
     /// stamped. nitpick no longer pushes these (ADR-0009); the designer
     /// drives accessibility in the simulator.
     private(set) var deviceSettings = DeviceSettings()
+    /// The Editor target's capture, decoded once so each Annotation edit
+    /// re-flattens without re-decoding the PNG.
+    @ObservationIgnored private var decodedCapture: (id: TrayItem.ID, screenshot: DecodedScreenshot)?
     /// The core-rendered annotated capture — what the designer sees while
     /// editing, and exactly what filing flattens.
     private(set) var capturedImage: NSImage?
@@ -792,6 +795,7 @@ final class AppModel {
         editor = EditorState()
         capturedImage = nil
         capturePixelSize = nil
+        decodedCapture = nil
     }
 
     private func perform(
@@ -1038,12 +1042,20 @@ extension AppModel {
     }
 
     private func refreshAnnotatedImage(excludingAnnotationAt excluded: Int? = nil) {
-        guard let finding = selectedItem?.finding else {
+        guard let item = selectedItem else {
             capturedImage = nil
             capturePixelSize = nil
+            decodedCapture = nil
             return
         }
-        if let image = try? finding.annotatedScreenshotImage(excludingAnnotationAt: excluded) {
+        let finding = item.finding
+        if decodedCapture?.id != item.id {
+            decodedCapture = (try? DecodedScreenshot(png: finding.screenshotPNG)).map { (item.id, $0) }
+        }
+        if let image = try? decodedCapture?.screenshot.annotated(
+            with: finding.annotations,
+            excludingAnnotationAt: excluded
+        ) {
             capturedImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
             capturePixelSize = CGSize(width: image.width, height: image.height)
         } else {
