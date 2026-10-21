@@ -338,6 +338,10 @@ final class AppModel {
 
     var canEndReview: Bool { session != nil && !isBusy }
 
+    /// The window drop asks before it accepts a Build; `ingest` itself is
+    /// refused by `perform` while any work runs, filing included.
+    var canIngest: Bool { !isBusy }
+
     var selectedProject: YouTrackProject? {
         youTrack?.projects.first { $0.id == selectedProjectID }
     }
@@ -805,7 +809,7 @@ final class AppModel {
         reportingTo errorKeyPath: ReferenceWritableKeyPath<AppModel, String?> = \.errorMessage,
         _ action: () async throws -> Void
     ) async {
-        activity.begin(work)
+        guard activity.begin(work) else { return }
         self[keyPath: errorKeyPath] = nil
         defer { activity.end() }
         do {

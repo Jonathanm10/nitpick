@@ -21,9 +21,14 @@ public struct ShellActivity: Equatable, Sendable {
     public var isBusy: Bool { running != nil }
     public var isFiling: Bool { running == .filing }
 
-    public mutating func begin(_ work: Work) {
+    /// Starts `work`, or refuses it while anything runs: one run at a time,
+    /// so no run can end another's busy state, and a Build ingest can never
+    /// end the session a File all run is still writing back.
+    public mutating func begin(_ work: Work) -> Bool {
+        guard running == nil else { return false }
         running = work
         if work == .filing { filingFailure = nil }
+        return true
     }
 
     public mutating func end() {

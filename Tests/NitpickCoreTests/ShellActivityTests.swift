@@ -19,7 +19,7 @@ struct ShellActivityTests {
     func filingRunIsBusyAndFiling() {
         var activity = ShellActivity()
 
-        activity.begin(.filing)
+        _ = activity.begin(.filing)
         #expect(activity.isBusy)
         #expect(activity.isFiling)
 
@@ -32,20 +32,54 @@ struct ShellActivityTests {
     func otherWorkIsBusyButNotFiling() {
         var activity = ShellActivity()
 
-        activity.begin(.other)
+        _ = activity.begin(.other)
 
         #expect(activity.isBusy)
         #expect(!activity.isFiling)
     }
 
+    @Test("work that starts while File all runs is refused and filing keeps running")
+    func workIsRefusedWhileFiling() {
+        var activity = ShellActivity()
+        _ = activity.begin(.filing)
+
+        _ = activity.begin(.other)
+
+        #expect(activity.running == .filing)
+    }
+
+    @Test("work that starts while other work runs is refused")
+    func workIsRefusedWhileOtherWorkRuns() {
+        var activity = ShellActivity()
+        _ = activity.begin(.other)
+
+        _ = activity.begin(.filing)
+
+        #expect(activity.running == .other)
+    }
+
+    @Test("begin reports refusal, and the next run starts once the current one ends")
+    func beginReportsAdmission() {
+        var activity = ShellActivity()
+
+        let first = activity.begin(.filing)
+        let overlapping = activity.begin(.other)
+        activity.end()
+        let next = activity.begin(.other)
+
+        #expect(first)
+        #expect(!overlapping)
+        #expect(next)
+    }
+
     @Test("a filing failure survives unrelated work")
     func filingFailureSurvivesUnrelatedWork() {
         var activity = ShellActivity()
-        activity.begin(.filing)
+        _ = activity.begin(.filing)
         activity.recordFilingFailure("The network connection was lost.")
         activity.end()
 
-        activity.begin(.other)
+        _ = activity.begin(.other)
         activity.end()
 
         #expect(activity.filingFailure?.message == "The network connection was lost.")
@@ -54,11 +88,11 @@ struct ShellActivityTests {
     @Test("the next File all run forgets the last failure")
     func nextFilingRunForgetsTheFailure() {
         var activity = ShellActivity()
-        activity.begin(.filing)
+        _ = activity.begin(.filing)
         activity.recordFilingFailure("The request timed out.")
         activity.end()
 
-        activity.begin(.filing)
+        _ = activity.begin(.filing)
 
         #expect(activity.filingFailure == nil)
     }
