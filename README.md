@@ -8,7 +8,10 @@
 
 nitpick closes the loop between design and implementation: a designer reviews a build in the iOS simulator, captures what's on screen, annotates it, and files each finding as a YouTrack issue — without leaving the review flow.
 
-![A Review Session in nitpick: an annotated capture in the Editor, the Tray of unfiled Findings, and the triage fields](assets/screenshots/home.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/home-dark.png">
+  <img alt="A Review Session in nitpick: an annotated capture in the Editor, the Tray of unfiled Findings, and the triage fields" src="assets/screenshots/home.png">
+</picture>
 
 ## How a review works
 
