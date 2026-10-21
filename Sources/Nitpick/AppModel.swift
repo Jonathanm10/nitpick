@@ -605,18 +605,18 @@ final class AppModel {
         var didCapture = false
         await perform {
             do {
-                let png = try await core.captureScreen(of: device)
-                // Read the simulator's live accessibility state now, so the
-                // Finding is stamped with exactly the conditions the
-                // screenshot was taken under (ADR-0009).
-                deviceSettings = try await core.observedSettings(of: device)
+                // The capture reads the simulator's live accessibility state
+                // with the screenshot, so the Finding is stamped with exactly
+                // the conditions it was taken under (ADR-0009).
+                let capture = try await core.captureScreen(of: device)
+                deviceSettings = capture.settings
                 // The capture drops straight into the tray as a Finding — no
                 // filing dialog (PRD story 22) — and opens in the editor,
                 // stamped with the Device Context in effect right now.
                 guard let id = session?.addFinding(Finding(
                     summary: "",
                     description: "",
-                    screenshotPNG: png,
+                    screenshotPNG: capture.screenshotPNG,
                     deviceContext: DeviceContext(device: device, settings: deviceSettings)
                 )) else { return }
                 persistOpenSession()

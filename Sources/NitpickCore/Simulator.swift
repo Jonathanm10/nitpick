@@ -24,6 +24,19 @@ public struct SimulatorDevice: Equatable, Sendable, Identifiable {
     }
 }
 
+/// One capture: the screenshot plus the accessibility state the simulator
+/// reported at that moment, the settings half of the Finding's Device
+/// Context.
+public struct ScreenCapture: Equatable, Sendable {
+    public var screenshotPNG: Data
+    public var settings: DeviceSettings
+
+    public init(screenshotPNG: Data, settings: DeviceSettings) {
+        self.screenshotPNG = screenshotPNG
+        self.settings = settings
+    }
+}
+
 /// The macOS app that shows a booted simulator: Simulator.app through
 /// Xcode 26, DeviceHub.app from Xcode 27. One value carries both the
 /// path to `open` and the bundle id to activate, read from the same
@@ -249,8 +262,11 @@ extension AppCore {
 
     /// Captures the device's current screen at native resolution via the
     /// simulator's own screenshot facility — no Screen Recording permission
-    /// (ADR-0001). Returns PNG bytes.
-    public func captureScreen(of device: SimulatorDevice) async throws -> Data {
+    /// (ADR-0001) — together with the accessibility state it was taken
+    /// under (ADR-0009). The screenshot and the settings reads run
+    /// concurrently; errors surface in the order the serial version threw
+    /// them: not booted, then the screenshot, then each setting.
+    public func captureScreen(of device: SimulatorDevice) async throws -> ScreenCapture {
         // `simctl io screenshot` does not fail on a device that isn't
         // booted — it waits for one, forever, which would hang the app
         // when the designer closes the simulator mid-session. Check the
@@ -261,6 +277,12 @@ extension AppCore {
         guard try await simulatorDevices().contains(where: { $0.udid == device.udid && $0.isBooted }) else {
             throw SimulatorError.deviceNotBooted(deviceName: device.name)
         }
+        async let settings = observedSettings(of: device)
+        let png = try await screenshot(of: device)
+        return ScreenCapture(screenshotPNG: png, settings: try await settings)
+    }
+
+    private func screenshot(of device: SimulatorDevice) async throws -> Data {
         let capturesDirectory = workspaceDirectory.appendingPathComponent("captures", isDirectory: true)
         try FileManager.default.createDirectory(at: capturesDirectory, withIntermediateDirectories: true)
         let captureURL = capturesDirectory.appendingPathComponent("capture.png")
@@ -281,15 +303,19 @@ extension AppCore {
     /// Reads the simulator's live accessibility state — the settings half
     /// of a Device Context — for stamping onto a Finding at capture time
     /// (ADR-0009). Each `simctl ui <device> <option>` invoked with no value
-    /// prints the option's current value; the reads run for content_size,
-    /// appearance, and increase_contrast. A read that comes back
+    /// prints the option's current value; the reads for content_size,
+    /// appearance, and increase_contrast run concurrently, and a failure
+    /// throws the first of them in that order. A read that comes back
     /// `unsupported`, `unknown`, or otherwise unparseable maps to that
     /// dimension's default — the Accessibility line then simply omits it,
     /// never carrying a raw token.
     public func observedSettings(of device: SimulatorDevice) async throws -> DeviceSettings {
-        let contentSize = try await readUISetting("content_size", of: device)
-        let appearance = try await readUISetting("appearance", of: device)
-        let increaseContrast = try await readUISetting("increase_contrast", of: device)
+        async let contentSizeRead = readUISetting("content_size", of: device)
+        async let appearanceRead = readUISetting("appearance", of: device)
+        async let increaseContrastRead = readUISetting("increase_contrast", of: device)
+        let contentSize = try await contentSizeRead
+        let appearance = try await appearanceRead
+        let increaseContrast = try await increaseContrastRead
         return DeviceSettings(
             dynamicTypeSize: DeviceSettings.DynamicTypeSize(rawValue: contentSize) ?? .default,
             appearance: DeviceSettings.Appearance(rawValue: appearance) ?? .default,

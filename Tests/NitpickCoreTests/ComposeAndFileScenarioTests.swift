@@ -58,21 +58,17 @@ struct ComposeAndFileScenarioTests {
 
         // A capture — preceded by its booted re-check…
         let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x42])
-        runner.enqueue(SubprocessResult(
-            exitCode: 0,
-            standardOutput: Data(Fixtures.deviceListJSON(udid: device.udid, name: device.name, state: "Booted").utf8)
-        ))
-        runner.enqueue(SubprocessResult(exitCode: 0)) { _ in
-            try pngBytes.write(to: workspace.appendingPathComponent("captures/capture.png"))
-        }
-        let screenshot = try await core.captureScreen(of: device)
+        runner.enqueueCapture(
+            of: device, png: pngBytes, at: workspace.appendingPathComponent("captures/capture.png")
+        )
+        let capture = try await core.captureScreen(of: device)
 
         // …composed into a Finding — summary, description, Device Context…
         let finding = Finding(
             summary: "Toolbar icon is misaligned",
             description: "The share icon sits 2pt too low.",
-            screenshotPNG: screenshot,
-            deviceContext: DeviceContext(device: device)
+            screenshotPNG: capture.screenshotPNG,
+            deviceContext: DeviceContext(device: device, settings: capture.settings)
         )
 
         // …files as exactly one issue, and the ID + link come back.
@@ -89,10 +85,11 @@ struct ComposeAndFileScenarioTests {
         )))
 
         // The whole subprocess side ran: list, xcode-select, boot, bootstatus,
-        // open, install, launch, the capture's booted re-check, capture
-        // (pinned command-exactly by the walking skeleton scenario). No
-        // accessibility commands — nitpick observes, it does not set (ADR-0009).
-        #expect(runner.executedCommands.count == 9)
+        // open, install, launch, the capture's booted re-check, capture and
+        // its three settings reads (pinned command-exactly by the walking
+        // skeleton scenario). No accessibility set commands — nitpick
+        // observes, it does not set (ADR-0009).
+        #expect(runner.executedCommands.count == 12)
 
         // The exact filing requests, after the two connect requests.
         let base = "https://youtrack.example.com"
