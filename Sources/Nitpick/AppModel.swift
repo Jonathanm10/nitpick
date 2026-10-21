@@ -329,6 +329,7 @@ final class AppModel {
     }
     
     deinit {
+        typingSaveTask?.cancel()
         let hotkey = captureHotkey
         Task { @MainActor in
             hotkey.setActive(false)
