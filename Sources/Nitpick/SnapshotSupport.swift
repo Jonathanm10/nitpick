@@ -26,7 +26,7 @@ enum WindowSnapshot {
         DispatchQueue.main.async {
             let window = ParkedWindow(size: requestedSize ?? NSSize(width: 1140, height: 760))
             window.identifier = NSUserInterfaceItemIdentifier("main-parked")
-            window.contentView = NSHostingView(rootView: MainWindowContent(model: model))
+            window.contentView = parkedRootView(model: model)
             window.orderBack(nil)
             parkedMainWindow = window
         }
@@ -48,6 +48,32 @@ enum WindowSnapshot {
         else { return }
         method_exchangeImplementations(shipped, quiet)
     }()
+
+    /// `NITPICK_SNAPSHOT_SCENE=settings` or `history` parks that scene's view
+    /// instead of the main window's, so its render never opens a real window.
+    /// The main view runs the launch sequence, so a parked scene runs it instead.
+    private static func parkedRootView(model: AppModel) -> NSView {
+        let scene: AnyView
+        switch ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_SCENE"] {
+        case "settings": scene = AnyView(SettingsView(model: model))
+        case "history": scene = AnyView(HistoryWindow(model: model))
+        default: return NSHostingView(rootView: MainWindowContent(model: model))
+        }
+        Task { await model.onLaunch() }
+        // A render caches the content view only, so draw the background the
+        // scene's real window would.
+        return NSHostingView(rootView: scene.background(Color(nsColor: .windowBackgroundColor)))
+    }
+
+    /// `NITPICK_SNAPSHOT_APPEARANCE=light` or `dark` renders in that appearance
+    /// whatever the system uses.
+    static func applyAppearanceIfRequested() {
+        switch ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_APPEARANCE"] {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: break
+        }
+    }
 
     /// `NITPICK_SNAPSHOT_SIZE=WxH` renders an offscreen, never-key copy of the
     /// main view at exactly that size instead of the real window: layout QA
@@ -99,7 +125,7 @@ enum WindowSnapshot {
             window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 guard let view = window.contentView,
-                      let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+                      let rep = scaledRep(for: view) ?? view.bitmapImageRepForCachingDisplay(in: view.bounds)
                 else { return }
                 view.cacheDisplay(in: view.bounds, to: rep)
                 try? rep.representation(using: .png, properties: [:])?
@@ -131,6 +157,27 @@ enum WindowSnapshot {
             print("snapshot: \"\(title)\" not written to \(path): \(error.localizedDescription)")
         }
         fflush(stdout)
+    }
+
+    /// `NITPICK_SNAPSHOT_SCALE=2` renders at that pixel density. A parked
+    /// window has no screen, so it otherwise renders at 1x.
+    private static func scaledRep(for view: NSView) -> NSBitmapImageRep? {
+        guard let scale = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_SCALE"].flatMap(Double.init),
+              let rep = NSBitmapImageRep(
+                  bitmapDataPlanes: nil,
+                  pixelsWide: Int(view.bounds.width * scale),
+                  pixelsHigh: Int(view.bounds.height * scale),
+                  bitsPerSample: 8,
+                  samplesPerPixel: 4,
+                  hasAlpha: true,
+                  isPlanar: false,
+                  colorSpaceName: .deviceRGB,
+                  bytesPerRow: 0,
+                  bitsPerPixel: 0
+              )
+        else { return nil }
+        rep.size = view.bounds.size
+        return rep
     }
 
     /// Attached sheets are separate windows `cacheDisplay` omits, so each is

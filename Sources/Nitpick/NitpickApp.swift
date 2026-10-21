@@ -154,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Dark Mode every label resolves light and vanishes on the light
         // surfaces. Pin the whole app to aqua so appearance matches the design.
         NSApp.appearance = NSAppearance(named: .aqua)
+        WindowSnapshot.applyAppearanceIfRequested()
 
         WindowSnapshot.occupyCaptureHotkeyIfRequested()
         WindowSnapshot.scheduleIfRequested()
