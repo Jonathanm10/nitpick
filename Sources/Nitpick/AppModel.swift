@@ -847,28 +847,26 @@ extension AppModel {
     /// otherwise a pristine Finding — the mis-capture case — dies
     /// instantly. The core's predicate decides pristine.
     func handleEditorEscape() {
-        if annotationDrag != nil || selectedAnnotationIndex != nil {
-            deselectAnnotation()
-        } else if let item = selectedItem, item.isPristine {
-            discardFinding(id: item.id)
+        switch surfaceEscape {
+        case .releaseAnnotation: deselectAnnotation()
+        case .discard(let id): discardFinding(id: id)
+        case nil: break
         }
     }
 
     /// Whether Esc would act from the annotation surface's own focus
-    /// scope: release an in-flight or selected Annotation first, else the
-    /// pristine discard. The shell installs its Esc handler only when
-    /// true — an installed no-op would still consume the command.
-    var editorEscapeWouldAct: Bool {
-        annotationDrag != nil || selectedAnnotationIndex != nil || editorEscapeWouldDiscard
-    }
+    /// scope. The shell installs its Esc handler only when true — an
+    /// installed no-op would still consume the command.
+    var editorEscapeWouldAct: Bool { surfaceEscape != nil }
 
     /// Whether Esc would act from the editor scope at large, where a text
     /// field may hold focus: only the pristine mis-capture discard.
-    /// Releasing an Annotation selection belongs to the surface's focus
-    /// scope — Esc in Summary or Description must keep standard field
-    /// behavior (PRD story 11). Mirrors `discardFinding`'s guards.
     var editorEscapeWouldDiscard: Bool {
-        !isBusy && !hasPendingLabelDraft && selectedItem?.isPristine == true
+        EditorEscape.inEditor(editor, session: session, activity: activity) != nil
+    }
+
+    private var surfaceEscape: EditorEscape? {
+        EditorEscape.onSurface(editor, selection: annotationSelection, session: session, activity: activity)
     }
 
     func addAnnotation(_ shape: Annotation.Shape) {

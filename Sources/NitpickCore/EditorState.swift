@@ -101,3 +101,41 @@ public struct AnnotationDrag<Overlay> {
 
 extension AnnotationSelection: Equatable where Overlay: Equatable {}
 extension AnnotationDrag: Equatable where Overlay: Equatable {}
+
+/// What Esc does in the Editor (PRD stories 10, 11): release an in-flight
+/// or selected Annotation first, otherwise discard a pristine Finding, the
+/// mis-capture case. The handler and both "would act" predicates read this
+/// one decision, so they cannot drift.
+public enum EditorEscape: Equatable, Sendable {
+    case releaseAnnotation
+    case discard(TrayItem.ID)
+
+    /// The editor scope at large, where a text field may hold focus: only
+    /// the pristine discard, never while work runs or a label draft pins the
+    /// Editor. Releasing a selection belongs to the surface's own scope, so
+    /// Esc in Summary or Description keeps standard field behavior.
+    public static func inEditor(
+        _ editor: EditorState,
+        session: ReviewSession?,
+        activity: ShellActivity
+    ) -> EditorEscape? {
+        guard !activity.isBusy, !editor.hasPendingLabelDraft,
+              let target = editor.target,
+              let item = session?.tray.first(where: { $0.id == target }),
+              item.isPristine
+        else { return nil }
+        return .discard(item.id)
+    }
+
+    /// The annotation surface's own focus scope: a selection made on this
+    /// target is released first, else the editor-scope rule applies.
+    public static func onSurface<Overlay>(
+        _ editor: EditorState,
+        selection: AnnotationSelection<Overlay>?,
+        session: ReviewSession?,
+        activity: ShellActivity
+    ) -> EditorEscape? {
+        if let selection, selection.belongs(to: editor) { return .releaseAnnotation }
+        return inEditor(editor, session: session, activity: activity)
+    }
+}
