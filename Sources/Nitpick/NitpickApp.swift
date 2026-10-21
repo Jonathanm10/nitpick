@@ -102,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // surfaces. Pin the whole app to aqua so appearance matches the design.
         NSApp.appearance = NSAppearance(named: .aqua)
 
+        WindowSnapshot.occupyCaptureHotkeyIfRequested()
         WindowSnapshot.scheduleIfRequested()
     }
 }

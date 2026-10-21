@@ -390,6 +390,24 @@ final class AppModel {
         if let state = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_FEEDBACK"] {
             await stageFeedbackSnapshot(state)
         }
+        if ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_REVIEWING"] != nil {
+            stageReviewRun()
+        }
+        if let script = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_KEYS"] {
+            await runKeyScript(script)
+        }
+    }
+
+    /// Dev-only, `NITPICK_SNAPSHOT_REVIEWING`: shows the reviewing screen for
+    /// a restored session without launching anything in a simulator. The
+    /// device is invented, so a capture from this state fails.
+    private func stageReviewRun() {
+        let developer = URL(fileURLWithPath: "/Applications/Xcode.app/Contents/Developer")
+        guard session != nil, let host = SimulatorHostApp.discover(inDeveloperDirectory: developer) else { return }
+        reviewRun = ReviewRun(
+            device: SimulatorDevice(udid: "STAGED-DEVICE", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: true),
+            host: host
+        )
     }
 
     /// Runs the core's prerequisite probe and publishes its outcome: the
