@@ -35,6 +35,8 @@ final class AppModel {
     /// stamped. nitpick no longer pushes these (ADR-0009); the designer
     /// drives accessibility in the simulator.
     private(set) var deviceSettings = DeviceSettings()
+    @ObservationIgnored private var typingSave = TypingSave()
+    @ObservationIgnored private var typingSaveTask: Task<Void, Never>?
     /// The Editor target's capture, decoded once so each Annotation edit
     /// re-flattens without re-decoding the PNG.
     @ObservationIgnored private var decodedCapture: (id: TrayItem.ID, screenshot: DecodedScreenshot)?
@@ -158,12 +160,12 @@ final class AppModel {
     /// fields — every edit writes straight into the tray item.
     var summaryField: String {
         get { selectedItem?.finding.summary ?? "" }
-        set { editSelectedFinding { $0.summary = newValue } }
+        set { editSelectedFinding(typing: true) { $0.summary = newValue } }
     }
 
     var descriptionField: String {
         get { selectedItem?.finding.description ?? "" }
-        set { editSelectedFinding { $0.description = newValue } }
+        set { editSelectedFinding(typing: true) { $0.description = newValue } }
     }
 
     /// The selected Finding's Type, bound to the Editor's Type control
@@ -199,7 +201,7 @@ final class AppModel {
         set {
             guard !isBusy, session != nil else { return }
             session?.designReference = Self.designReference(from: newValue)
-            persistOpenSession()
+            persistOpenSessionAfterTyping()
         }
     }
 
@@ -207,7 +209,7 @@ final class AppModel {
     /// session-level one for that Finding only.
     var findingDesignReferenceField: String {
         get { selectedItem?.finding.designReference?.absoluteString ?? "" }
-        set { editSelectedFinding { $0.designReference = Self.designReference(from: newValue) } }
+        set { editSelectedFinding(typing: true) { $0.designReference = Self.designReference(from: newValue) } }
     }
 
     var designSnapshots: [DesignSnapshot] {
@@ -316,6 +318,11 @@ final class AppModel {
             Task { [weak self] in
                 guard let self else { return }
                 await self.captureFromHotkey()
+            }
+        }
+        for name in [NSApplication.willTerminateNotification, NSWindow.willCloseNotification] {
+            _ = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.flushTypingSave() }
             }
         }
     }
@@ -772,15 +779,38 @@ final class AppModel {
     }
 
     /// Sessions persist as they are created (issue 07): every mutation
-    /// lands on disk before the designer's next action, so a quit or crash
-    /// costs nothing.
+    /// lands on disk before the designer's next action, so a quit costs
+    /// nothing. Typing is the one exception, see `TypingSave`. A failed
+    /// save leaves typed text pending, so the next flush retries it.
     private func persistOpenSession() {
-        guard let session else { return }
+        typingSaveTask?.cancel()
+        typingSaveTask = nil
+        guard let session else {
+            typingSave.saved()
+            return
+        }
         do {
             try core.saveOpenSession(session)
+            typingSave.saved()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func persistOpenSessionAfterTyping() {
+        let due = typingSave.keystroke(at: .now)
+        typingSaveTask?.cancel()
+        typingSaveTask = Task { [weak self] in
+            try? await Task.sleep(until: due)
+            guard !Task.isCancelled else { return }
+            self?.persistOpenSession()
+        }
+    }
+
+    /// Lands typed text before anything leaves the current state: every
+    /// `perform` action, a Tray selection, a window closing, and quit.
+    private func flushTypingSave() {
+        if typingSave.isPending { persistOpenSession() }
     }
 
     private func refreshHistory() {
@@ -811,6 +841,7 @@ final class AppModel {
         }
         self[keyPath: errorKeyPath] = nil
         defer { activity.end() }
+        flushTypingSave()
         do {
             try await action()
         } catch {
@@ -834,6 +865,7 @@ extension AppModel {
     /// first would land its commit on the wrong Finding.
     func selectItem(_ id: TrayItem.ID) {
         guard let next = editor.selecting(id, in: session) else { return }
+        flushTypingSave()
         editor = next
         refreshAnnotatedImage()
     }
@@ -1035,10 +1067,14 @@ extension AppModel {
     /// to items filing has already touched. Edits also freeze while filing
     /// is in flight: the run works on a copy of the session, so a late
     /// edit would show in the preview yet be missing from the filed issue.
-    private func editSelectedFinding(_ edit: (inout Finding) -> Void) {
+    private func editSelectedFinding(typing: Bool = false, _ edit: (inout Finding) -> Void) {
         guard !isBusy, let selectedItemID else { return }
         session?.updateFinding(id: selectedItemID, edit)
-        persistOpenSession()
+        if typing {
+            persistOpenSessionAfterTyping()
+        } else {
+            persistOpenSession()
+        }
     }
 
     private func refreshAnnotatedImage(excludingAnnotationAt excluded: Int? = nil) {
