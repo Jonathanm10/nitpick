@@ -55,29 +55,14 @@ struct TrayView: View {
     @State private var renderedHeight: CGFloat = 0
 
     var body: some View {
-        List {
-            // Capture order is the core's truth (filing walks the tray in
-            // order, ADR-0004); the DISPLAY is newest-first so a fresh
-            // capture's row slides into the top of the Tray, where the
-            // designer's eye already is (PRD story 6).
-            ForEach(tray.reversed()) { item in
-                trayRow(item)
-                    .frame(height: Self.rowHeight)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                    .transition(trayRowTransition)
-            }
+        ScrollViewReader { proxy in
+            trayList
+                // A jump, not an animated scroll, so Reduce Motion needs
+                // no branch.
+                .onChange(of: model.selectedItemID) { _, id in
+                    if let id { proxy.scrollTo(id) }
+                }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .environment(\.defaultMinListRowHeight, Self.rowHeight)
-        .contentMargins(.vertical, 0, for: .scrollContent)
-        // Scroll only when rows are actually hidden — past the visible cap, or
-        // when the column has compressed the tray below its content. A tray
-        // that shows everything stays inert so the trackpad can't rubber-band
-        // over nothing.
-        .scrollDisabled(renderedHeight + 0.5 >= contentHeight)
         // Flexible, not fixed: the tray sits at its natural (capped) height
         // when the column has room and shrinks toward a ~2-row floor when the
         // fixed compose fields need the space. A lower layoutPriority than
@@ -109,6 +94,32 @@ struct TrayView: View {
         } message: { id in
             Text(discardConfirmationMessage(for: id))
         }
+    }
+
+    private var trayList: some View {
+        List {
+            // Capture order is the core's truth (filing walks the tray in
+            // order, ADR-0004); the DISPLAY is newest-first so a fresh
+            // capture's row slides into the top of the Tray, where the
+            // designer's eye already is (PRD story 6).
+            ForEach(tray.reversed()) { item in
+                trayRow(item)
+                    .frame(height: Self.rowHeight)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                    .transition(trayRowTransition)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, Self.rowHeight)
+        .contentMargins(.vertical, 0, for: .scrollContent)
+        // Scroll only when rows are actually hidden — past the visible cap, or
+        // when the column has compressed the tray below its content. A tray
+        // that shows everything stays inert so the trackpad can't rubber-band
+        // over nothing.
+        .scrollDisabled(renderedHeight + 0.5 >= contentHeight)
     }
 
     /// The confirmation's body: names the Finding when it carries a summary
@@ -240,16 +251,24 @@ struct TrayView: View {
         let title = Text(summary.isEmpty ? "Untitled Finding" : summary)
             .font(.system(size: 13, weight: isSelected ? .medium : .regular))
             .lineLimit(1)
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
+        // A Button, not bare text, so VoiceOver can open the row and hear
+        // which one is selected; the row's tap gesture still covers the rest.
+        return Button {
+            model.selectItem(item.id)
+        } label: {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    title
+                    Text(item.finding.deviceContext.deviceModel)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(NitpickTheme.secondaryText)
+                        .lineLimit(1)
+                }
                 title
-                Text(item.finding.deviceContext.deviceModel)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(NitpickTheme.secondaryText)
-                    .lineLimit(1)
             }
-            title
         }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private func rowBackground(isSelected: Bool, isHovered: Bool) -> Color {

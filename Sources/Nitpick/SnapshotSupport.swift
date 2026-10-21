@@ -8,11 +8,53 @@ import SwiftUI
 
 @MainActor
 enum WindowSnapshot {
+    /// Any `NITPICK_SNAPSHOT_*` variable makes the run quiet, so proof runs never
+    /// take the designer's focus: no Dock tile, never activated, the main
+    /// view hosted in a window parked off every screen instead of the
+    /// WindowGroup's, and History, Settings and sheets kept off screen.
+    /// `NITPICK_SNAPSHOT_VISIBLE=1` opts back into a normal launch.
+    static let isQuiet: Bool = {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["NITPICK_SNAPSHOT_VISIBLE"] != "1"
+            && environment.keys.contains { $0.hasPrefix("NITPICK_SNAPSHOT_") }
+    }()
+
+    private static var parkedMainWindow: NSWindow?
+
+    static func parkWindowsIfQuiet(model: AppModel) {
+        guard isQuiet else { return }
+        DispatchQueue.main.async {
+            let window = ParkedWindow(size: requestedSize ?? NSSize(width: 1140, height: 760))
+            window.identifier = NSUserInterfaceItemIdentifier("main-parked")
+            window.contentView = NSHostingView(rootView: MainWindowContent(model: model))
+            window.orderBack(nil)
+            parkedMainWindow = window
+        }
+        _ = quietOrdering
+    }
+
+    /// History, Settings and sheets would open on screen: AppKit keeps 40 pt
+    /// of a titled window on screen however far it is moved, and a window
+    /// ordered out after the fact has already reached the window server. So
+    /// `order(_:relativeTo:)` goes through `quietOrder`, which lets only the
+    /// parked windows in. The rest stay live but unshown; a render still
+    /// composites a sheet, and `window:<title>=<file>` renders the others.
+    /// Measured for those three; popovers, the file importer and
+    /// `orderFrontRegardless` are not, and no scripted step opens them.
+    /// A `static let`, so the swap runs once and a second call cannot undo it.
+    private static let quietOrdering: Void = {
+        guard let shipped = class_getInstanceMethod(NSWindow.self, #selector(NSWindow.order(_:relativeTo:))),
+              let quiet = class_getInstanceMethod(NSWindow.self, #selector(NSWindow.quietOrder(_:relativeTo:)))
+        else { return }
+        method_exchangeImplementations(shipped, quiet)
+    }()
+
     /// `NITPICK_SNAPSHOT_SIZE=WxH` renders an offscreen, never-key copy of the
     /// main view at exactly that size instead of the real window: layout QA
     /// no longer depends on the window manager (a tiler can pin the real
     /// frame), and the inactive-window look the designer sees while working
-    /// in the Simulator is deterministic.
+    /// in the Simulator is deterministic. A quiet run's parked main window
+    /// already is both, so it renders that window at the size instead.
     static let requestedSize: NSSize? = {
         guard let value = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_SIZE"] else { return nil }
         let parts = value.split(separator: "x").compactMap { Double($0) }
@@ -26,41 +68,69 @@ enum WindowSnapshot {
     /// window parked off every screen. Called once, after launch restored
     /// the session, so the copy renders the same state as the real window.
     static func stageOffscreenCopy(model: AppModel) {
-        guard offscreenWindow == nil, let size = requestedSize else { return }
-        let window = NSWindow(
-            contentRect: NSRect(origin: CGPoint(x: -10_000, y: 0), size: size),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
+        guard !isQuiet, offscreenWindow == nil, let size = requestedSize else { return }
+        let window = ParkedWindow(size: size)
         window.contentView = NSHostingView(rootView: ContentView(model: model, isSnapshotCopy: true))
-        window.orderFront(nil)
+        window.orderBack(nil)
         offscreenWindow = window
     }
 
     static func scheduleIfRequested() {
-        guard let path = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_PATH"] else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-            if let window = offscreenWindow, let size = requestedSize {
-                // Start-review growth resizes the copy too; pin it back first.
-                window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                    guard let view = window.contentView,
-                          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
-                    else { return }
-                    view.cacheDisplay(in: view.bounds, to: rep)
-                    try? rep.representation(using: .png, properties: [:])?
-                        .write(to: URL(fileURLWithPath: path))
-                }
-                return
+        let environment = ProcessInfo.processInfo.environment
+        if let path = environment["NITPICK_SNAPSHOT_AX"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                AccessibilityDump.write(to: path)
             }
-            guard let window = NSApp.nitpickMainWindow
-                ?? NSApp.windows.filter({ !$0.isSheet }).max(by: { $0.frame.width < $1.frame.width }),
-                  let rep = snapshot(of: window)
-            else { return }
-            try? rep.representation(using: .png, properties: [:])?
-                .write(to: URL(fileURLWithPath: path))
         }
+        if let path = environment["NITPICK_SNAPSHOT_MENU"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                MenuDump.write(to: path)
+            }
+        }
+        guard let path = environment["NITPICK_SNAPSHOT_PATH"] else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            render(to: path)
+        }
+    }
+
+    static func render(to path: String) {
+        if let window = offscreenWindow ?? parkedMainWindow, let size = requestedSize {
+            // Start-review growth resizes it too; pin it back first.
+            window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                guard let view = window.contentView,
+                      let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+                else { return }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?
+                    .write(to: URL(fileURLWithPath: path))
+            }
+            return
+        }
+        guard let window = NSApp.nitpickMainWindow
+            ?? NSApp.windows.filter({ !$0.isSheet }).max(by: { $0.frame.width < $1.frame.width }),
+              let rep = snapshot(of: window)
+        else { return }
+        try? rep.representation(using: .png, properties: [:])?
+            .write(to: URL(fileURLWithPath: path))
+    }
+
+    static func render(windowTitled title: String, to path: String) {
+        guard let window = NSApp.windows.first(where: { $0.title == title }),
+              let rep = snapshot(of: window)
+        else {
+            print("snapshot: no window titled \"\(title)\" among \(NSApp.windows.map(\.title))")
+            fflush(stdout)
+            return
+        }
+        do {
+            guard let png = rep.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
+            try png.write(to: URL(fileURLWithPath: path))
+            print("snapshot: \"\(title)\" \(rep.pixelsWide)×\(rep.pixelsHigh) px from frame \(window.frame)")
+        } catch {
+            print("snapshot: \"\(title)\" not written to \(path): \(error.localizedDescription)")
+        }
+        fflush(stdout)
     }
 
     /// Attached sheets are separate windows `cacheDisplay` omits, so each is
@@ -91,8 +161,315 @@ enum WindowSnapshot {
         NSGraphicsContext.restoreGraphicsState()
         return rep
     }
+
+    private static var occupiedCaptureHotkey: CaptureHotkey?
+
+    /// `NITPICK_SNAPSHOT_HOTKEY_TAKEN=1` registers the capture chord before the
+    /// session opens, so the session's own registration meets a taken chord
+    /// the way it would when another app holds it.
+    static func occupyCaptureHotkeyIfRequested() {
+        guard ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_HOTKEY_TAKEN"] != nil else { return }
+        let squatter = CaptureHotkey()
+        squatter.setActive(true)
+        occupiedCaptureHotkey = squatter
+    }
 }
 
+/// `NITPICK_SNAPSHOT_AX=<file>` writes the app's accessibility tree as an
+/// assistive client such as VoiceOver reads it: role, label, value, selected.
+/// SwiftUI publishes its own elements only to AX clients, not to in-process
+/// `accessibilityChildren()`, so this queries the app's own pid through the AX
+/// API. Querying itself needs no Accessibility permission. It runs on the
+/// main thread: the app answers its own queries on the calling thread, and
+/// AppKit lays out table rows while answering.
+enum AccessibilityDump {
+    @MainActor
+    static func write(to path: String) {
+        var lines: [String] = []
+        let app = AXUIElementCreateApplication(getpid())
+        for window in elements(app, kAXWindowsAttribute) {
+            append(window, depth: 0, to: &lines)
+        }
+        try? lines.joined(separator: "\n").appending("\n")
+            .write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    private static func append(_ element: AXUIElement, depth: Int, to lines: inout [String]) {
+        guard depth < 60 else { return }
+        var fields = [string(element, kAXRoleAttribute) ?? "?"]
+        if let subrole = string(element, kAXSubroleAttribute) { fields.append("subrole=\(subrole)") }
+        for (name, attribute) in [("label", kAXDescriptionAttribute), ("title", kAXTitleAttribute), ("value", kAXValueAttribute), ("help", kAXHelpAttribute)] {
+            if let text = string(element, attribute), !text.isEmpty {
+                fields.append("\(name)=\"\(text.replacingOccurrences(of: "\n", with: "\\n"))\"")
+            }
+        }
+        if bool(element, kAXSelectedAttribute) == true { fields.append("selected") }
+        if let frame = frame(element) { fields.append("frame=\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width))x\(Int(frame.height))") }
+        if bool(element, kAXEnabledAttribute) == false { fields.append("disabled") }
+        lines.append(String(repeating: "  ", count: depth) + fields.joined(separator: " "))
+        for child in elements(element, kAXChildrenAttribute) {
+            append(child, depth: depth + 1, to: &lines)
+        }
+    }
+
+    private static func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
+        return value
+    }
+
+    private static func string(_ element: AXUIElement, _ attribute: String) -> String? {
+        switch value(element, attribute) {
+        case let text as String: text
+        case let number as NSNumber: number.stringValue
+        default: nil
+        }
+    }
+
+    private static func frame(_ element: AXUIElement) -> CGRect? {
+        guard let position = value(element, kAXPositionAttribute), let size = value(element, kAXSizeAttribute) else { return nil }
+        var origin = CGPoint.zero
+        var extent = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &origin),
+              AXValueGetValue(size as! AXValue, .cgSize, &extent)
+        else { return nil }
+        return CGRect(origin: origin, size: extent)
+    }
+
+    private static func bool(_ element: AXUIElement, _ attribute: String) -> Bool? {
+        (value(element, attribute) as? NSNumber)?.boolValue
+    }
+
+    private static func elements(_ element: AXUIElement, _ attribute: String) -> [AXUIElement] {
+        (value(element, attribute) as? [AnyObject] ?? []).map { $0 as! AXUIElement }
+    }
+}
+
+@MainActor
+enum MenuDump {
+    static func write(to path: String) {
+        guard let menu = NSApp.mainMenu else { return }
+        menu.update()
+        var lines: [String] = []
+        append(menu, depth: 0, to: &lines)
+        try? lines.joined(separator: "\n").appending("\n")
+            .write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    private static func append(_ menu: NSMenu, depth: Int, to lines: inout [String]) {
+        for item in menu.items where !item.isSeparatorItem {
+            var line = String(repeating: "  ", count: depth) + item.title
+            let chord = chord(of: item)
+            if !chord.isEmpty { line += "\t" + chord }
+            if !item.isEnabled { line += "\t(disabled)" }
+            lines.append(line)
+            if let submenu = item.submenu, depth < 1 {
+                // SwiftUI fills in enabled states only as a menu opens.
+                submenu.delegate?.menuNeedsUpdate?(submenu)
+                submenu.update()
+                append(submenu, depth: depth + 1, to: &lines)
+            }
+        }
+    }
+
+    private static func chord(of item: NSMenuItem) -> String {
+        guard !item.keyEquivalent.isEmpty else { return "" }
+        let flags = item.keyEquivalentModifierMask
+        var chord = ""
+        if flags.contains(.control) { chord += "⌃" }
+        if flags.contains(.option) { chord += "⌥" }
+        if flags.contains(.shift) { chord += "⇧" }
+        if flags.contains(.command) { chord += "⌘" }
+        let key: String = switch item.keyEquivalent.unicodeScalars.first.map({ Int($0.value) }) {
+        case NSUpArrowFunctionKey: "↑"
+        case NSDownArrowFunctionKey: "↓"
+        case NSLeftArrowFunctionKey: "←"
+        case NSRightArrowFunctionKey: "→"
+        case 13: "↩"
+        default: item.keyEquivalent.uppercased()
+        }
+        return chord + key
+    }
+}
+
+/// `NITPICK_SNAPSHOT_KEYS` drives the real main window with in-process key
+/// events, which need no Accessibility permission, and prints the state after
+/// each step. Steps are `;`-separated: `wait:<seconds>`, `mark` (adds an
+/// undoable rectangle to the selected Finding), `focus:<placeholder>` (a text
+/// field), `type:<text>`, `key:<chord>` such as `cmd+z` or `opt+cmd+down`,
+/// `refuse` (sets the paused-review hotkey refusal without its beep),
+/// `snap:`, `ax:` or `menu:<file>` to render or dump the state at that step,
+/// and `window:<title>=<file>` to render another window, such as History.
+extension AppModel {
+    func runKeyScript(_ script: String) async {
+        guard ProcessInfo.processInfo.environment["NITPICK_WORKSPACE"] != nil else {
+            print("keys: refused, a script edits and saves the open session, so it needs NITPICK_WORKSPACE pointing at a fictional one")
+            fflush(stdout)
+            return
+        }
+        try? await Task.sleep(for: .seconds(1.5))
+        guard let window = NSApp.nitpickMainWindow else {
+            print("keys: no main window")
+            fflush(stdout)
+            return
+        }
+        logKeyState("start", window: window)
+        for step in script.split(separator: ";").map(String.init) {
+            let parts = step.split(separator: ":", maxSplits: 1).map(String.init)
+            let verb = parts.first ?? ""
+            let argument = parts.count > 1 ? parts[1] : ""
+            switch verb {
+            case "wait":
+                try? await Task.sleep(for: .seconds(Double(argument) ?? 0.5))
+            case "focus":
+                if let field = window.contentView.flatMap({ Self.textField(placeholder: argument, in: $0) }) {
+                    window.makeFirstResponder(field)
+                }
+            case "mark":
+                addAnnotation(.rectangle(CGRect(x: 100, y: 900, width: 400, height: 200)))
+            case "refuse":
+                errorMessage = CaptureRefusal.reviewPaused.hotkeyMessage
+            case "snap":
+                WindowSnapshot.render(to: argument)
+                try? await Task.sleep(for: .seconds(1))
+            case "window":
+                let target = argument.split(separator: "=", maxSplits: 1).map(String.init)
+                WindowSnapshot.render(windowTitled: target.first ?? "", to: target.count > 1 ? target[1] : "")
+            case "ax":
+                AccessibilityDump.write(to: argument)
+                try? await Task.sleep(for: .seconds(2))
+            case "menu":
+                MenuDump.write(to: argument)
+            case "type":
+                for character in argument {
+                    Self.send(characters: String(character), keyCode: 0, flags: [], to: window)
+                }
+            case "key":
+                Self.sendChord(argument, to: window)
+            default:
+                print("keys: unknown step \(step)")
+            }
+            try? await Task.sleep(for: .seconds(0.4))
+            logKeyState(step, window: window)
+        }
+        print("keys: done")
+        fflush(stdout)
+    }
+
+    private func logKeyState(_ step: String, window: NSWindow) {
+        let summary = selectedItem.map { "\"\($0.finding.summary)\"" } ?? "none"
+        let annotations = selectedItem.map { String($0.finding.annotations.count) } ?? "-"
+        let editor = window.firstResponder as? NSTextView
+        let field = editor.map { "\"\($0.string)\"" } ?? "none"
+        print("keys: \(step) -> selected=\(summary) annotations=\(annotations) tool=\(annotationTool.rawValue) firstResponder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") focusedText=\(field) active=\(NSApp.isActive) key=\(window.isKeyWindow) error=\(errorMessage.map { "\"\($0)\"" } ?? "none")")
+        fflush(stdout)
+    }
+
+    private static func textField(placeholder: String, in view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField, field.placeholderString == placeholder { return field }
+        for subview in view.subviews {
+            if let match = textField(placeholder: placeholder, in: subview) { return match }
+        }
+        return nil
+    }
+
+    /// Built from a virtual key code, so the keyboard layout fills in the
+    /// characters exactly as for a hardware press (⇧⌘Z arrives as "Z").
+    private static func sendChord(_ chord: String, to window: NSWindow) {
+        var flags: CGEventFlags = []
+        var key = ""
+        for part in chord.split(separator: "+").map(String.init) {
+            switch part {
+            case "cmd": flags.insert(.maskCommand)
+            case "opt": flags.insert(.maskAlternate)
+            case "ctrl": flags.insert(.maskControl)
+            case "shift": flags.insert(.maskShift)
+            default: key = part
+            }
+        }
+        let arrows: [String: CGKeyCode] = ["up": 126, "down": 125, "left": 123, "right": 124, "tab": 48, "esc": 53]
+        guard let keyCode = arrows[key] ?? layoutKeyCode(for: key),
+              let cgEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true)
+        else {
+            print("keys: no key code for \(chord)")
+            return
+        }
+        if keyCode >= 123 { flags.formUnion([.maskSecondaryFn, .maskNumericPad]) }
+        cgEvent.flags = flags
+        guard let event = NSEvent(cgEvent: cgEvent) else { return }
+        print("keys: sending \(chord) characters=\(event.characters ?? "") ignoringModifiers=\(event.charactersIgnoringModifiers ?? "") via \(deliver(event, to: window))")
+    }
+
+    /// A key window takes the event through the app's queue, as hardware
+    /// input arrives. A quiet run's window never becomes key, since the app
+    /// is never active, so the window and the menu bar get it directly in
+    /// AppKit's key-equivalent order instead.
+    private static func deliver(_ event: NSEvent, to window: NSWindow) -> String {
+        if let refusal = refusal(of: event, in: window) { return "nothing, refused: \(refusal)" }
+        if window.isKeyWindow {
+            NSApp.postEvent(event, atStart: false)
+            return "queue"
+        }
+        if window.performKeyEquivalent(with: event) { return "window-equivalent" }
+        if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return "menu" }
+        // The window drops a key event addressed to no window.
+        guard let addressed = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: event.modifierFlags,
+            timestamp: event.timestamp,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: event.characters ?? "",
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
+            isARepeat: false,
+            keyCode: event.keyCode
+        ) else { return "dropped" }
+        window.sendEvent(addressed)
+        return "window-event"
+    }
+
+    /// ⌘R, ⌘S and Return start, capture from or resume a review on the
+    /// designer's real Simulator. ⌘Z with a field focused routes by
+    /// `NSApp.keyWindow`, which a non-key window never sets, so it would
+    /// report the annotation fallback instead of the shipped behavior.
+    private static func refusal(of event: NSEvent, in window: NSWindow) -> String? {
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let command = event.modifierFlags.contains(.command)
+        if ["\r", "\n", "\u{3}"].contains(key) || (command && ["r", "s"].contains(key)) {
+            return "it would touch the real Simulator"
+        }
+        if command, key == "z", !window.isKeyWindow, window.firstResponder is NSText {
+            return "⌘Z routing to a focused field needs a key window, which a quiet run never has"
+        }
+        return nil
+    }
+
+    /// The current layout's key for a character: Z sits on a different key
+    /// on QWERTZ than on QWERTY.
+    private static func layoutKeyCode(for character: String) -> CGKeyCode? {
+        (0..<CGKeyCode(51)).first { code in
+            CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true)
+                .flatMap(NSEvent.init(cgEvent:))?.charactersIgnoringModifiers == character
+        }
+    }
+
+    private static func send(characters: String, keyCode: UInt16, flags: NSEvent.ModifierFlags, to window: NSWindow) {
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: flags,
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode
+        ) else { return }
+        _ = deliver(event, to: window)
+    }
+}
 extension AppModel {
     /// A staged `NITPICK_SNAPSHOT_FEEDBACK` state other than "not-connected"
     /// shows the form without a saved connection; the seam never calls send.
@@ -152,5 +529,48 @@ extension AppModel {
         }
         print("feedback snapshot: state=\(state) canSend=\(feedback.canSend) hasText=\(feedback.payload.hasText)")
         fflush(stdout)
+    }
+}
+
+extension NSWindow {
+    /// Swapped with `order(_:relativeTo:)` in a quiet run, so calling itself
+    /// calls AppKit's.
+    @objc fileprivate func quietOrder(_ place: NSWindow.OrderingMode, relativeTo otherWindow: Int) {
+        guard place == .out || self is ParkedWindow else {
+            print("quiet: kept \"\(title)\" \(Int(frame.width))×\(Int(frame.height)) off screen")
+            fflush(stdout)
+            return
+        }
+        quietOrder(place, relativeTo: otherWindow)
+    }
+}
+
+/// Borderless and parked off every screen whatever frame it is given, so
+/// session growth, which clamps a window into the screen it lands on, resizes
+/// it without bringing it on screen, and a sheet, which AppKit slides its
+/// parent on screen for through `setFrameOrigin`, opens off screen too.
+final class ParkedWindow: NSWindow {
+    init(size: NSSize) {
+        super.init(contentRect: Self.parked(size), styleMask: [.borderless], backing: .buffered, defer: false)
+        isReleasedWhenClosed = false
+        isExcludedFromWindowsMenu = true
+        collectionBehavior = [.transient, .ignoresCycle]
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(Self.parked(frameRect.size), display: flag)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
+        super.setFrame(Self.parked(frameRect.size), display: displayFlag, animate: false)
+    }
+
+    override func setFrameOrigin(_ point: NSPoint) {
+        super.setFrameOrigin(Self.parked(frame.size).origin)
+    }
+
+    private static func parked(_ size: NSSize) -> NSRect {
+        let desktop = NSScreen.screens.reduce(NSRect.null) { $0.union($1.frame) }
+        return NSRect(origin: CGPoint(x: desktop.minX - size.width - 1_000, y: desktop.minY), size: size)
     }
 }
