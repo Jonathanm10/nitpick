@@ -169,6 +169,27 @@ extension DesignSnapshot {
     }
 }
 
+extension DesignSnapshot {
+    /// A downsampled copy just large enough to cover `pixelSize` when
+    /// scaled to fill, for a thumbnail that never decodes the full image.
+    /// Nil when the bytes do not decode.
+    public func thumbnail(filling pixelSize: CGSize) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0
+        else { return nil }
+        let scale = max(pixelSize.width / CGFloat(width), pixelSize.height / CGFloat(height))
+        let maxPixelSize = (scale * CGFloat(max(width, height))).rounded(.up)
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ] as CFDictionary)
+    }
+}
+
 extension Collection where Element == DesignSnapshot {
     func effectiveAttachmentNames(reserving reservedNames: [String]) -> [String] {
         var used = Set(reservedNames.map { $0.lowercased() })
