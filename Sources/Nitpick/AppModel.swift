@@ -552,8 +552,8 @@ final class AppModel {
               let device = devices.first(where: { $0.id == id }),
               device.isRuntimeAvailable
         else { return }
-        selectedDeviceID = id
         await perform {
+            selectedDeviceID = id
             do {
                 reviewRun = ReviewRun(device: device, host: try await core.launch(build, on: device))
                 recordRecentDevice(device)
@@ -800,7 +800,12 @@ final class AppModel {
         reportingTo errorKeyPath: ReferenceWritableKeyPath<AppModel, String?> = \.errorMessage,
         _ action: () async throws -> Void
     ) async {
-        guard activity.begin(work) else { return }
+        do {
+            try activity.begin(work)
+        } catch {
+            self[keyPath: errorKeyPath] = error.localizedDescription
+            return
+        }
         self[keyPath: errorKeyPath] = nil
         defer { activity.end() }
         do {

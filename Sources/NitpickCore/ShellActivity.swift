@@ -23,12 +23,19 @@ public struct ShellActivity: Equatable, Sendable {
 
     /// Starts `work`, or refuses it while anything runs: one run at a time,
     /// so no run can end another's busy state, and a Build ingest can never
-    /// end the session a File all run is still writing back.
-    public mutating func begin(_ work: Work) -> Bool {
-        guard running == nil else { return false }
+    /// end the session a File all run is still writing back. A refusal is
+    /// an error the shell shows, so a confirmed action never does nothing
+    /// silently.
+    public mutating func begin(_ work: Work) throws(Busy) {
+        guard running == nil else { throw Busy() }
         running = work
         if work == .filing { filingFailure = nil }
-        return true
+    }
+
+    public struct Busy: LocalizedError, Equatable, Sendable {
+        public var errorDescription: String? {
+            "Nitpick was busy, so that didn’t run. Try again when the current step finishes."
+        }
     }
 
     public mutating func end() {

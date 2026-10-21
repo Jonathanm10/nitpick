@@ -60,7 +60,7 @@ struct EditorEscapeTests {
     func noDiscardWhileFiling() throws {
         let (editor, session, _) = try Self.editor()
         var filing = ShellActivity()
-        _ = filing.begin(.filing)
+        try filing.begin(.filing)
 
         #expect(EditorEscape.inEditor(editor, session: session, activity: filing) == nil)
         #expect(EditorEscape.onSurface(editor, selection: AnnotationSelection<Int>?.none, session: session, activity: filing) == nil)
@@ -82,7 +82,7 @@ struct EditorEscapeTests {
         var (editor, session, id) = try Self.editor()
         editor.hasPendingLabelDraft = labelDraft
         var activity = ShellActivity()
-        if let running { _ = activity.begin(running) }
+        if let running { try activity.begin(running) }
 
         let allowed = editor.allowsDiscard(during: activity)
 

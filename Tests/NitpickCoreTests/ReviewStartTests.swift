@@ -17,7 +17,7 @@ struct ReviewStartTests {
 
     static func start(breaking fact: BrokenFact? = nil, session: ReviewSession? = nil) throws -> ReviewStart? {
         var activity = ShellActivity()
-        if fact == .workRunning { _ = activity.begin(.other) }
+        if fact == .workRunning { try activity.begin(.other) }
         return ReviewStart(
             build: fact == .noBuild ? nil : build,
             run: fact == .buildAlreadyRunning ? try runningReview() : nil,

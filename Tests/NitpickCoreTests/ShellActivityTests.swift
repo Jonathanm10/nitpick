@@ -16,10 +16,10 @@ struct ShellActivityTests {
     }
 
     @Test("a File all run is busy and filing until it ends")
-    func filingRunIsBusyAndFiling() {
+    func filingRunIsBusyAndFiling() throws {
         var activity = ShellActivity()
 
-        _ = activity.begin(.filing)
+        try activity.begin(.filing)
         #expect(activity.isBusy)
         #expect(activity.isFiling)
 
@@ -29,70 +29,75 @@ struct ShellActivityTests {
     }
 
     @Test("other work is busy but not filing")
-    func otherWorkIsBusyButNotFiling() {
+    func otherWorkIsBusyButNotFiling() throws {
         var activity = ShellActivity()
 
-        _ = activity.begin(.other)
+        try activity.begin(.other)
 
         #expect(activity.isBusy)
         #expect(!activity.isFiling)
     }
 
     @Test("work that starts while File all runs is refused and filing keeps running")
-    func workIsRefusedWhileFiling() {
+    func workIsRefusedWhileFiling() throws {
         var activity = ShellActivity()
-        _ = activity.begin(.filing)
+        try activity.begin(.filing)
 
-        _ = activity.begin(.other)
-
+        #expect(throws: ShellActivity.Busy.self) { try activity.begin(.other) }
         #expect(activity.running == .filing)
     }
 
     @Test("work that starts while other work runs is refused")
-    func workIsRefusedWhileOtherWorkRuns() {
+    func workIsRefusedWhileOtherWorkRuns() throws {
         var activity = ShellActivity()
-        _ = activity.begin(.other)
+        try activity.begin(.other)
 
-        _ = activity.begin(.filing)
+        #expect(throws: ShellActivity.Busy.self) { try activity.begin(.filing) }
+        #expect(activity.running == .other)
+    }
+
+    @Test("a refusal is an error with a message the designer can read")
+    func refusalSpeaksToTheDesigner() throws {
+        var activity = ShellActivity()
+        try activity.begin(.other)
+
+        let refusal = #expect(throws: ShellActivity.Busy.self) { try activity.begin(.other) }
+
+        #expect(refusal?.errorDescription?.isEmpty == false)
+    }
+
+    @Test("the next run starts once the current one ends")
+    func nextRunStartsAfterTheCurrentOneEnds() throws {
+        var activity = ShellActivity()
+        try activity.begin(.filing)
+        activity.end()
+
+        try activity.begin(.other)
 
         #expect(activity.running == .other)
     }
 
-    @Test("begin reports refusal, and the next run starts once the current one ends")
-    func beginReportsAdmission() {
-        var activity = ShellActivity()
-
-        let first = activity.begin(.filing)
-        let overlapping = activity.begin(.other)
-        activity.end()
-        let next = activity.begin(.other)
-
-        #expect(first)
-        #expect(!overlapping)
-        #expect(next)
-    }
-
     @Test("a filing failure survives unrelated work")
-    func filingFailureSurvivesUnrelatedWork() {
+    func filingFailureSurvivesUnrelatedWork() throws {
         var activity = ShellActivity()
-        _ = activity.begin(.filing)
+        try activity.begin(.filing)
         activity.recordFilingFailure("The network connection was lost.")
         activity.end()
 
-        _ = activity.begin(.other)
+        try activity.begin(.other)
         activity.end()
 
         #expect(activity.filingFailure?.message == "The network connection was lost.")
     }
 
     @Test("the next File all run forgets the last failure")
-    func nextFilingRunForgetsTheFailure() {
+    func nextFilingRunForgetsTheFailure() throws {
         var activity = ShellActivity()
-        _ = activity.begin(.filing)
+        try activity.begin(.filing)
         activity.recordFilingFailure("The request timed out.")
         activity.end()
 
-        _ = activity.begin(.filing)
+        try activity.begin(.filing)
 
         #expect(activity.filingFailure == nil)
     }
