@@ -344,12 +344,12 @@ final class AppModel {
     private var reviewStart: ReviewStart? {
         ReviewStart(
             build: build,
-            run: reviewRun,
-            filingResult: filingResult,
+            isReviewing: isReviewing,
+            holdsFilingResult: filingResult != nil,
             device: selectedDevice,
             session: session,
             selectedProject: selectedProject,
-            activity: activity
+            isBusy: isBusy
         )
     }
 

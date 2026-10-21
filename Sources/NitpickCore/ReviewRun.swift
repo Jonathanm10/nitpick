@@ -22,19 +22,19 @@ public struct ReviewStart: Equatable, Sendable {
 
     public init?(
         build: Build?,
-        run: ReviewRun?,
-        filingResult: HistoryEntry?,
+        isReviewing: Bool,
+        holdsFilingResult: Bool,
         device: SimulatorDevice?,
         session: ReviewSession?,
         selectedProject: YouTrackProject?,
-        activity: ShellActivity
+        isBusy: Bool
     ) {
         guard let build,
-              run == nil,
-              filingResult == nil,
+              !isReviewing,
+              !holdsFilingResult,
               device?.isRuntimeAvailable == true,
               let project = session?.project ?? selectedProject,
-              !activity.isBusy
+              !isBusy
         else { return nil }
         self.build = build
         self.project = project

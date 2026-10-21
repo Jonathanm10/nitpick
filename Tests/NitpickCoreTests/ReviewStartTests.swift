@@ -1,4 +1,3 @@
-import Foundation
 import NitpickCore
 import Testing
 
@@ -13,38 +12,23 @@ struct ReviewStartTests {
         case noBuild, buildAlreadyRunning, filingResultHeld, noDevice, runtimeUnavailable, noProject, workRunning
     }
 
-    static func start(breaking fact: BrokenFact? = nil, session: ReviewSession? = nil) throws -> ReviewStart? {
-        var activity = ShellActivity()
-        if fact == .workRunning { try activity.begin(.other) }
-        return ReviewStart(
+    static func start(breaking fact: BrokenFact? = nil, session: ReviewSession? = nil) -> ReviewStart? {
+        ReviewStart(
             build: fact == .noBuild ? nil : build,
-            run: fact == .buildAlreadyRunning ? try runningReview() : nil,
-            filingResult: fact == .filingResultHeld ? filedEntry : nil,
+            isReviewing: fact == .buildAlreadyRunning,
+            holdsFilingResult: fact == .filingResultHeld,
             device: fact == .noDevice ? nil
                 : fact == .runtimeUnavailable ? SimulatorDevice(udid: "A1", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: false, isRuntimeAvailable: false)
                 : device,
             session: session,
             selectedProject: fact == .noProject ? nil : picked,
-            activity: activity
+            isBusy: fact == .workRunning
         )
     }
 
-    static func runningReview() throws -> ReviewRun {
-        let xcode = try Fixtures.writeXcode(in: Fixtures.makeTemporaryDirectory(), hostApp: .simulator)
-        let host = try #require(SimulatorHostApp.discover(inDeveloperDirectory: xcode.developerDirectory))
-        return ReviewRun(device: device, host: host)
-    }
-
-    static let filedEntry = HistoryEntry(
-        build: build.identity,
-        project: picked,
-        startedAt: Date(timeIntervalSince1970: 1_783_156_532),
-        findings: []
-    )
-
     @Test("a loaded Build, an available device, and a picked project allow a start")
     func startIsAllowed() throws {
-        let start = try #require(try Self.start())
+        let start = try #require(Self.start())
 
         #expect(start.build == Self.build)
         #expect(start.project == Self.picked)
@@ -54,15 +38,15 @@ struct ReviewStartTests {
     func resumeUsesThePinnedProject() throws {
         let restored = IssueFilingTests.session
 
-        let resume = try #require(try Self.start(breaking: .noProject, session: restored))
-        let resumeWithOtherPick = try #require(try Self.start(session: restored))
+        let resume = try #require(Self.start(breaking: .noProject, session: restored))
+        let resumeWithOtherPick = try #require(Self.start(session: restored))
 
         #expect(resume.project == restored.project)
         #expect(resumeWithOtherPick.project == restored.project)
     }
 
     @Test("any one forbidding fact refuses the start", arguments: BrokenFact.allCases)
-    func startIsRefused(_ fact: BrokenFact) throws {
-        #expect(try Self.start(breaking: fact) == nil)
+    func startIsRefused(_ fact: BrokenFact) {
+        #expect(Self.start(breaking: fact) == nil)
     }
 }
