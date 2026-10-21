@@ -65,6 +65,9 @@ final class CaptureHotkey: @unchecked Sendable {
         let hotKey = Unmanaged<CaptureHotkey>.fromOpaque(userData).takeUnretainedValue()
         let onPress = hotKey.onPress
         Task { @MainActor in
+            // A quiet proof run holds the chord only to show its state; a
+            // press must not capture or bring nitpick forward.
+            guard !WindowSnapshot.isQuiet else { return }
             onPress?()
         }
         return noErr

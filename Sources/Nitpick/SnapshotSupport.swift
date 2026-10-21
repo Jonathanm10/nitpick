@@ -263,10 +263,13 @@ enum MenuDump {
 /// field), `type:<text>`, `key:<chord>` such as `cmd+z` or `opt+cmd+down`,
 /// `refuse` (sets the paused-review hotkey refusal without its beep), and
 /// `snap:`, `ax:` or `menu:<file>` to render or dump the state at that step.
-/// Never script ⌘R, ⌘S or ⌘↩: they boot, capture from or activate the
-/// designer's real Simulator.
 extension AppModel {
     func runKeyScript(_ script: String) async {
+        guard ProcessInfo.processInfo.environment["NITPICK_WORKSPACE"] != nil else {
+            print("keys: refused, a script edits and saves the open session, so it needs NITPICK_WORKSPACE pointing at a fictional one")
+            fflush(stdout)
+            return
+        }
         try? await Task.sleep(for: .seconds(1.5))
         guard let window = NSApp.nitpickMainWindow else {
             print("keys: no main window")
@@ -302,10 +305,6 @@ extension AppModel {
                     Self.send(characters: String(character), keyCode: 0, flags: [], to: window)
                 }
             case "key":
-                if !window.isKeyWindow, window.firstResponder is NSText, ["cmd+z", "cmd+shift+z"].contains(argument) {
-                    print("keys: \(step) skipped, ⌘Z routing to a focused field reads NSApp.keyWindow, which a quiet run never has")
-                    continue
-                }
                 Self.sendChord(argument, to: window)
             default:
                 print("keys: unknown step \(step)")
@@ -366,6 +365,7 @@ extension AppModel {
     /// is never active, so the window and the menu bar get it directly in
     /// AppKit's key-equivalent order instead.
     private static func deliver(_ event: NSEvent, to window: NSWindow) -> String {
+        if let refusal = refusal(of: event, in: window) { return "nothing, refused: \(refusal)" }
         if window.isKeyWindow {
             NSApp.postEvent(event, atStart: false)
             return "queue"
@@ -387,6 +387,22 @@ extension AppModel {
         ) else { return "dropped" }
         window.sendEvent(addressed)
         return "window-event"
+    }
+
+    /// ⌘R, ⌘S and Return start, capture from or resume a review on the
+    /// designer's real Simulator. ⌘Z with a field focused routes by
+    /// `NSApp.keyWindow`, which a non-key window never sets, so it would
+    /// report the annotation fallback instead of the shipped behavior.
+    private static func refusal(of event: NSEvent, in window: NSWindow) -> String? {
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let command = event.modifierFlags.contains(.command)
+        if ["\r", "\n", "\u{3}"].contains(key) || (command && ["r", "s"].contains(key)) {
+            return "it would touch the real Simulator"
+        }
+        if command, key == "z", !window.isKeyWindow, window.firstResponder is NSText {
+            return "⌘Z routing to a focused field needs a key window, which a quiet run never has"
+        }
+        return nil
     }
 
     /// The current layout's key for a character: Z sits on a different key
