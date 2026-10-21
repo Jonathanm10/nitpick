@@ -47,7 +47,7 @@ struct AnnotationToolbar: View {
             Spacer()
 
             Button {
-                model.undoAnnotation()
+                if !Self.sendToFocusedText("undo:") { model.undoAnnotation() }
             } label: {
                 Image(systemName: "arrow.uturn.backward")
             }
@@ -57,7 +57,7 @@ struct AnnotationToolbar: View {
             .accessibilityLabel("Undo Annotation")
             .motionPressFeedback()
             Button {
-                model.redoAnnotation()
+                if !Self.sendToFocusedText("redo:") { model.redoAnnotation() }
             } label: {
                 Image(systemName: "arrow.uturn.forward")
             }
@@ -75,5 +75,16 @@ struct AnnotationToolbar: View {
                 .strokeBorder(NitpickTheme.border, lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.08), radius: 5, x: 0, y: 2)
+    }
+
+    /// On macOS ⌘Z belongs to the focused text field, so a key-triggered
+    /// Undo or Redo goes down the responder chain to its field editor
+    /// instead of the annotations. A click always acts on the annotations.
+    private static func sendToFocusedText(_ action: String) -> Bool {
+        guard NSApp.currentEvent?.type == .keyDown,
+              NSApp.keyWindow?.firstResponder is NSText
+        else { return false }
+        NSApp.sendAction(Selector(action), to: nil, from: nil)
+        return true
     }
 }
