@@ -1,10 +1,10 @@
 import Foundation
 
-/// When typed text lands on disk. A save writes the whole session, about
-/// 14 ms at 30 Findings, so a keystroke defers it until typing pauses for
-/// `quietPeriod`, but never past `maximumDelay` after the first unsaved
-/// keystroke: steady typing still saves, and a crash loses at most
-/// `maximumDelay` of it. Any other save lands the typed text too.
+/// When typed text lands on disk. A save writes the whole session, so a
+/// keystroke defers it until typing pauses for `quietPeriod`, but never
+/// past `maximumDelay` after the first unsaved keystroke: steady typing
+/// still saves, and a crash loses at most `maximumDelay` of it. Any other
+/// save lands the typed text too.
 public struct TypingSave: Equatable, Sendable {
     public static let quietPeriod = Duration.milliseconds(500)
     public static let maximumDelay = Duration.seconds(2)

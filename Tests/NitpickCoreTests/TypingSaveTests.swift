@@ -3,7 +3,7 @@ import NitpickCore
 import Testing
 
 /// Typed text saves once typing pauses, and steady typing still saves
-/// every couple of seconds. Time is passed in, so no test waits.
+/// every couple of seconds.
 @Suite("Typing save")
 struct TypingSaveTests {
     let start = ContinuousClock.now

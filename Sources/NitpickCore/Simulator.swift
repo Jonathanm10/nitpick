@@ -264,8 +264,8 @@ extension AppCore {
     /// simulator's own screenshot facility — no Screen Recording permission
     /// (ADR-0001) — together with the accessibility state it was taken
     /// under (ADR-0009). The screenshot and the settings reads run
-    /// concurrently; errors surface in the order the serial version threw
-    /// them: not booted, then the screenshot, then each setting.
+    /// concurrently; errors surface in this order: not booted, the
+    /// screenshot, then each setting.
     public func captureScreen(of device: SimulatorDevice) async throws -> ScreenCapture {
         // `simctl io screenshot` does not fail on a device that isn't
         // booted — it waits for one, forever, which would hang the app

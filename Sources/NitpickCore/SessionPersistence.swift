@@ -64,12 +64,12 @@ public struct HistoryEntry: Equatable, Sendable, Identifiable {
 /// slot into the history log. All of it plain files under the workspace —
 /// in-process filesystem effects, unseamed by design.
 extension AppCore {
-    /// Persists the open session; the shell calls it on every mutation.
-    /// The manifest is JSON. Captures and Design Snapshots are sidecar
-    /// files written once, because the bytes under a name never change: a
-    /// Finding's screenshot is fixed, and a Design Snapshot Replace mints a
-    /// new `dataVersion`, so a new file. A per-keystroke save rewrites only
-    /// the manifest, which grows with the session's Annotation points.
+    /// Persists the open session. The manifest is JSON. Captures and
+    /// Design Snapshots are sidecar files written once, because the bytes
+    /// under a name never change: a Finding's screenshot is fixed, and a
+    /// Design Snapshot Replace mints a new `dataVersion`, so a new file. A
+    /// later save rewrites only the manifest, which grows with the
+    /// session's Annotation points.
     public func saveOpenSession(_ session: ReviewSession) throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: openSessionCapturesDirectory, withIntermediateDirectories: true)

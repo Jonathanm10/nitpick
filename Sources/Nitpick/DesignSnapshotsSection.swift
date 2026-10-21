@@ -184,10 +184,8 @@ private struct DesignSnapshotCard: View {
     }
 }
 
-/// Card thumbnails, downsampled once per snapshot bytes. The card body
-/// re-runs on every session edit, and decoding the full image there cost
-/// a full PNG decode per card per keystroke. Keyed by `dataVersion`, so a
-/// Replace shows its new image and a rename reuses the old one.
+/// The card body re-runs on every session edit, so each `dataVersion`
+/// decodes once.
 @MainActor
 private enum DesignSnapshotThumbnails {
     static let size = CGSize(width: 104, height: 72)

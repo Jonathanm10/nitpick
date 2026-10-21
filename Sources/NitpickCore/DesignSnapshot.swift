@@ -171,8 +171,7 @@ extension DesignSnapshot {
 
 extension DesignSnapshot {
     /// A downsampled copy just large enough to cover `pixelSize` when
-    /// scaled to fill, for a thumbnail that never decodes the full image.
-    /// Nil when the bytes do not decode.
+    /// scaled to fill. Nil when the bytes do not decode.
     public func thumbnail(filling pixelSize: CGSize) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],

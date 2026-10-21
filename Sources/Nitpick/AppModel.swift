@@ -37,8 +37,6 @@ final class AppModel {
     private(set) var deviceSettings = DeviceSettings()
     @ObservationIgnored private var typingSave = TypingSave()
     @ObservationIgnored private var typingSaveTask: Task<Void, Never>?
-    /// The Editor target's capture, decoded once so each Annotation edit
-    /// re-flattens without re-decoding the PNG.
     @ObservationIgnored private var decodedCapture: (id: TrayItem.ID, screenshot: DecodedScreenshot)?
     /// The core-rendered annotated capture — what the designer sees while
     /// editing, and exactly what filing flattens.
@@ -778,10 +776,7 @@ final class AppModel {
             : "Couldn’t set some triage fields (\(list)) — set them in YouTrack by hand."
     }
 
-    /// Sessions persist as they are created (issue 07): every mutation
-    /// lands on disk before the designer's next action, so a quit costs
-    /// nothing. Typing is the one exception, see `TypingSave`. A failed
-    /// save leaves typed text pending, so the next flush retries it.
+    /// Sessions persist as they are created (issue 07).
     private func persistOpenSession() {
         typingSaveTask?.cancel()
         typingSaveTask = nil
@@ -807,8 +802,6 @@ final class AppModel {
         }
     }
 
-    /// Lands typed text before anything leaves the current state: every
-    /// `perform` action, a Tray selection, a window closing, and quit.
     private func flushTypingSave() {
         if typingSave.isPending { persistOpenSession() }
     }
