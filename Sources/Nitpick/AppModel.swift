@@ -115,6 +115,9 @@ final class AppModel {
                 // before it opens the session, so only a close drops them.
                 reviewRun = nil
                 sessionSchema = ProjectSchema()
+                typingSave = TypingSave()
+                typingSaveTask?.cancel()
+                typingSaveTask = nil
             }
             // Or the next session would open on a stale "File N remaining".
             activity.forgetFilingFailure()
@@ -708,6 +711,11 @@ final class AppModel {
         }
     }
     private func endSession(clearingPersisted: Bool) throws {
+        // A session left on disk to resume must carry what was typed, so a
+        // failed save stops the transition and shows its error.
+        if !clearingPersisted, typingSave.isPending, let session {
+            try core.saveOpenSession(session)
+        }
         session = nil
         // A dropped-field notice belongs to this session. It is not an
         // edge reset: a successful File all ends its session yet still
@@ -778,29 +786,33 @@ final class AppModel {
 
     /// Sessions persist as they are created (issue 07).
     private func persistOpenSession() {
-        typingSave.saved()
         typingSaveTask?.cancel()
         typingSaveTask = nil
         guard let session else { return }
         do {
             try core.saveOpenSession(session)
+            typingSave.saved()
         } catch {
             errorMessage = error.localizedDescription
+            scheduleTypingSave(at: typingSave.failed(at: .now))
         }
     }
 
     private func persistOpenSessionAfterTyping() {
-        let due = typingSave.keystroke(at: .now)
+        scheduleTypingSave(at: typingSave.keystroke(at: .now))
+    }
+
+    private func scheduleTypingSave(at due: ContinuousClock.Instant) {
         typingSaveTask?.cancel()
         typingSaveTask = Task { [weak self] in
             try? await Task.sleep(until: due)
             guard !Task.isCancelled else { return }
-            self?.persistOpenSession()
+            self?.flushTypingSave()
         }
     }
 
     private func flushTypingSave() {
-        if typingSave.isPending { persistOpenSession() }
+        if typingSave.flushes(during: activity) { persistOpenSession() }
     }
 
     private func refreshHistory() {
@@ -823,20 +835,24 @@ final class AppModel {
         reportingTo errorKeyPath: ReferenceWritableKeyPath<AppModel, String?> = \.errorMessage,
         _ action: () async throws -> Void
     ) async {
+        self[keyPath: errorKeyPath] = nil
+        // Before `begin`, so File all's copy of the session is on disk
+        // before filing owns persistence; after `end`, so a save skipped
+        // or failed meanwhile retries at once.
+        flushTypingSave()
         do {
             try activity.begin(work)
         } catch {
             self[keyPath: errorKeyPath] = error.localizedDescription
             return
         }
-        self[keyPath: errorKeyPath] = nil
-        defer { activity.end() }
-        flushTypingSave()
         do {
             try await action()
         } catch {
             self[keyPath: errorKeyPath] = error.localizedDescription
         }
+        activity.end()
+        flushTypingSave()
     }
 }
 

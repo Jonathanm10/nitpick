@@ -2,8 +2,8 @@ import Foundation
 import NitpickCore
 import Testing
 
-/// Typed text saves once typing pauses, and steady typing still saves
-/// every couple of seconds.
+/// Typed text saves once typing pauses, steady typing still saves every
+/// couple of seconds, and a failed save stays pending until one succeeds.
 @Suite("Typing save")
 struct TypingSaveTests {
     let start = ContinuousClock.now
@@ -62,5 +62,57 @@ struct TypingSaveTests {
         _ = save.keystroke(at: at(0))
 
         #expect(save.keystroke(at: at(2500)) == at(2000))
+    }
+
+    @Test("a failed save keeps the text pending and retries two seconds later")
+    func failedSaveStaysPending() {
+        var save = TypingSave()
+        _ = save.keystroke(at: at(0))
+
+        #expect(save.failed(at: at(500)) == at(2500))
+        #expect(save.isPending)
+        #expect(save.flushes(during: ShellActivity()))
+    }
+
+    @Test("a keystroke after a failed save is due by the retry")
+    func keystrokeAfterFailureKeepsTheRetry() {
+        var save = TypingSave()
+        _ = save.keystroke(at: at(0))
+        _ = save.failed(at: at(500))
+
+        #expect(save.keystroke(at: at(2400)) == at(2500))
+    }
+
+    @Test("a retry that succeeds clears the pending text")
+    func retrySucceeds() {
+        var save = TypingSave()
+        _ = save.keystroke(at: at(0))
+        _ = save.failed(at: at(500))
+
+        save.saved()
+        #expect(!save.isPending)
+        #expect(!save.flushes(during: ShellActivity()))
+    }
+
+    @Test("nothing pending never flushes")
+    func idleNeverFlushes() {
+        #expect(!TypingSave().flushes(during: ShellActivity()))
+    }
+
+    @Test("pending text flushes during other work but never while filing owns the session")
+    func noFlushWhileFiling() throws {
+        var save = TypingSave()
+        _ = save.keystroke(at: at(0))
+        _ = save.failed(at: at(500))
+
+        var other = ShellActivity()
+        try other.begin(.other)
+        var filing = ShellActivity()
+        try filing.begin(.filing)
+
+        #expect(save.flushes(during: other))
+        #expect(!save.flushes(during: filing))
+        filing.end()
+        #expect(save.flushes(during: filing))
     }
 }
