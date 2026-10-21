@@ -38,11 +38,19 @@ enum NitpickTheme {
     }
 
     // Type scale. macOS control text is 13pt (`NSFont.systemFontSize`); the
-    // session screen aligns to it rather than sitting oversized above it. Three
-    // steps — the genuinely app-wide-portable bit of the visual language.
+    // session screen aligns to it rather than sitting oversized above it, with
+    // 12pt for secondary text and smaller sizes only for keycaps and glyphs.
     static let emphasis = Font.system(size: 13, weight: .semibold)
     static let body = Font.system(size: 13)
+    static let bodyMedium = Font.system(size: 13, weight: .medium)
+    static let heading = Font.system(size: 13, weight: .bold)
     static let secondary = Font.system(size: 12)
+    static let secondaryMedium = Font.system(size: 12, weight: .medium)
+    static let secondaryEmphasis = Font.system(size: 12, weight: .semibold)
+    static let secondaryMono = Font.system(size: 12).monospaced()
+    static let keycap = Font.system(size: 11).monospaced()
+    static let smallGlyph = Font.system(size: 10, weight: .semibold)
+    static let heroGlyph = Font.system(size: 36, weight: .light)
 }
 
 private struct NitpickFieldModifier: ViewModifier {
@@ -71,7 +79,7 @@ private struct NitpickFieldModifier: ViewModifier {
 private struct NitpickSectionLabelModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .font(.system(size: 12, weight: .semibold))
+            .font(NitpickTheme.secondaryEmphasis)
             .textCase(.uppercase)
             .kerning(0.6)
             .foregroundStyle(NitpickTheme.secondaryText)

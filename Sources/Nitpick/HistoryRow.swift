@@ -12,9 +12,9 @@ struct HistoryRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 Text(entry.project.name)
-                    .font(.callout.weight(.semibold))
+                    .font(NitpickTheme.secondaryEmphasis)
                 Text("\(entry.build.bundleID) \(entry.build.version) (\(entry.build.buildNumber))")
-                    .font(.callout.monospaced())
+                    .font(NitpickTheme.secondaryMono)
                     .foregroundStyle(.secondary)
                 Text(entry.startedAt.formatted(date: .abbreviated, time: .shortened))
                     .foregroundStyle(.secondary)
@@ -22,7 +22,7 @@ struct HistoryRow: View {
             ForEach(entry.findings, id: \.issue.idReadable) { finding in
                 HStack(spacing: 8) {
                     Link(finding.issue.idReadable, destination: finding.issue.url)
-                        .font(.callout)
+                        .font(NitpickTheme.secondary)
                         .motionPressFeedback()
                     let summary = finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
                     Text(summary.isEmpty ? "Untitled Finding" : summary)

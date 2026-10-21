@@ -192,7 +192,7 @@ private struct DesignSnapshotRemoveButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .semibold))
+                .font(NitpickTheme.smallGlyph)
                 .foregroundStyle(NitpickTheme.secondaryText)
                 .frame(width: 18, height: 18)
                 .background(hovering ? NitpickTheme.hover : NitpickTheme.raised.opacity(0.8), in: Circle())

@@ -15,7 +15,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             if let connection = model.youTrack {
                 Text("YouTrack")
-                    .font(.headline)
+                    .font(NitpickTheme.heading)
                 HStack(spacing: 12) {
                     Text("Connected as \(connection.user.fullName) (\(connection.user.login))")
                     Spacer()
@@ -24,7 +24,7 @@ struct SettingsView: View {
                 }
             } else {
                 Text("Connect to YouTrack")
-                    .font(.headline)
+                    .font(NitpickTheme.heading)
                 TextField("Instance URL (https://youtrack.example.com)", text: $model.youTrackInstanceURLField)
                     .textContentType(.URL)
                     .autocorrectionDisabled()

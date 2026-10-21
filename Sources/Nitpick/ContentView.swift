@@ -260,7 +260,7 @@ struct ContentView: View {
                 } else {
                     VStack(spacing: 10) {
                         Image(systemName: "square.and.arrow.down.on.square")
-                            .font(.system(size: 36, weight: .light))
+                            .font(NitpickTheme.heroGlyph)
                             .foregroundStyle(.tertiary)
                         Text("Drop a simulator Build (.app or .zip)")
                             .font(.title3)
@@ -529,7 +529,7 @@ struct ContentView: View {
                 .nitpickSectionLabel()
             Spacer()
             Text("\(model.unfiledFindingCount) unfiled")
-                .font(.system(size: 12, weight: .medium))
+                .font(NitpickTheme.secondaryMedium)
                 .foregroundStyle(NitpickTheme.secondaryText)
         }
         // The column's first flexible absorber: a lower priority than

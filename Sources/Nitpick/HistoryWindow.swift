@@ -82,7 +82,7 @@ struct HistoryTraceLine: View {
                     Text(trace.latestEntry.startedAt.formatted(date: .abbreviated, time: .shortened))
                     Spacer(minLength: 0)
                 }
-                .font(.callout)
+                .font(NitpickTheme.secondary)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
@@ -93,7 +93,7 @@ struct HistoryTraceLine: View {
             HStack(spacing: 8) {
                 ForEach(trace.visibleIssues, id: \.idReadable) { issue in
                     Link(issue.idReadable, destination: issue.url)
-                        .font(.callout)
+                        .font(NitpickTheme.secondary)
                         .motionPressFeedback()
                 }
                 if trace.overflowCount > 0 {
@@ -101,7 +101,7 @@ struct HistoryTraceLine: View {
                         openHistory()
                     }
                     .buttonStyle(.plain)
-                    .font(.callout)
+                    .font(NitpickTheme.secondary)
                     .motionPressFeedback()
                 }
             }
