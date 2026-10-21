@@ -67,9 +67,14 @@ struct ContentView: View {
             // the in-place filing result (issue 03): dropping onto the
             // result ingests exactly as home does, dismissing it for the
             // next review. Only a live session's unfiled work stages a
-            // confirmation below. While work runs the drop bounces: an
-            // ingest would end the session a File all run still writes.
-            guard model.canIngest, let url = urls.first else { return false }
+            // confirmation below. While work runs the drop bounces with the
+            // busy message: an ingest would end the session a File all run
+            // still writes.
+            guard model.canIngest else {
+                model.reportBusyDrop()
+                return false
+            }
+            guard let url = urls.first else { return false }
             // Ingesting ends the open session (one Build per Review
             // Session) — and with it every unfiled Finding. A session
             // holding unfiled work stages the drop behind a confirmation;

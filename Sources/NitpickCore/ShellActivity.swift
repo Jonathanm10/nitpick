@@ -30,6 +30,8 @@ public struct ShellActivity: Equatable, Sendable {
     }
 
     public struct Busy: LocalizedError, Equatable, Sendable {
+        public init() {}
+
         public var errorDescription: String? {
             "Nitpick was busy, so that didn’t run. Try again when the current step finishes."
         }

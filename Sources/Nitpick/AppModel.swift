@@ -361,6 +361,11 @@ final class AppModel {
 
     var canIngest: Bool { !isBusy }
 
+    /// A drop that bounces while work runs says why, like a refused `perform`.
+    func reportBusyDrop() {
+        errorMessage = ShellActivity.Busy().localizedDescription
+    }
+
     var selectedProject: YouTrackProject? {
         youTrack?.projects.first { $0.id == selectedProjectID }
     }
