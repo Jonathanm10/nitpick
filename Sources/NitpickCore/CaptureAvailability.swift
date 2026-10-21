@@ -4,8 +4,8 @@ public enum CaptureHotkeyState: Equatable, Sendable {
     /// Not registered: no Review Session, or one still opening.
     case inactive
     case registered
-    /// Carbon refused the chord, so only ⌘S captures. Another app holding it
-    /// is the usual cause, but a refusal does not say so.
+    /// Carbon refused the chord, so only ⌘S captures. Usually another app
+    /// holds it, but this also covers failures that are not about the chord.
     case taken
 
     public static let chord = "⌃⌥⌘N"

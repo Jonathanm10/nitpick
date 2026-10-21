@@ -11,7 +11,7 @@ enum WindowSnapshot {
     /// Any `NITPICK_SNAPSHOT_*` variable makes the run quiet, so proof runs never
     /// take the designer's focus: no Dock tile, never activated, the main
     /// view hosted in a window parked off every screen instead of the
-    /// WindowGroup's, and no other window on screen.
+    /// WindowGroup's, and History, Settings and sheets kept off screen.
     /// `NITPICK_SNAPSHOT_VISIBLE=1` opts back into a normal launch.
     static let isQuiet: Bool = {
         let environment = ProcessInfo.processInfo.environment
@@ -30,18 +30,24 @@ enum WindowSnapshot {
             window.orderBack(nil)
             parkedMainWindow = window
         }
-        // History, Settings, sheets and any panel would open on screen: AppKit
-        // keeps 40 pt of a titled window on screen however far it is moved,
-        // and a window ordered out after the fact has already reached the
-        // window server. So every order-in passes through `quietOrder`, which
-        // lets only the parked windows in. The rest stay live but unshown;
-        // a render still composites a sheet, and `window:<title>=<file>`
-        // renders the others.
+        _ = quietOrdering
+    }
+
+    /// History, Settings and sheets would open on screen: AppKit keeps 40 pt
+    /// of a titled window on screen however far it is moved, and a window
+    /// ordered out after the fact has already reached the window server. So
+    /// `order(_:relativeTo:)` goes through `quietOrder`, which lets only the
+    /// parked windows in. The rest stay live but unshown; a render still
+    /// composites a sheet, and `window:<title>=<file>` renders the others.
+    /// Measured for those three; popovers, the file importer and
+    /// `orderFrontRegardless` are not, and no scripted step opens them.
+    /// A `static let`, so the swap runs once and a second call cannot undo it.
+    private static let quietOrdering: Void = {
         guard let shipped = class_getInstanceMethod(NSWindow.self, #selector(NSWindow.order(_:relativeTo:))),
               let quiet = class_getInstanceMethod(NSWindow.self, #selector(NSWindow.quietOrder(_:relativeTo:)))
         else { return }
         method_exchangeImplementations(shipped, quiet)
-    }
+    }()
 
     /// `NITPICK_SNAPSHOT_SIZE=WxH` renders an offscreen, never-key copy of the
     /// main view at exactly that size instead of the real window: layout QA
@@ -117,9 +123,13 @@ enum WindowSnapshot {
             fflush(stdout)
             return
         }
-        try? rep.representation(using: .png, properties: [:])?
-            .write(to: URL(fileURLWithPath: path))
-        print("snapshot: \"\(title)\" \(rep.pixelsWide)×\(rep.pixelsHigh) px from frame \(window.frame)")
+        do {
+            guard let png = rep.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
+            try png.write(to: URL(fileURLWithPath: path))
+            print("snapshot: \"\(title)\" \(rep.pixelsWide)×\(rep.pixelsHigh) px from frame \(window.frame)")
+        } catch {
+            print("snapshot: \"\(title)\" not written to \(path): \(error.localizedDescription)")
+        }
         fflush(stdout)
     }
 

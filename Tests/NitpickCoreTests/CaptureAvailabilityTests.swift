@@ -14,7 +14,7 @@ struct CaptureAvailabilityTests {
         #expect(state.takenWarning == nil)
     }
 
-    @Test("a taken chord drops its keycap, warns, and leaves ⌘S as the only capture")
+    @Test("a taken chord drops its keycap, warns, and its help names only ⌘S")
     func takenChordWarns() {
         let state = CaptureHotkeyState.taken
 
