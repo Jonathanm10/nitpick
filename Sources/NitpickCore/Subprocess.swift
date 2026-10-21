@@ -121,8 +121,7 @@ public struct ProcessSubprocessRunner: SubprocessRunner {
     }
 }
 
-/// Accumulates everything a pipe's read end produces; completes at EOF or
-/// on cancel, which closes the read end.
+/// Accumulates everything a pipe's read end produces until EOF or a cancel.
 private final class PipeDrain: Sendable {
     private struct State {
         var data = Data()

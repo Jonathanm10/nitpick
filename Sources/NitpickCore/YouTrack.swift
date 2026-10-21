@@ -105,8 +105,8 @@ extension AppCore {
 
     /// Verifies the pasted URL + token by fetching the connected user and
     /// the projects the designer can file into, then persists both halves —
-    /// the token to the credential store, the URL to the workspace. Nothing
-    /// is persisted unless the whole verification succeeds.
+    /// the token to the credential store, the URL to the workspace. Neither
+    /// half is persisted unless the whole verification succeeds.
     ///
     /// `unsavedSession` is the open session when it holds typed text not
     /// yet on disk. It saves before anything else: the new connection can
