@@ -5,8 +5,10 @@ import Testing
 /// and a refused chord press says why instead of doing nothing.
 @Suite("Capture availability")
 struct CaptureAvailabilityTests {
-    @Test("a held chord shows its keycap and is named in the hints", arguments: [CaptureHotkeyState.registered, .inactive])
-    func heldChordIsHinted(state: CaptureHotkeyState) {
+    @Test("a held chord shows its keycap and is named in the hints")
+    func heldChordIsHinted() {
+        let state = CaptureHotkeyState.registered
+
         #expect(state.chordKeycap == "⌃⌥⌘N")
         #expect(state.captureHelp == "Capture the current screen (⌘S here, ⌃⌥⌘N from any app).")
         #expect(state.takenWarning == nil)
@@ -19,6 +21,17 @@ struct CaptureAvailabilityTests {
         #expect(state.chordKeycap == nil)
         #expect(state.captureHelp == "Capture the current screen (⌘S).")
         #expect(state.takenWarning == "⌃⌥⌘N is taken by another app")
+    }
+
+    @Test("a chord not yet registered is neither promised nor warned about")
+    func inactiveChordIsSilent() {
+        let state = CaptureHotkeyState.inactive
+
+        #expect(state.chordKeycap == nil)
+        #expect(state.captureHelp == "Capture the current screen (⌘S).")
+        #expect(state.takenWarning == nil)
+        #expect(CapturePlaceholder(isReviewing: true, hotkey: .inactive).title == "⌘S to capture")
+        #expect(CapturePlaceholder(isReviewing: true, hotkey: .inactive).note == nil)
     }
 
     @Test("a running review's empty pane names both captures")

@@ -1,7 +1,7 @@
 /// Whether the Review Session holds the global capture chord (ADR-0006), and
 /// what the capture hints say about it.
 public enum CaptureHotkeyState: Equatable, Sendable {
-    /// No Review Session, so no chord.
+    /// Not registered: no Review Session, or one still opening.
     case inactive
     case registered
     /// Another app holds the chord, so only ⌘S captures.
@@ -9,15 +9,15 @@ public enum CaptureHotkeyState: Equatable, Sendable {
 
     public static let chord = "⌃⌥⌘N"
 
-    /// The Capture button's keycap for the chord.
+    /// The Capture button's keycap for the chord, shown only while it works.
     public var chordKeycap: String? {
-        self == .taken ? nil : Self.chord
+        self == .registered ? Self.chord : nil
     }
 
     public var captureHelp: String {
-        self == .taken
-            ? "Capture the current screen (⌘S)."
-            : "Capture the current screen (⌘S here, \(Self.chord) from any app)."
+        self == .registered
+            ? "Capture the current screen (⌘S here, \(Self.chord) from any app)."
+            : "Capture the current screen (⌘S)."
     }
 
     /// The topbar's warning while the chord is taken.
@@ -41,7 +41,11 @@ public struct CapturePlaceholder: Equatable, Sendable {
             return
         }
         title = "⌘S to capture"
-        note = hotkey == .taken ? CaptureHotkeyState.takenExplanation : "or \(CaptureHotkeyState.chord) from the Simulator"
+        note = switch hotkey {
+        case .registered: "or \(CaptureHotkeyState.chord) from the Simulator"
+        case .taken: CaptureHotkeyState.takenExplanation
+        case .inactive: nil
+        }
     }
 }
 
