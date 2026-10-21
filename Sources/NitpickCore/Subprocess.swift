@@ -77,10 +77,11 @@ public struct ProcessSubprocessRunner: SubprocessRunner {
 
         // The termination handler is installed before run() so a subprocess
         // that exits instantly can't slip past it. Cancellation stops the
-        // process, so a stuck command never holds a caller that gave up on it.
+        // process and the drains, so neither a stuck command nor a
+        // descendant holding its pipes open keeps a caller that gave up.
         let launch = Mutex(Launch.pending)
-        let exitCode: Int32 = try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+        return try await withTaskCancellationHandler {
+            let exitCode: Int32 = try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
                 do {
                     try launch.withLock { state in
@@ -93,19 +94,18 @@ public struct ProcessSubprocessRunner: SubprocessRunner {
                     continuation.resume(throwing: error)
                 }
             }
+            let standardOutput = await stdout.drainToEnd()
+            let standardError = await stderr.drainToEnd()
+            try Task.checkCancellation()
+            return SubprocessResult(exitCode: exitCode, standardOutput: standardOutput, standardError: standardError)
         } onCancel: {
             launch.withLock { state in
                 if state == .running { Self.stop(process) }
                 state = .cancelled
             }
+            stdout.finish()
+            stderr.finish()
         }
-        try Task.checkCancellation()
-
-        return SubprocessResult(
-            exitCode: exitCode,
-            standardOutput: await stdout.drainToEnd(),
-            standardError: await stderr.drainToEnd()
-        )
     }
 
     private enum Launch {
@@ -121,7 +121,8 @@ public struct ProcessSubprocessRunner: SubprocessRunner {
     }
 }
 
-/// Accumulates everything a pipe's read end produces; completes at EOF.
+/// Accumulates everything a pipe's read end produces; completes at EOF or
+/// on cancel, which closes the read end.
 private final class PipeDrain: Sendable {
     private struct State {
         var data = Data()
@@ -130,22 +131,20 @@ private final class PipeDrain: Sendable {
     }
 
     private let state = Mutex(State())
+    private let handle: FileHandle
 
     init(_ pipe: Pipe) {
-        pipe.fileHandleForReading.readabilityHandler = { [self] handle in
-            let chunk = handle.availableData
-            if chunk.isEmpty {
-                handle.readabilityHandler = nil
-                let (continuation, data): (CheckedContinuation<Data, Never>?, Data) =
-                    state.withLock { state in
-                        state.finished = true
-                        defer { state.continuation = nil }
-                        return (state.continuation, state.data)
-                    }
-                continuation?.resume(returning: data)
-            } else {
-                state.withLock { $0.data.append(chunk) }
+        handle = pipe.fileHandleForReading
+        handle.readabilityHandler = { [self] handle in
+            // Read under the lock so a cancel can never close the handle
+            // mid-read.
+            let ended: Bool = state.withLock { state in
+                guard !state.finished else { return false }
+                let chunk = handle.availableData
+                state.data.append(chunk)
+                return chunk.isEmpty
             }
+            if ended { finish() }
         }
     }
 
@@ -160,5 +159,20 @@ private final class PipeDrain: Sendable {
                 continuation.resume(returning: alreadyFinished)
             }
         }
+    }
+
+    /// Runs once: the first of EOF and a cancel takes the waiting
+    /// continuation.
+    func finish() {
+        handle.readabilityHandler = nil
+        let waiting: (CheckedContinuation<Data, Never>, Data)? = state.withLock { state in
+            guard !state.finished else { return nil }
+            state.finished = true
+            try? handle.close()
+            guard let continuation = state.continuation else { return nil }
+            state.continuation = nil
+            return (continuation, state.data)
+        }
+        if let (continuation, data) = waiting { continuation.resume(returning: data) }
     }
 }

@@ -123,6 +123,14 @@ extension SubprocessCommand {
         let script = (ignoringSIGTERM ? "trap '' TERM; " : "") + "touch \"$1\"; exec /bin/sleep 30"
         return SubprocessCommand(executablePath: "/bin/sh", arguments: ["-c", script, "sh", marker.path])
     }
+
+    /// The shell exits at once, leaving a background sleep that holds its
+    /// stdout open. The sleep touches `marker` only once the shell is
+    /// reaped, so the run is past the exit and waiting on its pipes.
+    static func sleepHoldingOutput(touchingAfterExit marker: URL) -> SubprocessCommand {
+        let script = #"(while kill -0 $$ 2>/dev/null; do /bin/sleep 0.05; done; touch "$1"; exec /bin/sleep 30) &"#
+        return SubprocessCommand(executablePath: "/bin/sh", arguments: ["-c", script, "sh", marker.path])
+    }
 }
 
 extension Fixtures {
