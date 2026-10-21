@@ -870,6 +870,16 @@ extension AppModel {
 
     var canDiscard: Bool { editor.allowsDiscard(during: activity) }
 
+    func selectFinding(_ step: TrayStep) {
+        guard let next = editor.stepping(step, in: session) else { return }
+        editor = next
+        refreshAnnotatedImage()
+    }
+
+    func canSelectFinding(_ step: TrayStep) -> Bool {
+        editor.stepping(step, in: session) != nil
+    }
+
     /// Removes a Finding from the tray; the core refuses to discard
     /// anything filing has already touched.
     func discardFinding(id: TrayItem.ID) {

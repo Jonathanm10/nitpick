@@ -71,6 +71,24 @@ struct ReviewCommands: Commands {
             .keyboardShortcut("s", modifiers: [.command])
             .disabled(!model.canCapture)
 
+            Divider()
+
+            // Option-Command arrows because AppKit's standard key bindings
+            // give the other arrow chords to text fields and leave these free.
+            Button("Previous Finding") {
+                model.selectFinding(.previous)
+            }
+            .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+            .disabled(!model.canSelectFinding(.previous))
+
+            Button("Next Finding") {
+                model.selectFinding(.next)
+            }
+            .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+            .disabled(!model.canSelectFinding(.next))
+
+            Divider()
+
             Button("File All") {
                 Task { await model.fileAllFindings() }
             }
