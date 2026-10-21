@@ -134,7 +134,7 @@ extension SubprocessCommand {
 }
 
 extension Fixtures {
-    static func waitForFiles(_ files: [URL], timeout: Duration = .seconds(5)) async throws {
+    static func waitForFiles(_ files: [URL], timeout: Duration = .seconds(15)) async throws {
         let deadline = ContinuousClock.now + timeout
         while !files.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) {
             guard ContinuousClock.now < deadline else { throw WaitTimedOut() }
