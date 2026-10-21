@@ -142,6 +142,11 @@ extension AppCore {
                 }
                 pending.append((index, try item.finding.annotatedScreenshotPNG()))
             }
+            // The shell's typed text may not be on disk yet. Saving it
+            // before the first request means a crash resumes with it, and
+            // a disk that refuses the write stops the run before it
+            // orphans an issue it could never mark as filed.
+            try saveOpenSession(updated)
             // Resolve every tag before any issue exists — the same
             // orphan-avoidance as single filing. design-review is shared by
             // every item; each distinct Finding Type contributes its own
