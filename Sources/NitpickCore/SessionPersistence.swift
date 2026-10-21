@@ -58,9 +58,9 @@ public struct HistoryEntry: Equatable, Sendable, Identifiable {
 }
 
 /// Review Sessions persist locally as they are created (PRD durability):
-/// the shell saves the open session after every mutation, filing saves
-/// after every server-acknowledged step, and a relaunch resumes whatever a
-/// quit or crash left behind. A fully filed session moves from the open
+/// the shell saves typed text through `TypingSave` and every other edit at
+/// once, filing saves after every server-acknowledged step, and a relaunch
+/// resumes whatever a quit or crash left behind. A fully filed session moves from the open
 /// slot into the history log. All of it plain files under the workspace —
 /// in-process filesystem effects, unseamed by design.
 extension AppCore {
