@@ -43,13 +43,17 @@ final class AppModel {
     private(set) var capturePixelSize: CGSize?
     /// The Editor's target — the capture that just landed, or whatever tray
     /// row the designer selected — and the state that belongs to it.
-    /// Retargeting assigns a fresh value, so nothing survives by accident.
-    private(set) var editor = EditorState()
+    /// Retargeting assigns a fresh value, so nothing survives by accident,
+    /// and drops an Annotation selection made on the old target, drag
+    /// overlay included.
+    private(set) var editor = EditorState() {
+        didSet {
+            if annotationSelection?.belongs(to: editor) == false { annotationSelection = nil }
+        }
+    }
     /// The Select tool's Annotation and its in-flight move. Stored apart
-    /// from `editor` so a drag tick re-renders only the annotation surface;
-    /// read through `annotationSelection`, which drops one made on an
-    /// earlier target.
-    private var selectionStorage: AnnotationSelection<NSImage>?
+    /// from `editor` so a drag tick re-renders only the annotation surface.
+    private var annotationSelection: AnnotationSelection<NSImage>?
     var selectedItemID: TrayItem.ID? { editor.target }
     var captureID: UUID { editor.generation }
     var selectedAnnotationIndex: Int? { annotationSelection?.index }
@@ -69,8 +73,9 @@ final class AppModel {
     private(set) var activity = ShellActivity()
     var isBusy: Bool { activity.isBusy }
     var filingFailure: FilingFailure? { activity.filingFailure }
-    /// Written by the annotation surface. Equal writes are skipped so the
-    /// readers of `editor` re-render only on a real change.
+    /// Written by the annotation surface. This setter and
+    /// `designSnapshotErrorMessage`'s skip equal writes, so the readers of
+    /// `editor` re-render only on a real change.
     var hasPendingLabelDraft: Bool {
         get { editor.hasPendingLabelDraft }
         set { if editor.hasPendingLabelDraft != newValue { editor.hasPendingLabelDraft = newValue } }
@@ -78,7 +83,7 @@ final class AppModel {
     var errorMessage: String?
     private(set) var designSnapshotErrorMessage: String? {
         get { editor.designSnapshotError }
-        set { editor.designSnapshotError = newValue }
+        set { if editor.designSnapshotError != newValue { editor.designSnapshotError = newValue } }
     }
     /// Menu commands live outside ContentView, so the End Review confirmation
     /// flag sits on the model where both the window and the menu can drive it.
@@ -788,11 +793,6 @@ final class AppModel {
         editor = EditorState()
         capturedImage = nil
         capturePixelSize = nil
-    }
-
-    private var annotationSelection: AnnotationSelection<NSImage>? {
-        get { selectionStorage.flatMap { $0.belongs(to: editor) ? $0 : nil } }
-        set { selectionStorage = newValue }
     }
 
     private func perform(

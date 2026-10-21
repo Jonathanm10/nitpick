@@ -48,7 +48,7 @@ public struct EditorState: Equatable, Sendable {
 /// on it: workspace chrome, never persisted, never flattened into any PNG.
 /// The shell stores it apart from `EditorState` so a drag tick re-renders
 /// only the annotation surface. Its `generation` ties it to the Editor
-/// target it was made on, so a retarget orphans it without a second reset.
+/// target it was made on, so a retarget can tell the selection it left behind.
 public struct AnnotationSelection<Overlay> {
     public let generation: UUID
     public let index: Int
