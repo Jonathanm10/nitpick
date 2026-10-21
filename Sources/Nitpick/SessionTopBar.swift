@@ -82,12 +82,10 @@ struct SessionTopBar: View {
                     Image(systemName: "camera")
                     Text("Capture")
                     Text("⌘S")
-                        .font(.system(size: 11).monospaced())
-                        .foregroundStyle(.tertiary)
+                        .font(NitpickTheme.keycap)
                     if let chord = model.captureHotkeyState.chordKeycap {
                         Text(chord)
-                            .font(.system(size: 11).monospaced())
-                            .foregroundStyle(.tertiary)
+                            .font(NitpickTheme.keycap)
                     }
                 }
             }

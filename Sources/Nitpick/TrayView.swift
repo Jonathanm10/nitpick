@@ -164,12 +164,12 @@ struct TrayView: View {
             if let filed = item.filedIssue {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(NitpickTheme.secondaryEmphasis)
                         .foregroundStyle(.green)
                     Link(filed.idReadable, destination: filed.url)
                         .motionPressFeedback()
                 }
-                .font(.system(size: 13))
+                .font(NitpickTheme.body)
                 .fixedSize()
                 .layoutPriority(2)
                 .transition(
@@ -200,21 +200,21 @@ struct TrayView: View {
                 // it carries the error itself (PRD story 22).
                 if model.isBusy {
                     Text("Filing…")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.orange)
+                        .font(NitpickTheme.body)
+                        .foregroundStyle(NitpickTheme.warning)
                         .fixedSize()
                         .layoutPriority(2)
                 } else if let failure = model.filingFailure {
                     Text(failure)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.red)
+                        .font(NitpickTheme.body)
+                        .foregroundStyle(NitpickTheme.error)
                         .lineLimit(1)
                         .layoutPriority(1)
                         .help(failure)
                 } else {
                     Text("Filing interrupted — retry")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.orange)
+                        .font(NitpickTheme.body)
+                        .foregroundStyle(NitpickTheme.warning)
                         .fixedSize()
                         .layoutPriority(2)
                 }
@@ -249,7 +249,7 @@ struct TrayView: View {
     private func rowTitle(_ item: TrayItem, isSelected: Bool) -> some View {
         let summary = item.finding.summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = Text(summary.isEmpty ? "Untitled Finding" : summary)
-            .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+            .font(isSelected ? NitpickTheme.bodyMedium : NitpickTheme.body)
             .lineLimit(1)
         // A Button, not bare text, so VoiceOver can open the row and hear
         // which one is selected; the row's tap gesture still covers the rest.
@@ -260,7 +260,7 @@ struct TrayView: View {
                 HStack(spacing: 8) {
                     title
                     Text(item.finding.deviceContext.deviceModel)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(NitpickTheme.bodyMedium)
                         .foregroundStyle(NitpickTheme.secondaryText)
                         .lineLimit(1)
                 }
@@ -288,8 +288,8 @@ struct TrayView: View {
 private struct NeedsSummaryMark: View {
     var body: some View {
         Image(systemName: "exclamationmark.circle.fill")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.orange)
+            .font(NitpickTheme.secondaryEmphasis)
+            .foregroundStyle(NitpickTheme.warning)
             .help("Needs a summary before it can be filed")
             .accessibilityLabel("Needs a summary")
     }
@@ -307,7 +307,7 @@ private struct TrayDiscardButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .semibold))
+                .font(NitpickTheme.smallGlyph)
                 .foregroundStyle(NitpickTheme.secondaryText)
                 .frame(width: 18, height: 18)
                 .background(hovering ? NitpickTheme.hover : .clear, in: Circle())

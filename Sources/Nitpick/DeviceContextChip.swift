@@ -19,7 +19,7 @@ struct DeviceContextChip: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "iphone")
-                    .font(.system(size: 13))
+                    .font(NitpickTheme.body)
                     .foregroundStyle(NitpickTheme.secondaryText)
                 Text(deviceName)
                     .font(NitpickTheme.emphasis)
@@ -29,7 +29,7 @@ struct DeviceContextChip: View {
                     .foregroundStyle(NitpickTheme.secondaryText)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(NitpickTheme.smallGlyph)
                     .foregroundStyle(NitpickTheme.secondaryText)
             }
             .padding(.horizontal, 8)

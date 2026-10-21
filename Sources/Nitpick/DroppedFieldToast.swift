@@ -11,7 +11,7 @@ struct DroppedFieldToast: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(NitpickTheme.warning)
             Text(message)
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)

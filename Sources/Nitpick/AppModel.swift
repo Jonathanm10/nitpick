@@ -399,6 +399,9 @@ final class AppModel {
         if ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_REVIEWING"] != nil {
             stageReviewRun()
         }
+        if let status = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_STATUS"] {
+            stageStatus(status)
+        }
         if let script = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_KEYS"] {
             await runKeyScript(script)
         }
@@ -414,6 +417,25 @@ final class AppModel {
             device: SimulatorDevice(udid: "STAGED-DEVICE", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: true),
             host: host
         )
+    }
+
+    /// Dev-only, `NITPICK_SNAPSHOT_STATUS`: `filing` holds a File all run open
+    /// that never files, `failed` fills every error line with invented copy,
+    /// and `result` shows the newest History entry as the filing result.
+    private func stageStatus(_ status: String) {
+        switch status {
+        case "filing":
+            try? activity.begin(.filing)
+        case "failed":
+            activity.recordFilingFailure("YouTrack refused the attachment (HTTP 413).")
+            errorMessage = "The Build could not be launched: the simulator stopped responding."
+            designSnapshotErrorMessage = "Forecast hero v4.png is not a PNG or JPEG image."
+            youTrackErrorMessage = "YouTrack rejected the token: it has expired."
+        case "result":
+            filingResult = history.first
+        default:
+            break
+        }
     }
 
     /// Runs the core's prerequisite probe and publishes its outcome: the
