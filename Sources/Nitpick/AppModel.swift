@@ -99,9 +99,11 @@ final class AppModel {
     private(set) var session: ReviewSession? {
         didSet {
             let isOpen = session != nil
+            // Before the edge guard: a registration refused at open retries
+            // on the next edit, and an active one returns early.
+            captureHotkey.setActive(isOpen)
             guard isOpen != sessionIsOpen else { return }
             sessionIsOpen = isOpen
-            captureHotkey.setActive(isOpen)
             if isOpen {
                 // A held filing result never shows beside a live session.
                 filingResult = nil
