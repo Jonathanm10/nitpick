@@ -3,7 +3,6 @@ import NitpickCore
 import Testing
 
 /// The shell's run facts: what is running, and how the last File all ended.
-/// The File all button and the frozen Tray rows read these.
 @Suite("Shell activity")
 struct ShellActivityTests {
     @Test("a fresh shell is idle")

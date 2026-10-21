@@ -1,15 +1,11 @@
 import Foundation
 
 /// A Review Session opening or closing: the one moment the shell's
-/// per-session state starts over. Either edge closes the Editor and
-/// forgets the last filing failure, so the next session never opens on a
-/// stale "File N remaining". The two edges differ only in what Start review
-/// set up before the session existed.
+/// per-session state starts over.
 public enum SessionEdge: Equatable, Sendable {
     case opened
     case closed
 
-    /// Nil while the session only changes in place, or stays closed.
     public init?(wasOpen: Bool, isOpen: Bool) {
         guard wasOpen != isOpen else { return nil }
         self = isOpen ? .opened : .closed

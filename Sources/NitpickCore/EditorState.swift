@@ -1,12 +1,11 @@
 import CoreGraphics
 import Foundation
 
-/// What the Editor is pointed at, and the ephemeral state that belongs to
-/// that target. `target` and `generation` never change in place: pointing
-/// the Editor elsewhere builds a fresh value, so every field, one added
-/// later included, starts over on every capture, tray selection, and close.
+/// `target` and `generation` never change in place: pointing the Editor
+/// elsewhere builds a fresh value, so every field, one added later
+/// included, starts over on every capture, tray selection, and close.
 public struct EditorState: Equatable, Sendable {
-    /// The tray item under edit; nil hides the Editor.
+    /// Nil hides the Editor.
     public let target: TrayItem.ID?
     /// New with every value: the shell's `captureID`, which resets the
     /// annotation surface's in-flight draft even when two targets share a
@@ -15,19 +14,15 @@ public struct EditorState: Equatable, Sendable {
     /// A placed, uncommitted text label pins the Editor: retargeting first
     /// would land its commit on the wrong Finding.
     public var hasPendingLabelDraft = false
-    /// The last Design Snapshot failure on this target.
     public var designSnapshotError: String?
 
-    /// An Editor open on `target`, or a closed one. A capture opens its
-    /// Finding this way, never refused: the shell's capture gate already
+    /// Never refused, unlike `selecting`: the shell's capture gate already
     /// refuses a pinned Editor.
     public init(opening target: TrayItem.ID? = nil) {
         self.target = target
         generation = UUID()
     }
 
-    /// A tray click, or nil when refused: the item is not in the session's
-    /// tray, it is already the target, or a label draft pins the Editor.
     public func selecting(_ item: TrayItem.ID, in session: ReviewSession?) -> EditorState? {
         guard target != item, !hasPendingLabelDraft,
               session?.tray.contains(where: { $0.id == item }) == true
@@ -35,24 +30,18 @@ public struct EditorState: Equatable, Sendable {
         return EditorState(opening: item)
     }
 
-    /// Whether a Finding may be discarded now. Never while a label draft
-    /// pins the Editor, and never while work runs: filing works on a copy
-    /// of the session. Esc, the Tray's discard button, and the discard
-    /// itself all read this one rule.
+    /// Never while work runs: filing works on a copy of the session.
     public func allowsDiscard(during activity: ShellActivity) -> Bool {
         !hasPendingLabelDraft && !activity.isBusy
     }
 }
 
-/// The Annotation picked with the Select tool, and the rigid move in flight
-/// on it: workspace chrome, never persisted, never flattened into any PNG.
-/// The shell stores it apart from `EditorState` so a drag tick re-renders
-/// only the annotation surface. Its `generation` ties it to the Editor
-/// target it was made on, so a retarget can tell the selection it left behind.
+/// Workspace chrome, never persisted, never flattened into any PNG. Its
+/// `generation` ties it to the Editor target it was made on, so a retarget
+/// can tell the selection it left behind.
 public struct AnnotationSelection<Overlay> {
     public let generation: UUID
     public let index: Int
-    /// A drag exists only inside a selection.
     public var drag: AnnotationDrag<Overlay>?
 
     public init(index: Int, in editor: EditorState) {
@@ -68,9 +57,6 @@ public struct AnnotationSelection<Overlay> {
         generation == editor.generation
     }
 
-    /// The selection once Annotation `removed` is deleted. Any drag is
-    /// dropped. The selection dies with its own Annotation, shifts down when
-    /// an earlier one goes, and stays when a later one goes.
     public func removingAnnotation(at removed: Int) -> AnnotationSelection? {
         if index == removed { return nil }
         return AnnotationSelection(generation: generation, index: index > removed ? index - 1 : index)
@@ -105,16 +91,14 @@ extension AnnotationDrag: Equatable where Overlay: Equatable {}
 
 /// What Esc does in the Editor (PRD stories 10, 11): release an in-flight
 /// or selected Annotation first, otherwise discard a pristine Finding, the
-/// mis-capture case. The handler and both "would act" predicates read this
-/// one decision, so they cannot drift.
+/// mis-capture case.
 public enum EditorEscape: Equatable, Sendable {
     case releaseAnnotation
     case discard(TrayItem.ID)
 
-    /// The editor scope at large, where a text field may hold focus: only
-    /// the pristine discard, and only when a discard is allowed. Releasing a
-    /// selection belongs to the surface's own scope, so Esc in Summary or
-    /// Description keeps standard field behavior.
+    /// The editor scope at large, where a text field may hold focus, never
+    /// releases a selection, so Esc in Summary or Description keeps
+    /// standard field behavior.
     public static func inEditor(
         _ editor: EditorState,
         session: ReviewSession?,
@@ -128,8 +112,6 @@ public enum EditorEscape: Equatable, Sendable {
         return .discard(item.id)
     }
 
-    /// The annotation surface's own focus scope: a selection made on this
-    /// target is released first, else the editor-scope rule applies.
     public static func onSurface<Overlay>(
         _ editor: EditorState,
         selection: AnnotationSelection<Overlay>?,

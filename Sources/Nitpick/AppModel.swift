@@ -25,7 +25,6 @@ final class AppModel {
     /// the panel's own "Check again".
     private(set) var setupGuidance: SetupGuidance?
     var selectedDeviceID: SimulatorDevice.ID?
-    /// The Build running in a simulator; nil until a successful launch.
     /// Its device is the stamp source for every capture.
     private(set) var reviewRun: ReviewRun?
     var isReviewing: Bool { reviewRun != nil }
@@ -41,18 +40,15 @@ final class AppModel {
     private(set) var capturedImage: NSImage?
     /// The capture's native pixel size, for view↔pixel coordinate mapping.
     private(set) var capturePixelSize: CGSize?
-    /// The Editor's target — the capture that just landed, or whatever tray
-    /// row the designer selected — and the state that belongs to it.
-    /// Retargeting assigns a fresh value, so nothing survives by accident,
-    /// and drops an Annotation selection made on the old target, drag
-    /// overlay included.
+    /// A retarget drops the Annotation selection made on the old target, so
+    /// an orphaned drag's full-canvas overlay does not stay in memory.
     private(set) var editor = EditorState() {
         didSet {
             if annotationSelection?.belongs(to: editor) == false { annotationSelection = nil }
         }
     }
-    /// The Select tool's Annotation and its in-flight move. Stored apart
-    /// from `editor` so a drag tick re-renders only the annotation surface.
+    /// Stored apart from `editor` so a drag tick re-renders only the
+    /// annotation surface.
     private var annotationSelection: AnnotationSelection<NSImage>?
     var selectedItemID: TrayItem.ID? { editor.target }
     var captureID: UUID { editor.generation }
@@ -68,14 +64,12 @@ final class AppModel {
         }
     }
     var annotationColor: AnnotationColor = .default
-    /// What is running, filing included, and how the last File all ended.
     /// Only `perform` begins and ends work.
     private(set) var activity = ShellActivity()
     var isBusy: Bool { activity.isBusy }
     var filingFailure: FilingFailure? { activity.filingFailure }
-    /// Written by the annotation surface. This setter and
-    /// `designSnapshotErrorMessage`'s skip equal writes, so the readers of
-    /// `editor` re-render only on a real change.
+    /// This setter and `designSnapshotErrorMessage`'s skip equal writes, so
+    /// the readers of `editor` re-render only on a real change.
     var hasPendingLabelDraft: Bool {
         get { editor.hasPendingLabelDraft }
         set { if editor.hasPendingLabelDraft != newValue { editor.hasPendingLabelDraft = newValue } }
@@ -332,8 +326,6 @@ final class AppModel {
 
     var startReviewTitle: String { session == nil ? "Start review" : "Resume review" }
 
-    /// Mirrored by the window's Start/Resume button and the Review menu
-    /// item; `startReview` acts on the same decision.
     var canStartReview: Bool { reviewStart != nil }
 
     private var reviewStart: ReviewStart? {
@@ -352,8 +344,6 @@ final class AppModel {
 
     var canEndReview: Bool { session != nil && !isBusy }
 
-    /// The window drop asks before it accepts a Build; `ingest` itself is
-    /// refused by `perform` while any work runs, filing included.
     var canIngest: Bool { !isBusy }
 
     var selectedProject: YouTrackProject? {
@@ -707,6 +697,7 @@ final class AppModel {
             sessionSchema = ProjectSchema()
         }
         if edge.dismissesFilingResult { filingResult = nil }
+        // Or the next session would open on a stale "File N remaining".
         activity.forgetFilingFailure()
         clearSelection()
     }
@@ -968,9 +959,9 @@ extension AppModel {
         refreshAnnotatedImage()
     }
 
-    /// The drag's overlay is the NSImage the surface draws. While held it
-    /// composites above the whole base, so a mid-stack shape shows over
-    /// later marks for the drag's duration; release re-renders true stacking.
+    /// While held, the overlay composites above the whole base, so a
+    /// mid-stack shape shows over later marks for the drag's duration;
+    /// release re-renders true stacking.
     typealias AnnotationDrag = NitpickCore.AnnotationDrag<NSImage>
 
     /// Begins a rigid move when `point` (image pixels) falls on the

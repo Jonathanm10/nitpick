@@ -1,9 +1,7 @@
 import Foundation
 
-/// The Build running in a simulator: the device it launched on and the host
-/// app it runs in. It exists only after a successful launch, so a failed or
-/// in-flight switch can never stamp a Finding with a device the Build isn't
-/// running on.
+/// Exists only after a successful launch, so a failed or in-flight switch
+/// can never stamp a Finding with a device the Build isn't running on.
 public struct ReviewRun: Equatable, Sendable {
     public let device: SimulatorDevice
     public let host: SimulatorHostApp
@@ -14,10 +12,8 @@ public struct ReviewRun: Equatable, Sendable {
     }
 }
 
-/// Start or Resume review, decided once for the window button, the Review
-/// menu item, and the start itself. It exists only when a start is allowed.
-/// The Build is part of the decision because the hero shows the button
-/// before a Build exists.
+/// Exists only when a start is allowed. The Build is part of the decision
+/// because the hero shows the Start button before a Build exists.
 public struct ReviewStart: Equatable, Sendable {
     public let build: Build
     /// The restored session's pinned project, else the picker's choice:

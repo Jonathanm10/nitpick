@@ -1,7 +1,6 @@
 import Foundation
 
-/// What the shell is running right now, and how the last File all run
-/// ended. One value, so "busy" and "filing" can never disagree.
+/// One value, so "busy" and "filing" can never disagree.
 public struct ShellActivity: Equatable, Sendable {
     /// Filing is the only work a reader tells apart: the File all button
     /// shows its progress.
@@ -11,9 +10,8 @@ public struct ShellActivity: Equatable, Sendable {
     }
 
     public private(set) var running: Work?
-    /// Why the last File all run stopped. Unrelated work leaves it alone, so
-    /// the Tray row that shows it keeps showing it; the next File all run
-    /// or a Review Session opening or closing forgets it.
+    /// Unrelated work leaves it alone, so the Tray row that shows it keeps
+    /// showing it.
     public private(set) var filingFailure: FilingFailure?
 
     public init() {}
@@ -21,11 +19,10 @@ public struct ShellActivity: Equatable, Sendable {
     public var isBusy: Bool { running != nil }
     public var isFiling: Bool { running == .filing }
 
-    /// Starts `work`, or refuses it while anything runs: one run at a time,
-    /// so no run can end another's busy state, and a Build ingest can never
-    /// end the session a File all run is still writing back. A refusal is
-    /// an error the shell shows, so a confirmed action never does nothing
-    /// silently.
+    /// One run at a time, so no run can end another's busy state, and a
+    /// Build ingest can never end the session a File all run is still
+    /// writing back. A refusal throws so the shell can show it: a confirmed
+    /// action never does nothing silently.
     public mutating func begin(_ work: Work) throws(Busy) {
         guard running == nil else { throw Busy() }
         running = work

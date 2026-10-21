@@ -2,15 +2,13 @@ import Foundation
 import NitpickCore
 import Testing
 
-/// Start or Resume review: the window button, the Review menu item, and the
-/// start itself read one decision, which exists only when every fact allows it.
+/// Start or Resume review exists only when every fact allows it.
 @Suite("Start review gate")
 struct ReviewStartTests {
     static let build = IssueFilingTests.session.build
     static let picked = YouTrackProject(id: "0-77", shortName: "JW", name: "Juniper Weather")
     static let device = SimulatorDevice(udid: "A1", name: "iPhone 17 Pro", osName: "iOS 26.4", isBooted: true)
 
-    /// One fact at a time that forbids a start.
     enum BrokenFact: CaseIterable, Sendable {
         case noBuild, buildAlreadyRunning, filingResultHeld, noDevice, runtimeUnavailable, noProject, workRunning
     }
