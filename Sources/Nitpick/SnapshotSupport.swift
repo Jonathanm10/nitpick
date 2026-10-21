@@ -65,36 +65,35 @@ enum WindowSnapshot {
         }
         if let path = environment["NITPICK_SNAPSHOT_MENU"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
-                guard let menu = NSApp.mainMenu else { return }
-                NSApp.mainMenu?.update()
-                var lines: [String] = []
-                MenuDump.append(menu, depth: 0, to: &lines)
-                try? lines.joined(separator: "\n").appending("\n")
-                    .write(toFile: path, atomically: true, encoding: .utf8)
+                MenuDump.write(to: path)
             }
         }
         guard let path = environment["NITPICK_SNAPSHOT_PATH"] else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-            if let window = offscreenWindow, let size = requestedSize {
-                // Start-review growth resizes the copy too; pin it back first.
-                window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                    guard let view = window.contentView,
-                          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
-                    else { return }
-                    view.cacheDisplay(in: view.bounds, to: rep)
-                    try? rep.representation(using: .png, properties: [:])?
-                        .write(to: URL(fileURLWithPath: path))
-                }
-                return
-            }
-            guard let window = NSApp.nitpickMainWindow
-                ?? NSApp.windows.filter({ !$0.isSheet }).max(by: { $0.frame.width < $1.frame.width }),
-                  let rep = snapshot(of: window)
-            else { return }
-            try? rep.representation(using: .png, properties: [:])?
-                .write(to: URL(fileURLWithPath: path))
+            render(to: path)
         }
+    }
+
+    static func render(to path: String) {
+        if let window = offscreenWindow, let size = requestedSize {
+            // Start-review growth resizes the copy too; pin it back first.
+            window.setFrame(NSRect(origin: window.frame.origin, size: size), display: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                guard let view = window.contentView,
+                      let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+                else { return }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?
+                    .write(to: URL(fileURLWithPath: path))
+            }
+            return
+        }
+        guard let window = NSApp.nitpickMainWindow
+            ?? NSApp.windows.filter({ !$0.isSheet }).max(by: { $0.frame.width < $1.frame.width }),
+              let rep = snapshot(of: window)
+        else { return }
+        try? rep.representation(using: .png, properties: [:])?
+            .write(to: URL(fileURLWithPath: path))
     }
 
     /// Attached sheets are separate windows `cacheDisplay` omits, so each is
@@ -143,21 +142,19 @@ enum WindowSnapshot {
 /// assistive client such as VoiceOver reads it: role, label, value, selected.
 /// SwiftUI publishes its own elements only to AX clients, not to in-process
 /// `accessibilityChildren()`, so this queries the app's own pid through the AX
-/// API. Querying itself needs no Accessibility permission. It runs off the
-/// main thread, because the main thread is the one that answers.
-private enum AccessibilityDump {
+/// API. Querying itself needs no Accessibility permission. It runs on the
+/// main thread: the app answers its own queries on the calling thread, and
+/// AppKit lays out table rows while answering.
+enum AccessibilityDump {
     @MainActor
     static func write(to path: String) {
-        let pid = getpid()
-        Thread.detachNewThread {
-            var lines: [String] = []
-            let app = AXUIElementCreateApplication(pid)
-            for window in elements(app, kAXWindowsAttribute) {
-                append(window, depth: 0, to: &lines)
-            }
-            try? lines.joined(separator: "\n").appending("\n")
-                .write(toFile: path, atomically: true, encoding: .utf8)
+        var lines: [String] = []
+        let app = AXUIElementCreateApplication(getpid())
+        for window in elements(app, kAXWindowsAttribute) {
+            append(window, depth: 0, to: &lines)
         }
+        try? lines.joined(separator: "\n").appending("\n")
+            .write(toFile: path, atomically: true, encoding: .utf8)
     }
 
     private static func append(_ element: AXUIElement, depth: Int, to lines: inout [String]) {
@@ -170,6 +167,7 @@ private enum AccessibilityDump {
             }
         }
         if bool(element, kAXSelectedAttribute) == true { fields.append("selected") }
+        if let frame = frame(element) { fields.append("frame=\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width))x\(Int(frame.height))") }
         if bool(element, kAXEnabledAttribute) == false { fields.append("disabled") }
         lines.append(String(repeating: "  ", count: depth) + fields.joined(separator: " "))
         for child in elements(element, kAXChildrenAttribute) {
@@ -191,6 +189,16 @@ private enum AccessibilityDump {
         }
     }
 
+    private static func frame(_ element: AXUIElement) -> CGRect? {
+        guard let position = value(element, kAXPositionAttribute), let size = value(element, kAXSizeAttribute) else { return nil }
+        var origin = CGPoint.zero
+        var extent = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &origin),
+              AXValueGetValue(size as! AXValue, .cgSize, &extent)
+        else { return nil }
+        return CGRect(origin: origin, size: extent)
+    }
+
     private static func bool(_ element: AXUIElement, _ attribute: String) -> Bool? {
         (value(element, attribute) as? NSNumber)?.boolValue
     }
@@ -201,8 +209,17 @@ private enum AccessibilityDump {
 }
 
 @MainActor
-private enum MenuDump {
-    static func append(_ menu: NSMenu, depth: Int, to lines: inout [String]) {
+enum MenuDump {
+    static func write(to path: String) {
+        guard let menu = NSApp.mainMenu else { return }
+        menu.update()
+        var lines: [String] = []
+        append(menu, depth: 0, to: &lines)
+        try? lines.joined(separator: "\n").appending("\n")
+            .write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    private static func append(_ menu: NSMenu, depth: Int, to lines: inout [String]) {
         for item in menu.items where !item.isSeparatorItem {
             var line = String(repeating: "  ", count: depth) + item.title
             let chord = chord(of: item)
@@ -210,6 +227,9 @@ private enum MenuDump {
             if !item.isEnabled { line += "\t(disabled)" }
             lines.append(line)
             if let submenu = item.submenu, depth < 1 {
+                // SwiftUI fills in enabled states only as a menu opens.
+                submenu.delegate?.menuNeedsUpdate?(submenu)
+                submenu.update()
                 append(submenu, depth: depth + 1, to: &lines)
             }
         }
@@ -239,7 +259,11 @@ private enum MenuDump {
 /// events, which need no Accessibility permission, and prints the state after
 /// each step. Steps are `;`-separated: `wait:<seconds>`, `mark` (adds an
 /// undoable rectangle to the selected Finding), `focus:<placeholder>` (a text
-/// field), `type:<text>`, and `key:<chord>` such as `cmd+z` or `opt+cmd+down`.
+/// field), `type:<text>`, `key:<chord>` such as `cmd+z` or `opt+cmd+down`,
+/// `refuse` (sets the paused-review hotkey refusal without its beep), and
+/// `snap:`, `ax:` or `menu:<file>` to render or dump the state at that step.
+/// Never script ⌘R, ⌘S or ⌘↩: they boot, capture from or activate the
+/// designer's real Simulator.
 extension AppModel {
     func runKeyScript(_ script: String) async {
         try? await Task.sleep(for: .seconds(1.5))
@@ -262,6 +286,16 @@ extension AppModel {
                 }
             case "mark":
                 addAnnotation(.rectangle(CGRect(x: 100, y: 900, width: 400, height: 200)))
+            case "refuse":
+                errorMessage = CaptureRefusal.reviewPaused.hotkeyMessage
+            case "snap":
+                WindowSnapshot.render(to: argument)
+                try? await Task.sleep(for: .seconds(1))
+            case "ax":
+                AccessibilityDump.write(to: argument)
+                try? await Task.sleep(for: .seconds(2))
+            case "menu":
+                MenuDump.write(to: argument)
             case "type":
                 for character in argument {
                     Self.send(characters: String(character), keyCode: 0, flags: [], to: window)
@@ -283,7 +317,7 @@ extension AppModel {
         let annotations = selectedItem.map { String($0.finding.annotations.count) } ?? "-"
         let editor = window.firstResponder as? NSTextView
         let field = editor.map { "\"\($0.string)\"" } ?? "none"
-        print("keys: \(step) -> selected=\(summary) annotations=\(annotations) tool=\(annotationTool.rawValue) firstResponder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") focusedText=\(field) active=\(NSApp.isActive) key=\(window.isKeyWindow)")
+        print("keys: \(step) -> selected=\(summary) annotations=\(annotations) tool=\(annotationTool.rawValue) firstResponder=\(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") focusedText=\(field) active=\(NSApp.isActive) key=\(window.isKeyWindow) error=\(errorMessage.map { "\"\($0)\"" } ?? "none")")
         fflush(stdout)
     }
 
