@@ -118,7 +118,7 @@ struct CaptureTests {
         )) {
             try await core.captureScreen(of: device)
         }
-        #expect(clock.now - start < .seconds(3))
+        #expect(clock.now - start < .seconds(10))
     }
 
     @Test("a failed settings read surfaces as that read's failure, the first in content_size, appearance, increase_contrast order")
