@@ -427,9 +427,16 @@ struct ContentView: View {
                 .background(NitpickTheme.inset, in: RoundedRectangle(cornerRadius: 8))
                 .aspectRatio(Self.placeholderDeviceAspect, contentMode: .fit)
                 .overlay {
-                    Text("⌘S to capture")
-                        .font(.title3)
-                        .foregroundStyle(NitpickTheme.secondaryText)
+                    VStack {
+                        Text("⌘S to capture")
+                            .font(.title3)
+                            .foregroundStyle(NitpickTheme.secondaryText)
+                        Text(model.captureHotkeyState.placeholderNote)
+                            .font(NitpickTheme.secondary)
+                            .foregroundStyle(NitpickTheme.secondaryText)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }

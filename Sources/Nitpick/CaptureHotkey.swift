@@ -1,5 +1,6 @@
 import Carbon.HIToolbox
 import Foundation
+import NitpickCore
 
 /// Permission-free global hotkey for the review loop.
 ///
@@ -8,17 +9,27 @@ import Foundation
 /// the capture loop silent and session-scoped instead.
 final class CaptureHotkey: @unchecked Sendable {
     var onPress: (@MainActor @Sendable () -> Void)?
+    /// Called only when `state` changes, never from `deinit`.
+    var onStateChange: (@MainActor (CaptureHotkeyState) -> Void)?
+    private(set) var state: CaptureHotkeyState = .inactive
 
+    /// A taken chord stays taken until deactivated, so repeat calls never
+    /// re-run the Carbon registration; the next Review Session retries it.
+    @MainActor
     func setActive(_ active: Bool) {
-        guard active != isActive else { return }
-        active ? register() : unregister()
+        if active {
+            guard state == .inactive else { return }
+            update(register())
+        } else {
+            unregister()
+            update(.inactive)
+        }
     }
 
     deinit {
         unregister()
     }
 
-    private var isActive = false
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
 
@@ -40,9 +51,14 @@ final class CaptureHotkey: @unchecked Sendable {
         return noErr
     }
 
-    private func register() {
-        guard !isActive else { return }
+    @MainActor
+    private func update(_ next: CaptureHotkeyState) {
+        guard next != state else { return }
+        state = next
+        onStateChange?(next)
+    }
 
+    private func register() -> CaptureHotkeyState {
         var handlerRef: EventHandlerRef?
         let handlerStatus = Self.eventTypes.withUnsafeBufferPointer { types in
             InstallEventHandler(
@@ -54,7 +70,7 @@ final class CaptureHotkey: @unchecked Sendable {
                 &handlerRef
             )
         }
-        guard handlerStatus == noErr else { return }
+        guard handlerStatus == noErr else { return .taken }
 
         var hotKeyRef: EventHotKeyRef?
         let hotKeyStatus = RegisterEventHotKey(
@@ -69,17 +85,15 @@ final class CaptureHotkey: @unchecked Sendable {
             if let handlerRef {
                 RemoveEventHandler(handlerRef)
             }
-            return
+            return .taken
         }
 
         self.eventHandlerRef = handlerRef
         self.hotKeyRef = hotKeyRef
-        isActive = true
+        return .registered
     }
 
     private func unregister() {
-        guard isActive || hotKeyRef != nil || eventHandlerRef != nil else { return }
-
         if let hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
             self.hotKeyRef = nil
@@ -88,6 +102,5 @@ final class CaptureHotkey: @unchecked Sendable {
             RemoveEventHandler(eventHandlerRef)
             self.eventHandlerRef = nil
         }
-        isActive = false
     }
 }

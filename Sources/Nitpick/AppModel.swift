@@ -75,6 +75,7 @@ final class AppModel {
         set { if editor.hasPendingLabelDraft != newValue { editor.hasPendingLabelDraft = newValue } }
     }
     var errorMessage: String?
+    private(set) var captureHotkeyState: CaptureHotkeyState = .inactive
     private(set) var designSnapshotErrorMessage: String? {
         get { editor.designSnapshotError }
         set { if editor.designSnapshotError != newValue { editor.designSnapshotError = newValue } }
@@ -314,6 +315,9 @@ final class AppModel {
                 guard let self else { return }
                 await self.captureFromHotkey()
             }
+        }
+        captureHotkey.onStateChange = { [weak self] state in
+            self?.captureHotkeyState = state
         }
     }
     
