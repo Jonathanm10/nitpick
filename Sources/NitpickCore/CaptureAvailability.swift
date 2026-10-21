@@ -20,17 +20,29 @@ public enum CaptureHotkeyState: Equatable, Sendable {
             : "Capture the current screen (⌘S here, \(Self.chord) from any app)."
     }
 
-    /// The empty capture pane's line under "⌘S to capture".
-    public var placeholderNote: String {
-        self == .taken ? Self.takenExplanation : "or \(Self.chord) from the Simulator"
-    }
-
     /// The topbar's warning while the chord is taken.
     public var takenWarning: String? {
         self == .taken ? "\(Self.chord) is taken by another app" : nil
     }
 
     public static let takenExplanation = "Another app holds \(chord), so capture from the Simulator is off. ⌘S still captures while nitpick is in front."
+}
+
+/// The empty capture pane's prompt. A paused review captures nothing, so it
+/// points at Resume review instead of promising a shortcut.
+public struct CapturePlaceholder: Equatable, Sendable {
+    public let title: String
+    public let note: String?
+
+    public init(isReviewing: Bool, hotkey: CaptureHotkeyState) {
+        guard isReviewing else {
+            title = "Resume review to capture"
+            note = nil
+            return
+        }
+        title = "⌘S to capture"
+        note = hotkey == .taken ? CaptureHotkeyState.takenExplanation : "or \(CaptureHotkeyState.chord) from the Simulator"
+    }
 }
 
 /// Why a capture cannot start. ⌘S and the Capture button are disabled while

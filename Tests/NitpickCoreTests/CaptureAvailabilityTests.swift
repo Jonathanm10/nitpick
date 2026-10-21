@@ -9,7 +9,6 @@ struct CaptureAvailabilityTests {
     func heldChordIsHinted(state: CaptureHotkeyState) {
         #expect(state.chordKeycap == "⌃⌥⌘N")
         #expect(state.captureHelp == "Capture the current screen (⌘S here, ⌃⌥⌘N from any app).")
-        #expect(state.placeholderNote == "or ⌃⌥⌘N from the Simulator")
         #expect(state.takenWarning == nil)
     }
 
@@ -19,8 +18,31 @@ struct CaptureAvailabilityTests {
 
         #expect(state.chordKeycap == nil)
         #expect(state.captureHelp == "Capture the current screen (⌘S).")
-        #expect(state.placeholderNote == "Another app holds ⌃⌥⌘N, so capture from the Simulator is off. ⌘S still captures while nitpick is in front.")
         #expect(state.takenWarning == "⌃⌥⌘N is taken by another app")
+    }
+
+    @Test("a running review's empty pane names both captures")
+    func runningPlaceholder() {
+        let placeholder = CapturePlaceholder(isReviewing: true, hotkey: .registered)
+
+        #expect(placeholder.title == "⌘S to capture")
+        #expect(placeholder.note == "or ⌃⌥⌘N from the Simulator")
+    }
+
+    @Test("a taken chord's empty pane says only ⌘S still captures")
+    func takenPlaceholder() {
+        let placeholder = CapturePlaceholder(isReviewing: true, hotkey: .taken)
+
+        #expect(placeholder.title == "⌘S to capture")
+        #expect(placeholder.note == "Another app holds ⌃⌥⌘N, so capture from the Simulator is off. ⌘S still captures while nitpick is in front.")
+    }
+
+    @Test("a paused review's empty pane points at Resume review, whatever the chord", arguments: [CaptureHotkeyState.registered, .taken, .inactive])
+    func pausedPlaceholder(hotkey: CaptureHotkeyState) {
+        let placeholder = CapturePlaceholder(isReviewing: false, hotkey: hotkey)
+
+        #expect(placeholder.title == "Resume review to capture")
+        #expect(placeholder.note == nil)
     }
 
     @Test("a running review with nothing in flight can capture")

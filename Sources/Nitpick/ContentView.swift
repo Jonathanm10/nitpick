@@ -427,15 +427,18 @@ struct ContentView: View {
                 .background(NitpickTheme.inset, in: RoundedRectangle(cornerRadius: 8))
                 .aspectRatio(Self.placeholderDeviceAspect, contentMode: .fit)
                 .overlay {
+                    let placeholder = CapturePlaceholder(isReviewing: model.isReviewing, hotkey: model.captureHotkeyState)
                     VStack {
-                        Text("⌘S to capture")
+                        Text(placeholder.title)
                             .font(.title3)
                             .foregroundStyle(NitpickTheme.secondaryText)
-                        Text(model.captureHotkeyState.placeholderNote)
-                            .font(NitpickTheme.secondary)
-                            .foregroundStyle(NitpickTheme.secondaryText)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
+                        if let note = placeholder.note {
+                            Text(note)
+                                .font(NitpickTheme.secondary)
+                                .foregroundStyle(NitpickTheme.secondaryText)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
