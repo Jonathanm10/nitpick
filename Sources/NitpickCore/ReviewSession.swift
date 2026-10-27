@@ -224,10 +224,11 @@ public struct Finding: Equatable, Sendable {
     /// The Annotations laid over the screenshot, in stacking order.
     /// Editable through `add`/`replaceAnnotation`/`removeAnnotation` and
     /// undo/redo until the Finding is filed.
-    public internal(set) var annotations: [Annotation] = []
-    /// The undo/redo stacks: past and undone `annotations` states.
-    var annotationUndoStack: [[Annotation]] = []
-    var annotationRedoStack: [[Annotation]] = []
+    public internal(set) var annotations: [Annotation] {
+        get { annotationHistory.annotations }
+        set { annotationHistory.annotations = newValue }
+    }
+    var annotationHistory = AnnotationHistory()
     /// Optional Finding-level Design Reference (ADR-0003: a link, never a
     /// rendering).
     public var designReference: URL?

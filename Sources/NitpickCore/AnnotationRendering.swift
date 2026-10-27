@@ -39,19 +39,7 @@ extension Finding {
     /// flattened in, at native resolution. With no Annotations the
     /// annotated variant *is* the original — the exact bytes pass through.
     public func annotatedScreenshotPNG() throws -> Data {
-        guard !annotations.isEmpty else { return screenshotPNG }
-        let image = try annotatedScreenshotImage()
-        let data = NSMutableData()
-        guard
-            let destination = CGImageDestinationCreateWithData(
-                data, UTType.png.identifier as CFString, 1, nil
-            )
-        else { throw AnnotationRenderingError.unreadableScreenshot }
-        CGImageDestinationAddImage(destination, image, nil)
-        guard CGImageDestinationFinalize(destination) else {
-            throw AnnotationRenderingError.unreadableScreenshot
-        }
-        return data as Data
+        try DecodedScreenshot.annotatedPNG(screenshotPNG, with: annotations)
     }
 
     /// The flattened image, for the shell to display while editing. With
@@ -80,6 +68,24 @@ public struct DecodedScreenshot {
             )
         else { throw AnnotationRenderingError.unreadableScreenshot }
         self.base = base
+    }
+
+    /// `png` with `annotations` flattened in, at native resolution. With no
+    /// Annotations the exact bytes pass through.
+    public static func annotatedPNG(_ png: Data, with annotations: [Annotation]) throws -> Data {
+        guard !annotations.isEmpty else { return png }
+        let image = try DecodedScreenshot(png: png).annotated(with: annotations)
+        let data = NSMutableData()
+        guard
+            let destination = CGImageDestinationCreateWithData(
+                data, UTType.png.identifier as CFString, 1, nil
+            )
+        else { throw AnnotationRenderingError.unreadableScreenshot }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw AnnotationRenderingError.unreadableScreenshot
+        }
+        return data as Data
     }
 
     /// The capture with `annotations` flattened in, at native resolution.
