@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    "./api": "./src/api.ts"
+    "./api": "./src/api.ts",
+    "./config": "./src/config.ts"
   },
   "scripts": {
     "dev": "node --watch src/main.ts",
