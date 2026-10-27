@@ -1,0 +1,5 @@
+---
+App: ch.liip.reviewme 2.1.0 (421)
+Device: iPhone 17 Pro — iOS 26.4
+Accessibility: Dynamic Type XL
+Filed with nitpick — session 2026-07-04T09:15:32Z

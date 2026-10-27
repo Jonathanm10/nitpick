@@ -1,0 +1,153 @@
+{
+  "session" : {
+    "build" : {
+      "appBundleURL" : "file:///tmp/ReviewMe.app/",
+      "identity" : {
+        "buildNumber" : "421",
+        "bundleID" : "ch.liip.reviewme",
+        "version" : "2.1.0"
+      }
+    },
+    "project" : {
+      "id" : "0-12",
+      "name" : "ReviewMe",
+      "shortName" : "RM"
+    },
+    "startedAt" : {
+      "iso8601" : "2026-07-04T09:15:32.473Z",
+      "secondsSinceReferenceDate" : 804849332.4729061
+    },
+    "tray" : [
+      {
+        "filingProgress" : {
+          "state" : "notStarted"
+        },
+        "finding" : {
+          "annotations" : [
+
+          ],
+          "description" : "The primary button is #FF0000, the design says #E64545.",
+          "designSnapshots" : [
+
+          ],
+          "deviceContext" : {
+            "accessibilitySettings" : [
+
+            ],
+            "deviceModel" : "iPhone 17 Pro",
+            "osName" : "iOS 26.4"
+          },
+          "summary" : "Button color is off",
+          "type" : "bug"
+        },
+        "id" : "00000000-0000-4000-8000-000000000001"
+      },
+      {
+        "filingProgress" : {
+          "idReadable" : "RM-422",
+          "issueID" : "3-506",
+          "state" : "issueCreated"
+        },
+        "finding" : {
+          "annotations" : [
+
+          ],
+          "description" : "The primary button is #FF0000, the design says #E64545.",
+          "designSnapshots" : [
+
+          ],
+          "deviceContext" : {
+            "accessibilitySettings" : [
+
+            ],
+            "deviceModel" : "iPhone 17 Pro",
+            "osName" : "iOS 26.4"
+          },
+          "summary" : "Label truncates",
+          "type" : "bug"
+        },
+        "id" : "00000000-0000-4000-8000-000000000002"
+      },
+      {
+        "filingProgress" : {
+          "idReadable" : "RM-423",
+          "issueID" : "3-507",
+          "state" : "attachmentsUploaded"
+        },
+        "finding" : {
+          "annotations" : [
+
+          ],
+          "description" : "The primary button is #FF0000, the design says #E64545.",
+          "designSnapshots" : [
+
+          ],
+          "deviceContext" : {
+            "accessibilitySettings" : [
+
+            ],
+            "deviceModel" : "iPhone 17 Pro",
+            "osName" : "iOS 26.4"
+          },
+          "summary" : "Icon is blurry",
+          "type" : "bug"
+        },
+        "id" : "00000000-0000-4000-8000-000000000003"
+      },
+      {
+        "filingProgress" : {
+          "idReadable" : "RM-424",
+          "issueID" : "3-508",
+          "state" : "reviewTagged"
+        },
+        "finding" : {
+          "annotations" : [
+
+          ],
+          "description" : "The primary button is #FF0000, the design says #E64545.",
+          "designSnapshots" : [
+
+          ],
+          "deviceContext" : {
+            "accessibilitySettings" : [
+
+            ],
+            "deviceModel" : "iPhone 17 Pro",
+            "osName" : "iOS 26.4"
+          },
+          "summary" : "Spacing is off",
+          "type" : "bug"
+        },
+        "id" : "00000000-0000-4000-8000-000000000004"
+      },
+      {
+        "filingProgress" : {
+          "issue" : {
+            "idReadable" : "RM-425",
+            "url" : "https://youtrack.example.com/yt/issue/RM-425"
+          },
+          "state" : "filed"
+        },
+        "finding" : {
+          "annotations" : [
+
+          ],
+          "description" : "The primary button is #FF0000, the design says #E64545.",
+          "designSnapshots" : [
+
+          ],
+          "deviceContext" : {
+            "accessibilitySettings" : [
+
+            ],
+            "deviceModel" : "iPhone 17 Pro",
+            "osName" : "iOS 26.4"
+          },
+          "summary" : "Wrong font weight",
+          "type" : "bug"
+        },
+        "id" : "00000000-0000-4000-8000-000000000005"
+      }
+    ]
+  }
+}

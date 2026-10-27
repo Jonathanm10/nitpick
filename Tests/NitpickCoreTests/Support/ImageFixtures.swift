@@ -89,7 +89,7 @@ enum ImageFixtures {
             try FileManager.default.createDirectory(
                 at: snapshotsDirectory, withIntermediateDirectories: true
             )
-            try png.write(to: reference)
+            try png.write(to: reference, options: .atomic)
             Issue.record(
                 "Recorded \(reference.path); rerun without NITPICK_RECORD_SNAPSHOTS.",
                 sourceLocation: sourceLocation
@@ -112,7 +112,7 @@ enum ImageFixtures {
         let actual = try decodeRGBA(png)
         guard expected.width == actual.width, expected.height == actual.height else {
             Issue.record(
-                "Snapshot \(name): size \(actual.width)×\(actual.height) ≠ reference \(expected.width)×\(expected.height).",
+                "Snapshot core/test/golden/images/\(name).png: size \(actual.width)×\(actual.height) ≠ reference \(expected.width)×\(expected.height).",
                 sourceLocation: sourceLocation
             )
             return
@@ -134,18 +134,15 @@ enum ImageFixtures {
                 .appendingPathComponent("\(name)-\(UUID().uuidString).png")
             try png.write(to: candidate)
             let percent = (fraction * 100).formatted(.number.precision(.fractionLength(1)))
-            let message = "Snapshot \(name): \(mismatched) of \(actual.width * actual.height) pixels "
+            let message = "Snapshot core/test/golden/images/\(name).png: \(mismatched) of \(actual.width * actual.height) pixels "
                 + "(\(percent)%) beyond ±\(maxChannelDelta). Candidate written to \(candidate.path)."
             Issue.record(Comment(rawValue: message), sourceLocation: sourceLocation)
         }
     }
 
-    /// The committed snapshot directory, located from this source file so
-    /// tests never depend on the working directory.
+    /// The committed snapshots are image goldens the TypeScript port also
+    /// checks against.
     private static var snapshotsDirectory: URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // Support/
-            .deletingLastPathComponent()  // NitpickCoreTests/
-            .appendingPathComponent("Snapshots", isDirectory: true)
+        GoldenFiles.directory.appendingPathComponent("images", isDirectory: true)
     }
 }

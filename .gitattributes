@@ -1,0 +1,2 @@
+# Golden files are byte-for-byte contracts: never convert their line endings.
+core/test/golden/** -text

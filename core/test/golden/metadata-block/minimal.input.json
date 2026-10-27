@@ -1,0 +1,42 @@
+{
+  "finding" : {
+    "annotations" : [
+
+    ],
+    "description" : "The primary button is #FF0000, the design says #E64545.",
+    "designSnapshots" : [
+
+    ],
+    "deviceContext" : {
+      "accessibilitySettings" : [
+
+      ],
+      "deviceModel" : "iPhone 17 Pro",
+      "osName" : "iOS 26.4"
+    },
+    "summary" : "Button color is off",
+    "type" : "bug"
+  },
+  "session" : {
+    "build" : {
+      "appBundleURL" : "file:///tmp/ReviewMe.app/",
+      "identity" : {
+        "buildNumber" : "421",
+        "bundleID" : "ch.liip.reviewme",
+        "version" : "2.1.0"
+      }
+    },
+    "project" : {
+      "id" : "0-12",
+      "name" : "ReviewMe",
+      "shortName" : "RM"
+    },
+    "startedAt" : {
+      "iso8601" : "2026-07-04T09:15:32.000Z",
+      "secondsSinceReferenceDate" : 804849332
+    },
+    "tray" : [
+
+    ]
+  }
+}

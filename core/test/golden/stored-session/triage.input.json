@@ -1,0 +1,126 @@
+{
+  "session" : {
+    "build" : {
+      "appBundleURL" : "file:///tmp/ReviewMe.app/",
+      "identity" : {
+        "buildNumber" : "421",
+        "bundleID" : "ch.liip.reviewme",
+        "version" : "2.1.0"
+      }
+    },
+    "project" : {
+      "id" : "0-12",
+      "name" : "ReviewMe",
+      "shortName" : "RM"
+    },
+    "startedAt" : {
+      "iso8601" : "2026-07-04T09:15:32.473Z",
+      "secondsSinceReferenceDate" : 804849332.4729061
+    },
+    "tray" : [
+      {
+        "filingProgress" : {
+          "state" : "notStarted"
+        },
+        "finding" : {
+          "annotations" : [
+
+          ],
+          "description" : "The primary button is #FF0000, the design says #E64545.",
+          "designSnapshots" : [
+
+          ],
+          "deviceContext" : {
+            "accessibilitySettings" : [
+
+            ],
+            "deviceModel" : "iPhone 17 Pro",
+            "osName" : "iOS 26.4"
+          },
+          "summary" : "No triage set",
+          "type" : "bug"
+        },
+        "id" : "00000000-0000-4000-8000-000000000020"
+      },
+      {
+        "filingProgress" : {
+          "state" : "notStarted"
+        },
+        "finding" : {
+          "annotations" : [
+
+          ],
+          "description" : "The primary button is #FF0000, the design says #E64545.",
+          "designSnapshots" : [
+
+          ],
+          "deviceContext" : {
+            "accessibilitySettings" : [
+
+            ],
+            "deviceModel" : "iPhone 17 Pro",
+            "osName" : "iOS 26.4"
+          },
+          "summary" : "Add a skeleton while loading",
+          "type" : "improvement"
+        },
+        "id" : "00000000-0000-4000-8000-000000000021"
+      },
+      {
+        "filingProgress" : {
+          "state" : "notStarted"
+        },
+        "finding" : {
+          "annotations" : [
+
+          ],
+          "description" : "The primary button is #FF0000, the design says #E64545.",
+          "designSnapshots" : [
+
+          ],
+          "deviceContext" : {
+            "accessibilitySettings" : [
+
+            ],
+            "deviceModel" : "iPhone 17 Pro",
+            "osName" : "iOS 26.4"
+          },
+          "priority" : {
+            "name" : "Critical"
+          },
+          "summary" : "Checkout button is hidden",
+          "type" : "bug"
+        },
+        "id" : "00000000-0000-4000-8000-000000000022"
+      },
+      {
+        "filingProgress" : {
+          "state" : "notStarted"
+        },
+        "finding" : {
+          "annotations" : [
+
+          ],
+          "assignee" : {
+            "fullName" : "Mira Sol",
+            "login" : "mira.sol"
+          },
+          "description" : "The primary button is #FF0000, the design says #E64545.",
+          "designSnapshots" : [
+
+          ],
+          "deviceContext" : {
+            "accessibilitySettings" : [
+
+            ],
+            "deviceModel" : "iPhone 17 Pro",
+            "osName" : "iOS 26.4"
+          },
+          "summary" : "Avatar is cropped",
+          "type" : "bug"
+        },
+        "id" : "00000000-0000-4000-8000-000000000023"
+      }
+    ]
+  }
+}

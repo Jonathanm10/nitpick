@@ -1,0 +1,6 @@
+After capturing, the summary field is not focused.
+
+## Environment
+- Nitpick: 1.4.0 (57)
+- macOS: Version 26.1 (Build 25B78)
+- Xcode: 26.1 (17B55)

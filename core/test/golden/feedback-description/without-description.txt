@@ -1,0 +1,4 @@
+## Environment
+- Nitpick: unknown
+- macOS: Version 26.1 (Build 25B78)
+- Xcode: unknown

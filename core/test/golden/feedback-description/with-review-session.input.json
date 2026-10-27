@@ -1,0 +1,12 @@
+{
+  "description" : "  Name the device too.\nIt helps with two windows open.\n",
+  "environment" : {
+    "build" : "ch.liip.reviewme 2.1.0 (421)",
+    "captureSource" : "Simulator — iPhone 17 Pro, iOS 26.1",
+    "macOS" : "Version 26.1 (Build 25B78)",
+    "nitpick" : "1.4.0 (57)",
+    "xcode" : "26.1 (17B55)"
+  },
+  "kind" : "improvement",
+  "title" : "Show the Build in the window title"
+}

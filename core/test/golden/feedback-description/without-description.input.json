@@ -1,0 +1,10 @@
+{
+  "description" : " \n",
+  "environment" : {
+    "macOS" : "Version 26.1 (Build 25B78)",
+    "nitpick" : "unknown",
+    "xcode" : "unknown"
+  },
+  "kind" : "bug",
+  "title" : "Capture does nothing"
+}

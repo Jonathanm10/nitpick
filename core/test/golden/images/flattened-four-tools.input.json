@@ -1,0 +1,58 @@
+{
+  "annotations" : [
+    {
+      "color" : "red",
+      "kind" : "pen",
+      "points" : [
+        {
+          "x" : 60,
+          "y" : 120
+        },
+        {
+          "x" : 90,
+          "y" : 180
+        },
+        {
+          "x" : 140,
+          "y" : 150
+        },
+        {
+          "x" : 200,
+          "y" : 260
+        }
+      ]
+    },
+    {
+      "color" : "blue",
+      "from" : {
+        "x" : 240,
+        "y" : 400
+      },
+      "kind" : "arrow",
+      "to" : {
+        "x" : 120,
+        "y" : 300
+      }
+    },
+    {
+      "color" : "green",
+      "kind" : "rectangle",
+      "rect" : {
+        "height" : 160,
+        "width" : 240,
+        "x" : 60,
+        "y" : 500
+      }
+    },
+    {
+      "at" : {
+        "x" : 100,
+        "y" : 700
+      },
+      "color" : "black",
+      "kind" : "label",
+      "text" : "2pt off"
+    }
+  ],
+  "capture" : "capture.png"
+}
