@@ -15,13 +15,19 @@ extension AnnotationMetrics {
     }
 }
 
-extension Finding {
+extension AnnotationHistory {
     /// The index of the topmost Annotation under `point` (image pixels),
     /// or nil when the point hits nothing. Overlaps resolve topmost-first
     /// in stacking order, so a click on stacked marks selects what the
     /// designer sees on top.
     public func annotationIndex(at point: CGPoint, metrics: AnnotationMetrics) -> Int? {
         annotations.lastIndex { $0.hitTest(point, metrics: metrics) }
+    }
+}
+
+extension Finding {
+    public func annotationIndex(at point: CGPoint, metrics: AnnotationMetrics) -> Int? {
+        annotationHistory.annotationIndex(at: point, metrics: metrics)
     }
 }
 

@@ -232,6 +232,31 @@ struct FeedbackSendingTests {
         ]))
     }
 
+    @Test("Annotations on the window image are flattened into the uploaded PNG at its native size")
+    func uploadsAnnotatedImage() async throws {
+        let transport = FakeHTTPTransport()
+        let core = try await IssueFilingTests.connectedCore(transport: transport)
+        Self.enqueueLadder(on: transport)
+        transport.enqueue(json: Self.attachmentsJSON)
+        let clean = try ImageFixtures.solidPNG(width: 480, height: 320)
+        var feedback = Self.feedback(imagePNG: clean)
+        feedback.imageAnnotations = [Annotation(.rectangle(CGRect(x: 40, y: 40, width: 200, height: 120)))]
+
+        _ = try await core.send(feedback)
+
+        let attach = try #require(transport.sentRequests.last)
+        let boundary = try #require(attach.value(forHTTPHeaderField: "Content-Type")?
+            .wholeMatch(of: /multipart\/form-data; boundary=(nitpick-[0-9A-F-]+)/)?.1)
+        let annotated = try DecodedScreenshot.annotatedPNG(clean, with: feedback.imageAnnotations)
+        #expect(annotated != clean)
+        #expect(attach.httpBody == IssueFilingTests.multipartBody(boundary: boundary, files: [
+            (fileName: "nitpick-window.png", data: annotated),
+        ]))
+        let decoded = try ImageFixtures.decodeRGBA(annotated)
+        #expect(decoded.width == 480)
+        #expect(decoded.height == 320)
+    }
+
     @Test("no image, no attachments request")
     func noImageNoUpload() async throws {
         let transport = FakeHTTPTransport()

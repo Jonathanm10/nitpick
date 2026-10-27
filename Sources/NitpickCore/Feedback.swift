@@ -99,20 +99,25 @@ public struct Feedback: Equatable, Sendable {
     public var title: String
     public var description: String
     public var environment: Environment
+    /// The clean window image; `imageAnnotations` are flattened into it only
+    /// when it is attached.
     public var imagePNG: Data?
+    public var imageAnnotations: [Annotation]
 
     public init(
         kind: FeedbackKind,
         title: String,
         description: String = "",
         environment: Environment,
-        imagePNG: Data? = nil
+        imagePNG: Data? = nil,
+        imageAnnotations: [Annotation] = []
     ) {
         self.kind = kind
         self.title = title
         self.description = description
         self.environment = environment
         self.imagePNG = imagePNG
+        self.imageAnnotations = imageAnnotations
     }
 
     /// The Issue summary; `send` refuses a Feedback whose summary is empty.
@@ -176,8 +181,9 @@ extension AppCore {
         }
         if let imagePNG = feedback.imagePNG {
             do {
+                let annotated = try DecodedScreenshot.annotatedPNG(imagePNG, with: feedback.imageAnnotations)
                 try await attach(
-                    [AttachmentFile(fileName: Self.feedbackImageFileName, contentType: "image/png", data: imagePNG)],
+                    [AttachmentFile(fileName: Self.feedbackImageFileName, contentType: "image/png", data: annotated)],
                     toIssue: created.id, deniedAction: "attach the window image", credentials: credentials
                 )
             } catch {

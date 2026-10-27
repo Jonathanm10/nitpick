@@ -66,11 +66,50 @@ extension AnnotationColor {
     }
 }
 
-/// The Annotation surface on a captured Finding: draw with the selected
-/// tool over the core-rendered annotated image. The view holds only the
-/// in-flight gesture; every committed edit is a core call.
-struct AnnotationSurface: View {
-    @Bindable var model: AppModel
+/// What the Annotation surface and toolbar edit: the Editor's selected
+/// Finding (`AppModel`) or the Feedback's window image
+/// (`AnnotatedImageModel`). Coordinates are image pixels.
+@MainActor
+protocol AnnotationEditing: AnyObject, Observable {
+    /// The core-rendered annotated image, mid-drag without the dragged shape.
+    var capturedImage: NSImage? { get }
+    var capturePixelSize: CGSize? { get }
+    /// A new value resets the surface's in-flight draft.
+    var captureID: UUID { get }
+    var annotationMetrics: AnnotationMetrics? { get }
+    var annotationTool: AnnotationTool { get set }
+    var annotationColor: AnnotationColor { get set }
+    var hasPendingLabelDraft: Bool { get set }
+    /// Freezes the surface and toolbar.
+    var isBusy: Bool { get }
+    var canUndoAnnotation: Bool { get }
+    var canRedoAnnotation: Bool { get }
+    var selectedAnnotation: Annotation? { get }
+    var annotationDrag: AnnotationDrag<NSImage>? { get }
+    /// Whether Esc on the surface would act; the surface installs its Esc
+    /// handler only then.
+    var editorEscapeWouldAct: Bool { get }
+    func handleEditorEscape()
+    func addAnnotation(_ shape: Annotation.Shape)
+    func undoAnnotation()
+    func redoAnnotation()
+    func annotationIndex(at point: CGPoint) -> Int?
+    func selectAnnotation(at point: CGPoint)
+    func deleteSelectedAnnotation()
+    func deleteAnnotation(at index: Int)
+    func nudgeSelectedAnnotation(_ direction: CGVector, multiplier: CGFloat)
+    func beginAnnotationDrag(at point: CGPoint) -> Bool
+    func updateAnnotationDrag(offset: CGVector)
+    func endAnnotationDrag()
+}
+
+extension AppModel: AnnotationEditing {}
+
+/// The Annotation surface: draw with the selected tool over the
+/// core-rendered annotated image. The view holds only the in-flight
+/// gesture; every committed edit is a core call.
+struct AnnotationSurface<Model: AnnotationEditing>: View {
+    @Bindable var model: Model
 
     /// The shape being drawn right now, in image pixel coordinates.
     @State private var draft: Annotation.Shape?

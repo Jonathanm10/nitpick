@@ -15,19 +15,25 @@ struct FeedbackSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Send Feedback")
-                .font(.title3.weight(.semibold))
-            switch feedback.phase {
-            case .sent(let sent):
-                sentConfirmation(sent)
-            case .sending:
-                form
-            case .editing, .failed:
-                if isConnected { form } else { notConnected }
+            if let image = annotatingImage {
+                Text("Annotate Window Image")
+                    .font(.title3.weight(.semibold))
+                annotating(image)
+            } else {
+                Text("Send Feedback")
+                    .font(.title3.weight(.semibold))
+                switch feedback.phase {
+                case .sent(let sent):
+                    sentConfirmation(sent)
+                case .sending:
+                    form
+                case .editing, .failed:
+                    if isConnected { form } else { notConnected }
+                }
             }
         }
         .padding(20)
-        .frame(width: Self.width, alignment: .leading)
+        .frame(width: annotatingImage == nil ? Self.width : nil, alignment: .leading)
         .background(NitpickTheme.window)
         .interactiveDismissDisabled()
         .confirmationDialog(
@@ -39,7 +45,7 @@ struct FeedbackSheet: View {
             Button("Keep Editing", role: .cancel) {}
                 .motionPressFeedback()
         } message: {
-            Text("The title and description you wrote will be lost.")
+            Text("What you wrote and drew will be lost.")
         }
     }
 
@@ -105,16 +111,31 @@ struct FeedbackSheet: View {
                 set: { feedback.setAttachesWindowImage($0) }
             ))
             .toggleStyle(.checkbox)
-            if feedback.attachesWindowImage, let image = feedback.windowImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxHeight: 150, alignment: .leading)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall)
-                            .strokeBorder(NitpickTheme.border, lineWidth: 1)
+            if let image = feedback.windowImage, let preview = image.capturedImage {
+                HStack(alignment: .top, spacing: 12) {
+                    Button { feedback.isAnnotatingWindowImage = true } label: {
+                        Image(nsImage: preview)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 150, alignment: .leading)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall)
+                                    .strokeBorder(NitpickTheme.border, lineWidth: 1)
+                            }
                     }
+                    .buttonStyle(.plain)
+                    .help("Annotate the window image")
                     .accessibilityLabel("Preview of the attached window image")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button("Annotate…") { feedback.isAnnotatingWindowImage = true }
+                            .motionPressFeedback()
+                        Text(image.annotations.isEmpty
+                            ? "Point at what you mean."
+                            : "^[\(image.annotations.count) annotation](inflect: true)")
+                            .font(NitpickTheme.secondary)
+                            .foregroundStyle(NitpickTheme.secondaryText)
+                    }
+                }
             }
 
             if let message = feedback.failureMessage {
@@ -162,6 +183,52 @@ struct FeedbackSheet: View {
             .padding(10)
             .background(NitpickTheme.inset, in: RoundedRectangle(cornerRadius: NitpickTheme.radiusSmall))
         }
+    }
+
+    // MARK: Annotating
+
+    private var annotatingImage: AnnotatedImageModel? {
+        guard isConnected, feedback.isFormEditable, feedback.isAnnotatingWindowImage else { return nil }
+        return feedback.windowImage
+    }
+
+    /// Room the toolbar and its spacing take above the image.
+    private static let toolbarAllowance: CGFloat = 50
+
+    /// The window image under the Editor's own surface and toolbar, sized
+    /// to fill most of the main window the sheet hangs from.
+    private func annotating(_ image: AnnotatedImageModel) -> some View {
+        let size = Self.annotatingImageSize(for: image.capturePixelSize ?? CGSize(width: 1, height: 1))
+        return VStack(alignment: .leading, spacing: 12) {
+            AnnotationSurface(model: image)
+                .frame(width: size.width, height: size.height + Self.toolbarAllowance)
+            HStack {
+                Text("Annotations are drawn into the attached image.")
+                    .font(NitpickTheme.secondary)
+                    .foregroundStyle(NitpickTheme.secondaryText)
+                Spacer()
+                // A placed label commits on Return; leaving first would drop it.
+                Button("Done") { feedback.isAnnotatingWindowImage = false }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(image.hasPendingLabelDraft)
+                    .motionPressFeedback()
+            }
+        }
+        .onExitCommand {
+            if !image.hasPendingLabelDraft { feedback.isAnnotatingWindowImage = false }
+        }
+    }
+
+    /// Aspect-fits the image into the main window less the sheet's chrome,
+    /// never narrower than the form, whose width fits the toolbar.
+    private static func annotatingImageSize(for pixelSize: CGSize) -> CGSize {
+        let window = NSApp.nitpickMainWindow?.contentLayoutRect.size ?? CGSize(width: 920, height: 640)
+        let bounds = CGSize(width: max(window.width - 80, width - 40), height: max(window.height - 220, 200))
+        let scale = min(bounds.width / pixelSize.width, bounds.height / pixelSize.height)
+        return CGSize(
+            width: max((pixelSize.width * scale).rounded(.down), width - 40),
+            height: (pixelSize.height * scale).rounded(.down)
+        )
     }
 
     // MARK: Sent

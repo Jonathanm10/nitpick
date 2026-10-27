@@ -76,49 +76,91 @@ extension CGPoint {
     }
 }
 
-extension Finding {
+/// Annotations in stacking order with their linear undo/redo history: the
+/// editing model behind a Finding's screenshot and a Feedback's window image.
+///
+/// Equality covers the Annotations only, never the edit history.
+public struct AnnotationHistory: Equatable, Sendable {
+    /// Set directly only to restore saved state, which carries no history.
+    public internal(set) var annotations: [Annotation]
+    private var undoStack: [[Annotation]] = []
+    private var redoStack: [[Annotation]] = []
+
+    public init(_ annotations: [Annotation] = []) {
+        self.annotations = annotations
+    }
+
+    public static func == (lhs: AnnotationHistory, rhs: AnnotationHistory) -> Bool {
+        lhs.annotations == rhs.annotations
+    }
+
     /// Adds an Annotation on top of the existing ones. Undoable; like every
     /// edit, it discards any redoable future.
     public mutating func add(_ annotation: Annotation) {
-        recordAnnotationEdit()
+        recordEdit()
         annotations.append(annotation)
     }
 
     /// Replaces the Annotation at `index` — moving a label, recoloring a
     /// stroke. Undoable.
     public mutating func replaceAnnotation(at index: Int, with annotation: Annotation) {
-        recordAnnotationEdit()
+        recordEdit()
         annotations[index] = annotation
     }
 
     /// Removes the Annotation at `index`. Undoable.
     public mutating func removeAnnotation(at index: Int) {
-        recordAnnotationEdit()
+        recordEdit()
         annotations.remove(at: index)
     }
 
-    public var canUndo: Bool { !annotationUndoStack.isEmpty }
-    public var canRedo: Bool { !annotationRedoStack.isEmpty }
+    public var canUndo: Bool { !undoStack.isEmpty }
+    public var canRedo: Bool { !redoStack.isEmpty }
 
     /// Steps back one Annotation edit; a no-op when there is nothing to
     /// undo, so a stray ⌘Z never crashes.
     public mutating func undo() {
-        guard let previous = annotationUndoStack.popLast() else { return }
-        annotationRedoStack.append(annotations)
+        guard let previous = undoStack.popLast() else { return }
+        redoStack.append(annotations)
         annotations = previous
     }
 
     /// Replays the most recently undone edit; a no-op when there is none.
     public mutating func redo() {
-        guard let next = annotationRedoStack.popLast() else { return }
-        annotationUndoStack.append(annotations)
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(annotations)
         annotations = next
     }
 
     /// Every edit snapshots the current state onto the undo stack and
     /// invalidates the redo stack — the standard linear-history contract.
-    private mutating func recordAnnotationEdit() {
-        annotationUndoStack.append(annotations)
-        annotationRedoStack.removeAll()
+    private mutating func recordEdit() {
+        undoStack.append(annotations)
+        redoStack.removeAll()
+    }
+}
+
+extension Finding {
+    public mutating func add(_ annotation: Annotation) {
+        annotationHistory.add(annotation)
+    }
+
+    public mutating func replaceAnnotation(at index: Int, with annotation: Annotation) {
+        annotationHistory.replaceAnnotation(at: index, with: annotation)
+    }
+
+    public mutating func removeAnnotation(at index: Int) {
+        annotationHistory.removeAnnotation(at: index)
+    }
+
+    public var canUndo: Bool { annotationHistory.canUndo }
+    public var canRedo: Bool { annotationHistory.canRedo }
+
+    public mutating func undo() {
+        annotationHistory.undo()
+    }
+
+    public mutating func redo() {
+        annotationHistory.redo()
     }
 }

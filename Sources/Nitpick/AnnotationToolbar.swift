@@ -5,8 +5,8 @@ import SwiftUI
 /// view so the frozen pane can reserve its exact slot (hidden, disabled)
 /// and render a filed capture at the same size the editable surface
 /// gives it (issue 01: "same pane, same size").
-struct AnnotationToolbar: View {
-    @Bindable var model: AppModel
+struct AnnotationToolbar<Model: AnnotationEditing>: View {
+    @Bindable var model: Model
 
     var body: some View {
         HStack(spacing: 14) {
