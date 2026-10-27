@@ -12,7 +12,7 @@ export type TrayStep = "next" | "previous"
  * the oldest.
  */
 export function stepInTray(
-  session: ReviewSession,
+  session: Pick<ReviewSession, "tray">,
   step: TrayStep,
   current?: string
 ): string | undefined {
@@ -29,7 +29,7 @@ export function stepInTray(
 export function stepEditor(
   editor: EditorState,
   step: TrayStep,
-  session: ReviewSession | undefined
+  session: Pick<ReviewSession, "tray"> | undefined
 ): EditorState | undefined {
   if (session === undefined) return undefined
   const target = stepInTray(session, step, editor.target)
