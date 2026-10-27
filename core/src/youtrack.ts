@@ -191,13 +191,17 @@ export interface YouTrackCall<Payload> {
   readonly decode: (json: unknown) => Payload
 }
 
-/** The transport and the credentials every call to one instance needs. */
+/**
+ * The transport and the credentials every call to one instance needs. The
+ * transport is private: one that keeps its requests holds their headers, so
+ * logging the client must not reach it.
+ */
 export class YouTrackClient {
-  readonly transport: HTTPTransport
+  readonly #transport: HTTPTransport
   readonly credentials: YouTrackCredentials
 
   constructor(transport: HTTPTransport, credentials: YouTrackCredentials) {
-    this.transport = transport
+    this.#transport = transport
     this.credentials = credentials
   }
 
@@ -215,7 +219,7 @@ export class YouTrackClient {
     // The base URL is normalized, and paths are constants plus entity IDs the
     // server issued. Composing by string keeps `,` and `$` literal.
     const url = `${this.credentials.instanceURL}/${call.path}?${call.query}`
-    const response = await this.transport.send(
+    const response = await this.#transport.send(
       call.body === undefined
         ? { method: call.method ?? "GET", url, headers }
         : { method: call.method ?? "GET", url, headers, body: call.body.data }

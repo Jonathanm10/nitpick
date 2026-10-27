@@ -69,9 +69,12 @@ const failingResponses: ReadonlyArray<(transport: FakeHTTPTransport) => void> =
   ]
 
 describe("Token secrecy", () => {
-  test("the credentials and the client never render the token", () => {
+  test("the credentials and the client never render the token, even once the client has sent requests", async () => {
     const transport = new FakeHTTPTransport()
     const youTrack = client(transport)
+    transport.enqueue(fixtures.userJSON)
+    transport.enqueue("[]")
+    await verifyYouTrack(youTrack)
 
     expectNoToken(youTrack.credentials)
     expectNoToken(youTrack)
