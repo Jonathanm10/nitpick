@@ -25,6 +25,9 @@ function hostListing(list: DeviceHost["devices"]["list"]): DeviceHost {
       devices: [...(await list())],
     }),
     launchBuild: async () => {},
+    captureScreen: async () => {
+      throw new Error("not captured here")
+    },
   }
 }
 

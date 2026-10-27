@@ -1,9 +1,11 @@
-import { useEffect, useState, type DragEvent } from "react"
+import { useEffect, useRef, useState, type DragEvent } from "react"
+import { unfiledFindingCount } from "@nitpick/core"
 import { BuildDropZone } from "@/components/build-drop-zone"
 import { DevicePicker } from "@/components/device-picker"
 import { HostNotReady } from "@/components/host-not-ready"
 import { ProjectPicker } from "@/components/project-picker"
 import { SessionScreen } from "@/components/session-screen"
+import { ShortcutsDialog } from "@/components/shortcuts-dialog"
 import { StartReviewButton } from "@/components/start-review-button"
 import {
   AlertDialog,
@@ -16,6 +18,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Spinner } from "@/components/ui/spinner"
+import { chords } from "@/lib/chords"
 import { useReview } from "@/lib/use-review"
 
 export function App() {
@@ -28,7 +31,7 @@ export function App() {
   // the Reviewer to confirm what the upload would discard.
   const [pendingBuild, setPendingBuild] = useState<File>()
   const [confirmsEnd, setConfirmsEnd] = useState(false)
-  const unfiled = session?.unfiledFindingCount ?? 0
+  const unfiled = session === undefined ? 0 : unfiledFindingCount(session)
   const unfiledPhrase =
     unfiled === 1 ? "1 unfiled Finding" : `${unfiled} unfiled Findings`
 
@@ -76,6 +79,24 @@ export function App() {
     else void model.endReview()
   }
 
+  // Start review and Resume review: ⌘⏎ / Ctrl+Enter, since ⌘R reloads the
+  // page. While the Build runs, the chord belongs to the Build.
+  const startChord = useRef(() => {})
+  useEffect(() => {
+    startChord.current = () => {
+      if (model.run === undefined) void model.startReview()
+    }
+  })
+  useEffect(() => {
+    function keyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || !chords.startReview.matches(event)) return
+      event.preventDefault()
+      startChord.current()
+    }
+    document.addEventListener("keydown", keyDown)
+    return () => document.removeEventListener("keydown", keyDown)
+  }, [])
+
   return (
     <div
       className="flex min-h-svh flex-col"
@@ -85,22 +106,35 @@ export function App() {
       }}
       onDrop={drop}
     >
-      <header className="flex h-12 items-center justify-between border-b px-6">
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-6">
         <span className="font-medium">nitpick</span>
+        {state?.build && session && (
+          <span className="truncate text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {state.build.name}
+            </span>{" "}
+            {state.build.identity.version} ({state.build.identity.buildNumber})
+            · {session.project.name}
+          </span>
+        )}
+        <span className="flex-1" />
         {isBusy && <Spinner aria-label="Working" />}
+        <ShortcutsDialog />
       </header>
-      <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 p-6">
+      <main
+        className={
+          state?.build && session
+            ? "flex h-[calc(100svh-3rem)] min-h-[40rem] flex-col gap-4 p-4"
+            : "mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 p-6"
+        }
+      >
         {review.status === "failed" && <ErrorLine message={review.error} />}
         {state?.build && session ? (
-          <>
-            <SessionScreen
-              build={state.build}
-              session={session}
-              model={model}
-              onEndReview={requestEndReview}
-            />
-            {errorMessage !== undefined && <ErrorLine message={errorMessage} />}
-          </>
+          <SessionScreen
+            session={session}
+            model={model}
+            onEndReview={requestEndReview}
+          />
         ) : (
           <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-4">
             <BuildDropZone

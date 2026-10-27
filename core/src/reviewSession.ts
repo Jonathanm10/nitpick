@@ -155,11 +155,11 @@ export function addFinding(
  * Edits an item's Finding. Refused, returning the same session, once the
  * item is frozen: the Tray must never diverge from its Issue.
  */
-export function updateFinding(
-  session: ReviewSession,
+export function updateFinding<Session extends Pick<ReviewSession, "tray">>(
+  session: Session,
   id: string,
   edit: (finding: Finding) => Finding
-): ReviewSession {
+): Session {
   const index = session.tray.findIndex((item) => item.id === id)
   if (index === -1 || !isEditable(session.tray[index])) return session
   const tray = [...session.tray]
@@ -168,10 +168,10 @@ export function updateFinding(
 }
 
 /** Removes an item before filing. A created Issue keeps its Tray record. */
-export function discardFinding(
-  session: ReviewSession,
+export function discardFinding<Session extends Pick<ReviewSession, "tray">>(
+  session: Session,
   id: string
-): ReviewSession {
+): Session {
   return {
     ...session,
     tray: session.tray.filter((item) => item.id !== id || !isEditable(item)),
@@ -187,7 +187,9 @@ export function filedIssues(session: ReviewSession): FiledIssue[] {
  * Findings short of the full ladder, including one frozen mid-ladder: the
  * count the drop guard names and File all shows.
  */
-export function unfiledFindingCount(session: ReviewSession): number {
+export function unfiledFindingCount(
+  session: Pick<ReviewSession, "tray">
+): number {
   return session.tray.filter((item) => filedIssueOf(item) === undefined).length
 }
 
@@ -200,7 +202,9 @@ export function hasUnfiledFindings(session: ReviewSession): boolean {
  * The Findings that keep File all from running, in Tray order: editable, so
  * filing would create their Issue, yet without the summary it needs.
  */
-export function findingsNeedingSummary(session: ReviewSession): string[] {
+export function findingsNeedingSummary(
+  session: Pick<ReviewSession, "tray">
+): string[] {
   return session.tray
     .filter((item) => isEditable(item) && isBlank(item.finding.summary))
     .map((item) => item.id)

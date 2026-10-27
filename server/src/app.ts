@@ -1,7 +1,9 @@
 import { serveStatic } from "@hono/node-server/serve-static"
 import {
+  annotationColors,
+  designSnapshotContentType,
+  DesignSnapshotError,
   ShellBusy,
-  unfiledFindingCount,
   verifyYouTrack,
   YouTrackError,
   type Build,
@@ -10,12 +12,15 @@ import {
   type YouTrackClient,
 } from "@nitpick/core"
 import { Hono, type Context } from "hono"
+import { bodyLimit } from "hono/body-limit"
 import { HTTPException } from "hono/http-exception"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 import type { ReadableStream } from "node:stream/web"
 import type {
   BuildResponse,
   BuildSummary,
+  CaptureResponse,
+  DesignSnapshotResponse,
   DevicesResponse,
   ErrorResponse,
   HostResponse,
@@ -26,11 +31,17 @@ import type {
   StartReviewResponse,
   SwitchDeviceResponse,
 } from "./api.ts"
+import { labelSpritePNG } from "./annotationFlattening.ts"
 import { BuildIngestError, buildName } from "./buildIngestion.ts"
 import type { DeviceHost, SimulatorDevice } from "./device/DeviceHost.ts"
 import { hostProblemReason } from "./device/hostHealth.ts"
-import { RuntimeUnavailable } from "./device/simctl.ts"
-import { ReviewRefused, type Reviewer } from "./reviewer.ts"
+import { DeviceNotRunning, RuntimeUnavailable } from "./device/simctl.ts"
+import {
+  MalformedEdit,
+  parseFindingPatch,
+  parseSessionPatch,
+} from "./findingPatch.ts"
+import { FindingNotFound, ReviewRefused, type Reviewer } from "./reviewer.ts"
 
 export interface AppOptions {
   readonly deviceHost: DeviceHost
@@ -138,6 +149,118 @@ export function createApp({
     return c.body(null, 204)
   })
 
+  app.patch("/api/session", async (c) => {
+    await reviewer.editSession(parseSessionPatch(await jsonBody(c)))
+    return c.body(null, 204)
+  })
+
+  app.post("/api/session/captures", async (c) => {
+    const item = await reviewer.capture(deviceUDID(await jsonBody(c)))
+    return c.json({ item } satisfies CaptureResponse)
+  })
+
+  const finding = "/api/session/findings/:itemID"
+
+  app.patch(finding, async (c) => {
+    await reviewer.editFinding(
+      c.req.param("itemID"),
+      parseFindingPatch(await jsonBody(c))
+    )
+    return c.body(null, 204)
+  })
+
+  app.delete(finding, async (c) => {
+    await reviewer.discard(c.req.param("itemID"))
+    return c.body(null, 204)
+  })
+
+  app.get(`${finding}/capture`, async (c) => {
+    const png = await reviewer.capturePNG(c.req.param("itemID"))
+    return imageResponse(png, "image/png")
+  })
+
+  // Design Snapshots arrive as the raw image; a designer's export stays far
+  // below this, and the server holds one in memory to check it.
+  const imageBody = bodyLimit({
+    maxSize: 50 * 1024 * 1024,
+    onError: () => {
+      throw new HTTPException(413, {
+        message: "That image is larger than 50 MB.",
+      })
+    },
+  })
+
+  app.post(`${finding}/design-snapshots`, imageBody, async (c) => {
+    const snapshot = await reviewer.addDesignSnapshot(
+      c.req.param("itemID"),
+      c.req.query("name") ?? "",
+      new Uint8Array(await c.req.arrayBuffer())
+    )
+    return c.json({ snapshot } satisfies DesignSnapshotResponse)
+  })
+
+  app.put(`${finding}/design-snapshots/:snapshotID`, imageBody, async (c) => {
+    const snapshot = await reviewer.replaceDesignSnapshot(
+      c.req.param("itemID"),
+      c.req.param("snapshotID"),
+      c.req.query("name") ?? "",
+      new Uint8Array(await c.req.arrayBuffer())
+    )
+    return c.json({ snapshot } satisfies DesignSnapshotResponse)
+  })
+
+  app.patch(`${finding}/design-snapshots/:snapshotID`, async (c) => {
+    const name = (await jsonBody(c)).name
+    if (typeof name !== "string") throw malformedRequest()
+    const snapshot = await reviewer.renameDesignSnapshot(
+      c.req.param("itemID"),
+      c.req.param("snapshotID"),
+      name
+    )
+    return c.json({ snapshot } satisfies DesignSnapshotResponse)
+  })
+
+  app.delete(`${finding}/design-snapshots/:snapshotID`, async (c) => {
+    await reviewer.removeDesignSnapshot(
+      c.req.param("itemID"),
+      c.req.param("snapshotID")
+    )
+    return c.body(null, 204)
+  })
+
+  app.get(`${finding}/design-snapshot-data/:dataVersion`, async (c) => {
+    const { snapshot, data } = await reviewer.designSnapshotData(
+      c.req.param("itemID"),
+      c.req.param("dataVersion")
+    )
+    return imageResponse(data, designSnapshotContentType(snapshot.mediaType))
+  })
+
+  // A label's glyphs for the Editor's preview, by the rasterizer that
+  // flattens (core's labelSpriteLayout places them). The same query always
+  // gives the same image.
+  app.get("/api/label-sprite", async (c) => {
+    const text = c.req.query("text") ?? ""
+    const fontSize = Number(c.req.query("size"))
+    const offset = Number(c.req.query("offset"))
+    const color = annotationColors.find((name) => name === c.req.query("color"))
+    if (
+      text === "" ||
+      text.length > 1000 ||
+      !Number.isInteger(fontSize) ||
+      fontSize < 1 ||
+      fontSize > 1000 ||
+      !(offset >= 0 && offset < 1) ||
+      color === undefined
+    ) {
+      throw malformedRequest()
+    }
+    return imageResponse(
+      await labelSpritePNG({ text, color, fontSize, offset }),
+      "image/png"
+    )
+  })
+
   app.onError((error, c) => {
     const status = errorStatus(error)
     if (status === 500) console.error(error)
@@ -145,7 +268,15 @@ export function createApp({
       error instanceof Error && error.message !== ""
         ? error.message
         : "The nitpick server failed to answer."
-    return c.json({ error: message } satisfies ErrorResponse, status)
+    return c.json(
+      {
+        error: message,
+        ...(error instanceof DeviceNotRunning && {
+          code: "deviceNotRunning" as const,
+        }),
+      } satisfies ErrorResponse,
+      status
+    )
   })
 
   if (webRoot !== undefined) {
@@ -157,12 +288,22 @@ export function createApp({
 
 /** Refusals the Reviewer can act on keep their message; the rest are 500s. */
 function errorStatus(error: unknown): ContentfulStatusCode {
-  if (error instanceof HTTPException) return 400
-  if (error instanceof BuildIngestError) return 400
+  if (error instanceof HTTPException) {
+    return error.status === 413 ? 413 : 400
+  }
+  if (
+    error instanceof BuildIngestError ||
+    error instanceof DesignSnapshotError ||
+    error instanceof MalformedEdit
+  ) {
+    return 400
+  }
+  if (error instanceof FindingNotFound) return 404
   if (
     error instanceof ShellBusy ||
     error instanceof ReviewRefused ||
-    error instanceof RuntimeUnavailable
+    error instanceof RuntimeUnavailable ||
+    error instanceof DeviceNotRunning
   ) {
     return 409
   }
@@ -195,8 +336,22 @@ function sessionSummary(session: ReviewSession): SessionSummary {
   return {
     project: session.project,
     startedAt: session.startedAt,
-    unfiledFindingCount: unfiledFindingCount(session),
+    designReference: session.designReference,
+    tray: session.tray,
   }
+}
+
+/**
+ * The bytes under a capture's item id, a Design Snapshot's dataVersion or a
+ * label sprite's query never change, so the browser may keep them.
+ */
+function imageResponse(data: Uint8Array, contentType: string): Response {
+  return new Response(new Uint8Array(data), {
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": "private, max-age=31536000, immutable",
+    },
+  })
 }
 
 function readyHost(

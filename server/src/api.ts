@@ -1,9 +1,15 @@
 // The HTTP contract between server/ and web/. Types only, so web/ can import
 // it without pulling in Node code.
 import type {
+  Annotation,
   BuildIdentity,
+  DesignSnapshot,
+  FindingAssignee,
+  FindingPriority,
+  FindingType,
   ProjectSchema,
   ReferenceDate,
+  TrayItem,
   YouTrackProject,
 } from "@nitpick/core"
 import type { SimulatorDevice } from "./device/DeviceHost.ts"
@@ -18,6 +24,11 @@ export interface DevicesResponse {
 /** Any API failure. */
 export interface ErrorResponse {
   readonly error: string
+  /**
+   * Set when the capture found its device stopped on the host: the page
+   * pauses the review.
+   */
+  readonly code?: "deviceNotRunning"
 }
 
 /** A Build as the page shows it: name plus identity, never a server path. */
@@ -27,11 +38,13 @@ export interface BuildSummary {
   readonly identity: BuildIdentity
 }
 
-/** The open Review Session as home and the session screen show it. */
+/** The open Review Session: everything but its Build's server path. */
 export interface SessionSummary {
   readonly project: YouTrackProject
   readonly startedAt: ReferenceDate
-  readonly unfiledFindingCount: number
+  readonly designReference?: string
+  /** In capture order; the Tray shows it newest first. */
+  readonly tray: ReadonlyArray<TrayItem>
 }
 
 /**
@@ -101,3 +114,55 @@ export interface SwitchDeviceResponse {
 }
 
 // `DELETE /api/session` ends the Review Session without filing: 204.
+
+/** `PATCH /api/session`: 204. Null or blank clears the Design Reference. */
+export interface SessionPatch {
+  readonly designReference?: string | null
+}
+
+/** `POST /api/session/captures`: capture the device the Build runs on. */
+export interface CaptureRequest {
+  readonly deviceUDID: string
+}
+
+/** The new Finding, last in the Tray. */
+export interface CaptureResponse {
+  readonly item: TrayItem
+}
+
+// `GET /api/session/findings/:id/capture`: the capture's PNG, as simctl took it.
+
+/**
+ * `PATCH /api/session/findings/:id`: 204. Only the fields named change; null
+ * clears an optional one. A Finding filing has touched answers 409, one no
+ * longer in the Tray 404.
+ */
+export interface FindingPatch {
+  readonly summary?: string
+  readonly description?: string
+  readonly type?: FindingType
+  readonly priority?: FindingPriority | null
+  readonly assignee?: FindingAssignee | null
+  readonly designReference?: string | null
+  readonly annotations?: ReadonlyArray<Annotation>
+}
+
+// `DELETE /api/session/findings/:id` discards an editable Finding: 204.
+
+/**
+ * `POST /api/session/findings/:id/design-snapshots?name=<file name>` adds
+ * one, and `PUT …/design-snapshots/:snapshotID?name=<file name>` replaces
+ * one's bytes, with the image as the request body. `PATCH
+ * …/design-snapshots/:snapshotID` renames, with a `DesignSnapshotRename`.
+ * All three answer the snapshot as stored; `DELETE` removes one: 204.
+ */
+export interface DesignSnapshotResponse {
+  readonly snapshot: DesignSnapshot
+}
+
+export interface DesignSnapshotRename {
+  readonly name: string
+}
+
+// `GET /api/session/findings/:id/design-snapshot-data/:dataVersion`: the
+// bytes a Design Snapshot's dataVersion names.

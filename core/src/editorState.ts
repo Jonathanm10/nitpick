@@ -166,7 +166,7 @@ export type EditorEscape =
  */
 export function escapeInEditor(
   editor: EditorState,
-  session: ReviewSession | undefined,
+  session: Pick<ReviewSession, "tray"> | undefined,
   activity: { readonly isBusy: boolean }
 ): EditorEscape | undefined {
   if (!editor.allowsDiscard(activity)) return undefined
@@ -179,7 +179,7 @@ export function escapeInEditor(
 export function escapeOnSurface<Overlay>(
   editor: EditorState,
   selection: AnnotationSelection<Overlay> | undefined,
-  session: ReviewSession | undefined,
+  session: Pick<ReviewSession, "tray"> | undefined,
   activity: { readonly isBusy: boolean }
 ): EditorEscape | undefined {
   if (selection?.belongs(editor)) return { action: "releaseAnnotation" }

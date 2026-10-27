@@ -1,8 +1,11 @@
 // One Reviewer's files under the server's data directory: the open Review
 // Session as schema v1 JSON (Sources/NitpickCore/SessionPersistence.swift's
-// manifest), the Recent devices, and the extracted Builds.
+// manifest) with its captures and Design Snapshots beside it, the Recent
+// devices, and the extracted Builds.
 //
 //   <reviewer>/open-session/session.json
+//   <reviewer>/open-session/captures/<item id>.png
+//   <reviewer>/open-session/design-snapshots/<item id>/<data version>.<ext>
 //   <reviewer>/recent-devices.json
 //   <reviewer>/builds/<id>/…          one extracted upload each
 //   <reviewer>/uploads/<id>.zip       an upload until it is extracted
@@ -17,9 +20,11 @@ import {
 import { dirname, join } from "node:path"
 import {
   decodeStoredSession,
+  designSnapshotFileExtension,
   encodeStoredSession,
   newUUID,
   RecentDevices,
+  type DesignSnapshot,
   type ReviewSession,
 } from "@nitpick/core"
 
@@ -36,10 +41,63 @@ export class ReviewerStore {
     return json === undefined ? undefined : decodeStoredSession(json)
   }
 
+  /**
+   * Writes the manifest, then deletes the captures and Design Snapshot
+   * files it no longer names. Their bytes are written first, with
+   * `writeCapture` and `writeDesignSnapshot`, so a manifest never names a
+   * file that isn't on disk; a crash before the prune leaves orphans the
+   * next save removes.
+   */
   async saveOpenSession(session: ReviewSession): Promise<void> {
     await writeAtomically(
       this.#openSessionManifest,
       encodeStoredSession(session)
+    )
+    const liveCaptures = new Set(session.tray.map((item) => `${item.id}.png`))
+    await removeAllBut(this.#capturesDirectory, liveCaptures)
+    const snapshotsDirectory = this.#designSnapshotsDirectory
+    const items = await readdir(snapshotsDirectory).catch(() => [])
+    await Promise.all(
+      items.map(async (itemID) => {
+        const finding = session.tray.find((item) => item.id === itemID)?.finding
+        const live = new Set(
+          (finding?.designSnapshots ?? []).map(designSnapshotFileName)
+        )
+        if (live.size === 0) {
+          await rm(join(snapshotsDirectory, itemID), {
+            recursive: true,
+            force: true,
+          })
+        } else {
+          await removeAllBut(join(snapshotsDirectory, itemID), live)
+        }
+      })
+    )
+  }
+
+  /** A capture's PNG, written once: its bytes never change. */
+  async writeCapture(itemID: string, png: Uint8Array): Promise<void> {
+    await writeAtomically(this.capturePath(itemID), png)
+  }
+
+  capturePath(itemID: string): string {
+    return join(this.#capturesDirectory, `${itemID}.png`)
+  }
+
+  /** A Design Snapshot's bytes, under the `dataVersion` that names them. */
+  async writeDesignSnapshot(
+    itemID: string,
+    snapshot: DesignSnapshot,
+    data: Uint8Array
+  ): Promise<void> {
+    await writeAtomically(this.designSnapshotPath(itemID, snapshot), data)
+  }
+
+  designSnapshotPath(itemID: string, snapshot: DesignSnapshot): string {
+    return join(
+      this.#designSnapshotsDirectory,
+      itemID,
+      designSnapshotFileName(snapshot)
     )
   }
 
@@ -113,6 +171,14 @@ export class ReviewerStore {
     return join(this.directory, "open-session", "session.json")
   }
 
+  get #capturesDirectory(): string {
+    return join(this.directory, "open-session", "captures")
+  }
+
+  get #designSnapshotsDirectory(): string {
+    return join(this.directory, "open-session", "design-snapshots")
+  }
+
   get #recentDevicesFile(): string {
     return join(this.directory, "recent-devices.json")
   }
@@ -135,8 +201,28 @@ async function readIfPresent(path: string): Promise<string | undefined> {
   }
 }
 
+function designSnapshotFileName(snapshot: DesignSnapshot): string {
+  return `${snapshot.dataVersion}.${designSnapshotFileExtension(snapshot.mediaType)}`
+}
+
+/** Deletes every file in `directory` whose name `keep` lacks. */
+async function removeAllBut(
+  directory: string,
+  keep: ReadonlySet<string>
+): Promise<void> {
+  const names = await readdir(directory).catch(() => [])
+  await Promise.all(
+    names
+      .filter((name) => !keep.has(name))
+      .map((name) => rm(join(directory, name), { force: true }))
+  )
+}
+
 /** A crash mid-write keeps the previous good file. */
-async function writeAtomically(path: string, contents: string): Promise<void> {
+async function writeAtomically(
+  path: string,
+  contents: string | Uint8Array
+): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   const temporary = `${path}.${newUUID()}.tmp`
   await writeFile(temporary, contents)

@@ -4,9 +4,13 @@
 // shares; the rasterizer and the PNG encoder are Skia, through @napi-rs/canvas.
 import { createCanvas, loadImage, type Image } from "@napi-rs/canvas"
 import {
+  annotationCSSColor,
   annotationMetrics,
   drawAnnotations,
+  labelFont,
+  labelSpriteLayout,
   type Annotation,
+  type AnnotationColor,
 } from "@nitpick/core"
 
 /** The Finding's screenshot bytes don't decode as an image. */
@@ -41,5 +45,37 @@ export async function annotatedScreenshotPNG(
   const context = canvas.getContext("2d")
   context.drawImage(capture, 0, 0)
   drawAnnotations(context, annotations, annotationMetrics(size))
+  return canvas.encode("png")
+}
+
+/**
+ * A label's glyphs alone on transparency, for the browser's preview: drawn
+ * by the rasterizer and fonts that flatten, at the subpixel `offset` its x
+ * has, so placed at core's labelSpriteLayout it is the flattened label.
+ */
+export async function labelSpritePNG(label: {
+  readonly text: string
+  readonly color: AnnotationColor
+  readonly fontSize: number
+  readonly offset: number
+}): Promise<Uint8Array> {
+  const metrics = { fontSize: label.fontSize }
+  const { padding, ascent, descent } = labelSpriteLayout(
+    { x: label.offset, y: 0 },
+    metrics
+  )
+  const measurer = createCanvas(1, 1).getContext("2d")
+  measurer.font = labelFont(metrics)
+  const width = measurer.measureText(label.text).width
+  const canvas = createCanvas(
+    Math.ceil(2 * padding + label.offset + width),
+    2 * padding + ascent + descent
+  )
+  const context = canvas.getContext("2d")
+  context.fillStyle = annotationCSSColor(label.color)
+  context.font = labelFont(metrics)
+  context.textAlign = "left"
+  context.textBaseline = "alphabetic"
+  context.fillText(label.text, padding + label.offset, padding + ascent)
   return canvas.encode("png")
 }

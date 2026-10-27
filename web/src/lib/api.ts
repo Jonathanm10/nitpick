@@ -1,10 +1,14 @@
 // The page's calls to the nitpick server, typed by its contract.
 import type {
   BuildResponse,
+  CaptureResponse,
+  DesignSnapshotResponse,
   ErrorResponse,
+  FindingPatch,
   HostResponse,
   ProjectsResponse,
   ReviewStateResponse,
+  SessionPatch,
   StartReviewRequest,
   StartReviewResponse,
   SwitchDeviceResponse,
@@ -12,9 +16,15 @@ import type {
 
 /** A failed call, carrying the server's message for the error line. */
 export class APIError extends Error {
-  constructor(message: string) {
+  /** Undefined when the server was never reached. */
+  readonly status: number | undefined
+  readonly code: ErrorResponse["code"]
+
+  constructor(message: string, status?: number, code?: ErrorResponse["code"]) {
     super(message)
     this.name = "APIError"
+    this.status = status
+    this.code = code
   }
 }
 
@@ -29,7 +39,11 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     const body = (await response
       .json()
       .catch(() => null)) as ErrorResponse | null
-    throw new APIError(body?.error ?? `The server answered ${response.status}.`)
+    throw new APIError(
+      body?.error ?? `The server answered ${response.status}.`,
+      response.status,
+      body?.code
+    )
   }
   return (response.status === 204 ? undefined : await response.json()) as T
 }
@@ -60,4 +74,43 @@ export const api = {
       json("PUT", { deviceUDID })
     ),
   endReview: () => call<void>("/api/session", { method: "DELETE" }),
+  editSession: (patch: SessionPatch) =>
+    call<void>("/api/session", json("PATCH", patch)),
+  capture: (deviceUDID: string) =>
+    call<CaptureResponse>(
+      "/api/session/captures",
+      json("POST", { deviceUDID })
+    ),
+  editFinding: (itemID: string, patch: FindingPatch) =>
+    call<void>(findingPath(itemID), json("PATCH", patch)),
+  discardFinding: (itemID: string) =>
+    call<void>(findingPath(itemID), { method: "DELETE" }),
+  captureURL: (itemID: string) => `${findingPath(itemID)}/capture`,
+  addDesignSnapshot: (itemID: string, file: Blob, name: string) =>
+    call<DesignSnapshotResponse>(
+      `${findingPath(itemID)}/design-snapshots?name=${encodeURIComponent(name)}`,
+      { method: "POST", body: file }
+    ),
+  replaceDesignSnapshot: (itemID: string, snapshotID: string, file: File) =>
+    call<DesignSnapshotResponse>(
+      `${snapshotPath(itemID, snapshotID)}?name=${encodeURIComponent(file.name)}`,
+      { method: "PUT", body: file }
+    ),
+  renameDesignSnapshot: (itemID: string, snapshotID: string, name: string) =>
+    call<DesignSnapshotResponse>(
+      snapshotPath(itemID, snapshotID),
+      json("PATCH", { name })
+    ),
+  removeDesignSnapshot: (itemID: string, snapshotID: string) =>
+    call<void>(snapshotPath(itemID, snapshotID), { method: "DELETE" }),
+  designSnapshotURL: (itemID: string, dataVersion: string) =>
+    `${findingPath(itemID)}/design-snapshot-data/${encodeURIComponent(dataVersion)}`,
+}
+
+function findingPath(itemID: string): string {
+  return `/api/session/findings/${encodeURIComponent(itemID)}`
+}
+
+function snapshotPath(itemID: string, snapshotID: string): string {
+  return `${findingPath(itemID)}/design-snapshots/${encodeURIComponent(snapshotID)}`
 }

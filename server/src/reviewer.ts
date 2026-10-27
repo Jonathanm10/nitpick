@@ -1,25 +1,42 @@
 // One Reviewer's side of the server: the Build they uploaded, their open
 // Review Session and Recent devices, and the one run at a time they may have
 // going. The operations follow Sources/Nitpick/AppModel.swift's ingest,
-// startReview, switchDevice and endReview.
+// startReview, switchDevice, endReview, captureScreen and the Editor's edits.
 import { createWriteStream } from "node:fs"
-import { rm } from "node:fs/promises"
+import { readFile, rm } from "node:fs/promises"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { ReadableStream } from "node:stream/web"
 import {
+  addDesignSnapshot,
+  addFinding,
+  designSnapshotMediaType,
+  deviceContextOf,
+  discardFinding,
+  isEditable,
   loadProjectSchema,
+  newFinding,
   newReviewSession,
+  removeDesignSnapshot,
+  renameDesignSnapshot,
+  replaceDesignSnapshot,
   ShellActivity,
+  ShellBusy,
+  updateFinding,
   verifyYouTrack,
   type Build,
+  type DesignSnapshot,
   type ProjectSchema,
   type RecentDevices,
   type ReviewSession,
+  type TrayItem,
   type YouTrackClient,
   type YouTrackProject,
 } from "@nitpick/core"
+import type { FindingPatch, SessionPatch } from "./api.ts"
 import { readBuildFromArchive, zipArchiveName } from "./buildIngestion.ts"
+import { checkDesignSnapshotImage } from "./designSnapshotImage.ts"
+import { designReference, patchedFinding } from "./findingPatch.ts"
 import type {
   DeviceHost,
   HostProblem,
@@ -33,6 +50,14 @@ export class ReviewRefused extends Error {
   constructor(message: string) {
     super(message)
     this.name = "ReviewRefused"
+  }
+}
+
+/** The Finding, or its file, isn't in the open session. */
+export class FindingNotFound extends Error {
+  constructor() {
+    super("This Finding is no longer in the Tray.")
+    this.name = "FindingNotFound"
   }
 }
 
@@ -69,6 +94,12 @@ export class Reviewer {
   readonly #dependencies: ReviewerDependencies
   readonly #store: ReviewerStore
   #activity = new ShellActivity()
+  /**
+   * Every read-modify-write of the open session runs in turn, so an edit
+   * can't save over a capture, resurrect an ended session, or have a save's
+   * prune delete a file another write has yet to name.
+   */
+  #sessionWrites: Promise<unknown> = Promise.resolve()
   /**
    * A Build uploaded since the last session ended. Held in memory: a server
    * restart forgets it, as a relaunch of the Swift app did, while an open
@@ -122,7 +153,7 @@ export class Reviewer {
           { path: slot.archivePath, name: archiveName },
           slot.buildDirectory
         )
-        await this.#store.clearOpenSession()
+        await this.#serialized(() => this.#store.clearOpenSession())
         this.#uploadedBuild = build
         await this.#store.pruneBuilds(slot.id)
         return build
@@ -167,7 +198,9 @@ export class Reviewer {
           ? emptySchema
           : await loadProjectSchema(youTrack, project)
       const session = open ?? newReviewSession({ build, project })
-      if (open === undefined) await this.#store.saveOpenSession(session)
+      if (open === undefined) {
+        await this.#serialized(() => this.#store.saveOpenSession(session))
+      }
       return {
         status: "started",
         session,
@@ -204,11 +237,209 @@ export class Reviewer {
    * History is untouched.
    */
   end(): Promise<void> {
+    return this.#perform(() =>
+      this.#serialized(async () => {
+        const open = await this.#store.openSession()
+        if (open !== undefined) this.#uploadedBuild = open.build
+        await this.#store.clearOpenSession()
+      })
+    )
+  }
+
+  /**
+   * Captures the device the Build runs on and drops the Finding into the
+   * Tray, stamped with the Device Context in effect right now (ADR-0009).
+   * A device that stopped refuses with DeviceNotRunning, and nothing
+   * changes.
+   */
+  capture(deviceUDID: string): Promise<TrayItem> {
     return this.#perform(async () => {
-      const open = await this.#store.openSession()
-      if (open !== undefined) this.#uploadedBuild = open.build
-      await this.#store.clearOpenSession()
+      await this.#requireOpenSession()
+      const capture =
+        await this.#dependencies.deviceHost.captureScreen(deviceUDID)
+      return this.#editSession(async (session) => {
+        const added = addFinding(
+          session,
+          newFinding({
+            summary: "",
+            description: "",
+            deviceContext: deviceContextOf(capture.device, capture.settings),
+          })
+        )
+        await this.#store.writeCapture(added.id, capture.png)
+        const item = added.session.tray.at(-1)!
+        return { session: added.session, result: item }
+      })
     })
+  }
+
+  /** The session's own fields; today only its Design Reference. */
+  editSession(patch: SessionPatch): Promise<void> {
+    return this.#editSession((session) => ({
+      session:
+        patch.designReference === undefined
+          ? session
+          : {
+              ...session,
+              designReference: designReference(patch.designReference),
+            },
+      result: undefined,
+    }))
+  }
+
+  /** Sets the fields `patch` names on an editable Finding. */
+  editFinding(itemID: string, patch: FindingPatch): Promise<void> {
+    return this.#editSession((session) => {
+      editableItem(session, itemID)
+      return {
+        session: updateFinding(session, itemID, (finding) =>
+          patchedFinding(finding, patch)
+        ),
+        result: undefined,
+      }
+    })
+  }
+
+  /**
+   * Discards an editable Finding with its files. One already gone is no
+   * error; one filing has touched is refused, since its Issue exists.
+   */
+  discard(itemID: string): Promise<void> {
+    return this.#editSession((session) => {
+      if (session.tray.some((item) => item.id === itemID)) {
+        editableItem(session, itemID)
+      }
+      return { session: discardFinding(session, itemID), result: undefined }
+    })
+  }
+
+  /** Adds an image file as a Design Snapshot, once its bytes check out. */
+  async addDesignSnapshot(
+    itemID: string,
+    fileName: string,
+    data: Uint8Array
+  ): Promise<DesignSnapshot> {
+    const mediaType = designSnapshotMediaType(fileName)
+    await checkDesignSnapshotImage(data, mediaType)
+    return this.#editSession(async (session) => {
+      const added = addDesignSnapshot(session, itemID, {
+        name: fileName,
+        mediaType,
+      })
+      await this.#store.writeDesignSnapshot(itemID, added.snapshot, data)
+      return { session: added.session, result: added.snapshot }
+    })
+  }
+
+  /** New bytes for a Design Snapshot, which keeps its place and name. */
+  async replaceDesignSnapshot(
+    itemID: string,
+    snapshotID: string,
+    fileName: string,
+    data: Uint8Array
+  ): Promise<DesignSnapshot> {
+    const mediaType = designSnapshotMediaType(fileName)
+    await checkDesignSnapshotImage(data, mediaType)
+    return this.#editSession(async (session) => {
+      const replaced = replaceDesignSnapshot(
+        session,
+        itemID,
+        snapshotID,
+        mediaType
+      )
+      await this.#store.writeDesignSnapshot(itemID, replaced.snapshot, data)
+      return { session: replaced.session, result: replaced.snapshot }
+    })
+  }
+
+  renameDesignSnapshot(
+    itemID: string,
+    snapshotID: string,
+    name: string
+  ): Promise<DesignSnapshot> {
+    return this.#editSession((session) => {
+      const renamed = renameDesignSnapshot(session, itemID, snapshotID, name)
+      const snapshot = renamed.tray
+        .find((item) => item.id === itemID)!
+        .finding.designSnapshots.find(
+          (candidate) => candidate.id === snapshotID
+        )!
+      return { session: renamed, result: snapshot }
+    })
+  }
+
+  removeDesignSnapshot(itemID: string, snapshotID: string): Promise<void> {
+    return this.#editSession((session) => ({
+      session: removeDesignSnapshot(session, itemID, snapshotID),
+      result: undefined,
+    }))
+  }
+
+  /** A capture's PNG, for a Finding in the open session. */
+  async capturePNG(itemID: string): Promise<Buffer> {
+    const session = await this.#requireOpenSession()
+    const item = session.tray.find((candidate) => candidate.id === itemID)
+    if (item === undefined) throw new FindingNotFound()
+    return readOrNotFound(this.#store.capturePath(item.id))
+  }
+
+  /** The bytes a Design Snapshot's dataVersion names, with its media type. */
+  async designSnapshotData(
+    itemID: string,
+    dataVersion: string
+  ): Promise<{ readonly snapshot: DesignSnapshot; readonly data: Buffer }> {
+    const session = await this.#requireOpenSession()
+    const item = session.tray.find((candidate) => candidate.id === itemID)
+    const snapshot = item?.finding.designSnapshots.find(
+      (candidate) => candidate.dataVersion === dataVersion
+    )
+    if (item === undefined || snapshot === undefined) {
+      throw new FindingNotFound()
+    }
+    return {
+      snapshot,
+      data: await readOrNotFound(
+        this.#store.designSnapshotPath(item.id, snapshot)
+      ),
+    }
+  }
+
+  /**
+   * Reads the open session, applies `change` and saves what it returns.
+   * Edits don't wait on a run: a capture or a device switch leaves the Tray
+   * to the Reviewer. Filing works on its own copy of the session, so edits
+   * are refused while it runs.
+   */
+  #editSession<T>(
+    change: (
+      session: ReviewSession
+    ) =>
+      | { readonly session: ReviewSession; readonly result: T }
+      | Promise<{ readonly session: ReviewSession; readonly result: T }>
+  ): Promise<T> {
+    return this.#serialized(async () => {
+      if (this.#activity.isFiling) throw new ShellBusy()
+      const session = await this.#requireOpenSession()
+      const next = await change(session)
+      if (next.session !== session) {
+        await this.#store.saveOpenSession(next.session)
+      }
+      return next.result
+    })
+  }
+
+  #serialized<T>(write: () => Promise<T>): Promise<T> {
+    const result = this.#sessionWrites.then(write)
+    this.#sessionWrites = result.catch(() => {})
+    return result
+  }
+
+  async #requireOpenSession(): Promise<ReviewSession> {
+    const session = await this.#store.openSession()
+    if (session === undefined) {
+      throw new ReviewRefused("There is no open review.")
+    }
+    return session
   }
 
   /** One run at a time; a second one is refused with ShellBusy. */
@@ -249,6 +480,29 @@ export class Reviewer {
       )
     }
     return project
+  }
+}
+
+/** The item, if filing hasn't touched it; its Issue would diverge otherwise. */
+function editableItem(session: ReviewSession, itemID: string): TrayItem {
+  const item = session.tray.find((candidate) => candidate.id === itemID)
+  if (item === undefined) throw new FindingNotFound()
+  if (!isEditable(item)) {
+    throw new ReviewRefused(
+      "This Finding has started filing, so it can no longer be edited."
+    )
+  }
+  return item
+}
+
+async function readOrNotFound(path: string): Promise<Buffer> {
+  try {
+    return await readFile(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new FindingNotFound()
+    }
+    throw error
   }
 }
 

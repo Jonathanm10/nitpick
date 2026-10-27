@@ -1,10 +1,20 @@
+import { mkdir } from "node:fs/promises"
+import { join } from "node:path"
+import { newUUID } from "@nitpick/core"
 import type { SubprocessRunner } from "../subprocess.ts"
 import type { DeviceHost } from "./DeviceHost.ts"
 import { checkHostHealth } from "./hostHealth.ts"
-import { launchBuild, listSimulatorDevices } from "./simctl.ts"
+import { captureScreen, launchBuild, listSimulatorDevices } from "./simctl.ts"
 
-/** The machine the server runs on, the only Device Host for now. */
-export function makeLocalDeviceHost(runner: SubprocessRunner): DeviceHost {
+/**
+ * The machine the server runs on, the only Device Host for now. Captures
+ * land in `captureDirectory` under a name of their own, so two Reviewers
+ * capturing at once never share a file.
+ */
+export function makeLocalDeviceHost(
+  runner: SubprocessRunner,
+  captureDirectory: string
+): DeviceHost {
   return {
     id: "local",
     label: "This machine",
@@ -13,5 +23,13 @@ export function makeLocalDeviceHost(runner: SubprocessRunner): DeviceHost {
     },
     checkHealth: () => checkHostHealth(runner),
     launchBuild: (build, device) => launchBuild(runner, build, device),
+    captureScreen: async (deviceUDID) => {
+      await mkdir(captureDirectory, { recursive: true })
+      return captureScreen(
+        runner,
+        deviceUDID,
+        join(captureDirectory, `${newUUID()}.png`)
+      )
+    },
   }
 }

@@ -1,4 +1,11 @@
-import type { Build } from "@nitpick/core"
+import { readFile, rm } from "node:fs/promises"
+import {
+  defaultDeviceSettings,
+  dynamicTypeSizes,
+  type Build,
+  type DeviceSettings,
+  type DynamicTypeSize,
+} from "@nitpick/core"
 import { appBundlePath } from "../buildIngestion.ts"
 import {
   SubprocessFailure,
@@ -6,7 +13,7 @@ import {
   type SubprocessResult,
   type SubprocessRunner,
 } from "../subprocess.ts"
-import type { SimulatorDevice } from "./DeviceHost.ts"
+import type { ScreenCapture, SimulatorDevice } from "./DeviceHost.ts"
 
 // Typed simctl actions. Each builds a fixed argument array for the subprocess
 // seam; nothing here takes a command string. Ported from
@@ -79,6 +86,110 @@ export async function launchBuild(
     runner,
     simctl("launch", device.udid, build.identity.bundleID)
   )
+}
+
+/**
+ * The device to capture is not booted on the Device Host: it stopped after
+ * the launch (a crash, a host reboot), or was never booted. The review pauses.
+ */
+export class DeviceNotRunning extends Error {
+  constructor(deviceName: string) {
+    super(
+      `${deviceName} is no longer running on the Device Host, so nothing was captured. Resume review to relaunch the Build.`
+    )
+    this.name = "DeviceNotRunning"
+  }
+}
+
+/** `simctl io screenshot` reported success but left no readable PNG. */
+export class CaptureUnreadable extends Error {
+  constructor() {
+    super("The capture succeeded but no image could be read.")
+    this.name = "CaptureUnreadable"
+  }
+}
+
+/**
+ * Captures the device's screen at native resolution with the simulator's own
+ * screenshot, never a stream frame (ADR-0012), together with the
+ * accessibility state it was taken under (ADR-0009). `capturePath` is where
+ * simctl writes the PNG; it is removed once read.
+ *
+ * `simctl io screenshot` waits forever for a device that isn't booted, so the
+ * live state is checked first, by udid. The screenshot and the settings reads
+ * then run at once; errors surface in this order: not booted, the
+ * screenshot, then each setting. Ported from Simulator.swift's captureScreen.
+ */
+export async function captureScreen(
+  runner: SubprocessRunner,
+  deviceUDID: string,
+  capturePath: string
+): Promise<ScreenCapture> {
+  const devices = await listSimulatorDevices(runner)
+  const device = devices.find((candidate) => candidate.udid === deviceUDID)
+  if (!device?.isBooted) {
+    throw new DeviceNotRunning(device?.name ?? "The device")
+  }
+  const settings = observedSettings(runner, device)
+  // Handled here so a screenshot failure, which surfaces first without
+  // waiting for the reads, never leaves an unhandled rejection behind.
+  settings.catch(() => {})
+  const png = await screenshot(runner, device, capturePath)
+  return { device, png, settings: await settings }
+}
+
+async function screenshot(
+  runner: SubprocessRunner,
+  device: SimulatorDevice,
+  capturePath: string
+): Promise<Buffer> {
+  try {
+    await runRequiringSuccess(
+      runner,
+      simctl("io", device.udid, "screenshot", "--type=png", capturePath)
+    )
+    const png = await readFile(capturePath).catch(() => undefined)
+    if (png === undefined || png.length === 0) throw new CaptureUnreadable()
+    return png
+  } finally {
+    await rm(capturePath, { force: true })
+  }
+}
+
+/**
+ * The device's live accessibility state, the settings half of a Device
+ * Context. Each `simctl ui <device> <option>` without a value prints the
+ * current one. The three reads run at once, and a failure throws the first
+ * of them in content_size, appearance, increase_contrast order. A value
+ * that can't be parsed reads as that setting's default, so the
+ * Accessibility line never carries a raw token.
+ */
+export async function observedSettings(
+  runner: SubprocessRunner,
+  device: SimulatorDevice
+): Promise<DeviceSettings> {
+  const reads = ["content_size", "appearance", "increase_contrast"].map(
+    async (option) => {
+      const result = await runRequiringSuccess(
+        runner,
+        simctl("ui", device.udid, option)
+      )
+      return result.standardOutput.toString("utf8").trim()
+    }
+  )
+  const settled = await Promise.allSettled(reads)
+  const failure = settled.find((read) => read.status === "rejected")
+  if (failure !== undefined) throw failure.reason
+  const [contentSize, appearance, increaseContrast] = settled.map((read) =>
+    read.status === "fulfilled" ? read.value : ""
+  )
+  return {
+    dynamicTypeSize: dynamicTypeSizes.includes(contentSize as DynamicTypeSize)
+      ? (contentSize as DynamicTypeSize)
+      : defaultDeviceSettings.dynamicTypeSize,
+    appearance: appearance === "dark" ? "dark" : "light",
+    increaseContrast: increaseContrast === "enabled",
+  }
 }
 
 function simctl(...simctlArguments: string[]): SubprocessCommand {
