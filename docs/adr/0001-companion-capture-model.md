@@ -6,3 +6,5 @@ Nitpick does not render the device screen itself. The designer runs whatever mir
 
 - Each Capture Source brings its own capture mechanism and metadata adapter. The simulator captures via `simctl io <udid> screenshot` — native device pixels, no Screen Recording permission, no window cropping. Window-based sources (iPhone Mirroring, Bezel) capture via ScreenCaptureKit and need window discovery, cropping, and the Screen Recording permission — deferred until those sources ship.
 - Capture of the iPhone Mirroring window is unverified (spike required before that source ships); if it fails, the fallback is a minimal owned USB-feed viewer for the device path only.
+
+Note: superseded by ADR-0012. nitpick now shows the device itself: the Device Host streams its screen into the page. Mirroring windows (iPhone Mirroring, Bezel) are no longer Capture Sources. The simulator capture via `simctl io screenshot` holds.

@@ -5,3 +5,5 @@ The designer drags a CI-produced simulator `.app` (or zip) into nitpick, which b
 Consequence: reviewing Macs need a full Xcode installation — simulators and `simctl` ship with Xcode, not the Command Line Tools. Accepted for Liip-managed Macs; nitpick detects a missing Xcode or runtime and guides setup instead of failing obscurely.
 
 Note: nitpick's ownership covers the Build lifecycle only. It once also owned the device's accessibility state (Dynamic Type, appearance); ADR-0009 reversed that — nitpick now observes accessibility at capture rather than setting it.
+
+ADR-0012 moves the Build lifecycle to the Device Host. The Build is uploaded instead of dragged onto a local app, and the full Xcode requirement applies to the Device Host, not to reviewers' machines. Ownership of the Build lifecycle is unchanged.
