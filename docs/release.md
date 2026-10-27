@@ -50,7 +50,7 @@ This is what the T3 Code **Release** action runs. `scripts/release/ship.sh`
 does everything below in one go:
 
 1. Preflight: branch `main`, clean tree, `HEAD` equal to `origin/main`, and
-   the Swift checks workflow green on that commit.
+   the CI workflow green on that commit.
 2. Picks the version and build. `VERSION` bumps the latest `vX.Y.Z` tag:
    minor when a commit since that tag is a `feat`, patch otherwise. `BUILD` is
    the published appcast's highest build + 1.

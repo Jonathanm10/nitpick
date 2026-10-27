@@ -68,7 +68,7 @@ SHORT="$(git rev-parse --short "$SHA")"
 
 CI="$(gh run list --commit "$SHA" --workflow ci.yml --limit 1 \
     --json status,conclusion --jq '.[0] | if . == null then "missing" else "\(.status)/\(.conclusion)" end')"
-[ "$CI" = completed/success ] || require "Swift checks on $SHORT is $CI, not completed/success"
+[ "$CI" = completed/success ] || require "CI on $SHORT is $CI, not completed/success"
 
 LAST_TAG="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
 [ -n "$LAST_TAG" ] || die 'no vX.Y.Z tag to bump from'

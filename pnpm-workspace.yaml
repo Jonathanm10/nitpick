@@ -1,0 +1,7 @@
+packages:
+  - core
+  - server
+  - web
+
+allowBuilds:
+  esbuild: true
