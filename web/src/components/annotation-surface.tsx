@@ -4,7 +4,6 @@ import {
   annotationMetrics,
   boundingRect,
   drawAnnotation,
-  drawAnnotations,
   labelFont,
   trimWhitespaceAndNewlines,
   type Annotation,
@@ -18,6 +17,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
+import { drawPreview } from "@/lib/label-sprites"
 import type { Editor } from "@/lib/use-editor"
 
 const noAnnotations: ReadonlyArray<Annotation> = []
@@ -45,10 +45,11 @@ interface Gesture {
 
 /**
  * The Annotation surface, after Sources/Nitpick/AnnotationSurface.swift: the
- * capture at native pixels with its Annotations drawn by core/'s
- * drawAnnotations, the code the server flattens with, so the preview is the
- * filed image. The canvas is scaled to fit by CSS only. The view holds only
- * the gesture in flight; every committed edit is an Editor call.
+ * capture at native pixels with its Annotations drawn by core/'s geometry,
+ * the code the server flattens with, and each label from the server's own
+ * glyphs, so the preview is the filed image. The canvas is scaled to fit by
+ * CSS only. The view holds only the gesture in flight; every committed edit
+ * is an Editor call.
  *
  * Without `editable` it shows a frozen Finding: the same image, no edits.
  */
@@ -79,6 +80,8 @@ export function AnnotationSurface({
   const [label, setLabelState] = useState<{ at: Point; text: string }>()
   const labelRef = useRef(label)
   const [menuIndex, setMenuIndex] = useState<number>()
+  // Bumped when a label sprite arrives, to draw it in place of the text.
+  const [sprites, setSprites] = useState(0)
   const contextPoint = useRef<Point>(undefined)
 
   function setLabel(next: { at: Point; text: string } | undefined) {
@@ -126,12 +129,13 @@ export function AnnotationSurface({
     if (!context) return
     context.clearRect(0, 0, size.width, size.height)
     context.drawImage(image, 0, 0)
-    drawAnnotations(
+    drawPreview(
       context,
       annotations.filter((_, index) => index !== dragIndex),
-      metrics
+      metrics,
+      () => setSprites((count) => count + 1)
     )
-  }, [image, annotations, dragIndex, size.width, size.height, metrics])
+  }, [image, annotations, dragIndex, size.width, size.height, metrics, sprites])
 
   // The shape in flight, and the dragged one at its whole-pixel offset.
   const drag = editor.selection?.drag
@@ -140,14 +144,23 @@ export function AnnotationSurface({
     if (!context) return
     context.clearRect(0, 0, size.width, size.height)
     if (drag !== undefined) {
-      drawAnnotation(
+      drawPreview(
         context,
-        editor.displayedSelection ?? drag.annotation,
-        metrics
+        [editor.displayedSelection ?? drag.annotation],
+        metrics,
+        () => setSprites((count) => count + 1)
       )
     }
     if (draft !== undefined) drawAnnotation(context, draft, metrics)
-  }, [draft, drag, editor.displayedSelection, size.width, size.height, metrics])
+  }, [
+    draft,
+    drag,
+    editor.displayedSelection,
+    size.width,
+    size.height,
+    metrics,
+    sprites,
+  ])
 
   /** A pointer position in image pixels, clamped to the capture. */
   function pixelPoint(event: { clientX: number; clientY: number }): Point {

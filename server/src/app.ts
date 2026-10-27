@@ -1,5 +1,6 @@
 import { serveStatic } from "@hono/node-server/serve-static"
 import {
+  annotationColors,
   designSnapshotContentType,
   DesignSnapshotError,
   ShellBusy,
@@ -30,6 +31,7 @@ import type {
   StartReviewResponse,
   SwitchDeviceResponse,
 } from "./api.ts"
+import { labelSpritePNG } from "./annotationFlattening.ts"
 import { BuildIngestError, buildName } from "./buildIngestion.ts"
 import type { DeviceHost, SimulatorDevice } from "./device/DeviceHost.ts"
 import { hostProblemReason } from "./device/hostHealth.ts"
@@ -234,6 +236,31 @@ export function createApp({
     return imageResponse(data, designSnapshotContentType(snapshot.mediaType))
   })
 
+  // A label's glyphs for the Editor's preview, by the rasterizer that
+  // flattens (core's labelSpriteLayout places them). The same query always
+  // gives the same image.
+  app.get("/api/label-sprite", async (c) => {
+    const text = c.req.query("text") ?? ""
+    const fontSize = Number(c.req.query("size"))
+    const offset = Number(c.req.query("offset"))
+    const color = annotationColors.find((name) => name === c.req.query("color"))
+    if (
+      text === "" ||
+      text.length > 1000 ||
+      !Number.isInteger(fontSize) ||
+      fontSize < 1 ||
+      fontSize > 1000 ||
+      !(offset >= 0 && offset < 1) ||
+      color === undefined
+    ) {
+      throw malformedRequest()
+    }
+    return imageResponse(
+      await labelSpritePNG({ text, color, fontSize, offset }),
+      "image/png"
+    )
+  })
+
   app.onError((error, c) => {
     const status = errorStatus(error)
     if (status === 500) console.error(error)
@@ -315,8 +342,8 @@ function sessionSummary(session: ReviewSession): SessionSummary {
 }
 
 /**
- * The bytes under a capture's item id or a Design Snapshot's dataVersion
- * never change, so the browser may keep them.
+ * The bytes under a capture's item id, a Design Snapshot's dataVersion or a
+ * label sprite's query never change, so the browser may keep them.
  */
 function imageResponse(data: Uint8Array, contentType: string): Response {
   return new Response(new Uint8Array(data), {

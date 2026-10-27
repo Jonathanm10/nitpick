@@ -541,3 +541,30 @@ describe("Design Snapshots", () => {
     expect(state.session?.tray[0].finding.designSnapshots).toEqual([snapshot])
   })
 })
+
+describe("Label sprites", () => {
+  test("a label's glyphs are served as an immutable PNG; a malformed query is refused", async () => {
+    const h = harness()
+
+    const sprite = await h.app.request(
+      "/api/label-sprite?text=Too%20tight&color=red&size=47&offset=0.25"
+    )
+    const refused = await Promise.all(
+      [
+        "text=&color=red&size=47&offset=0",
+        "text=x&color=pink&size=47&offset=0",
+        "text=x&color=red&size=0&offset=0",
+        "text=x&color=red&size=47.5&offset=0",
+        "text=x&color=red&size=47&offset=1",
+        "text=x&color=red&size=47",
+      ].map((query) => h.app.request(`/api/label-sprite?${query}`))
+    )
+
+    expect(sprite.status).toBe(200)
+    expect(sprite.headers.get("Content-Type")).toBe("image/png")
+    expect(sprite.headers.get("Cache-Control")).toContain("immutable")
+    expect(refused.map((response) => response.status)).toEqual([
+      400, 400, 400, 400, 400, 400,
+    ])
+  })
+})

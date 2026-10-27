@@ -1,7 +1,8 @@
 // Ported from Sources/NitpickCore/AnnotationRendering.swift. The geometry and
 // the draw calls live here; the rasterizer does not. The browser draws its
 // preview into a <canvas>, and the server flattens with a Node canvas, through
-// the same drawAnnotations.
+// the same drawAnnotations. Text rasterizes differently in every engine, so
+// the browser takes a label's glyphs from the server (labelSpriteLayout).
 import {
   annotationColorComponents,
   standardized,
@@ -47,7 +48,9 @@ export function annotationMetrics(imageSize: Size): AnnotationMetrics {
  * draws with. The Device Host is a Mac, so the server always has it; Arial,
  * metric-compatible, stands in where a browser has no Helvetica.
  */
-export function labelFont(metrics: AnnotationMetrics): string {
+export function labelFont(
+  metrics: Pick<AnnotationMetrics, "fontSize">
+): string {
   return `bold ${metrics.fontSize}px Helvetica, Arial, sans-serif`
 }
 
@@ -58,13 +61,49 @@ const labelAscent = 1577 / 2048
 const labelDescent = 471 / 2048
 
 /** The vertical extent of a label's line, in image pixels. */
-export function labelLineMetrics(metrics: AnnotationMetrics): {
+export function labelLineMetrics(
+  metrics: Pick<AnnotationMetrics, "fontSize">
+): {
   readonly ascent: number
   readonly descent: number
 } {
   return {
     ascent: metrics.fontSize * labelAscent,
     descent: metrics.fontSize * labelDescent,
+  }
+}
+
+/**
+ * Where a label's glyphs, drawn alone by the server, land in the image. The
+ * sprite carries the label's fractional x and `padding` on every side, so
+ * drawn at the whole pixel (`left`, `top`) its glyphs cover exactly the
+ * pixels drawAnnotations gives them: the baseline row is the same, and so is
+ * the subpixel position. Engines anti-alias text differently, a browser may
+ * lack Helvetica, and this keeps a label's preview the flattened label.
+ */
+export function labelSpriteLayout(
+  at: Point,
+  metrics: Pick<AnnotationMetrics, "fontSize">
+): {
+  readonly padding: number
+  /** The sprite's baseline row, below its top padding. */
+  readonly ascent: number
+  readonly descent: number
+  /** The label's x past its whole pixel, from 0 up to 1. */
+  readonly offset: number
+  readonly left: number
+  readonly top: number
+} {
+  const line = labelLineMetrics(metrics)
+  const padding = Math.ceil(metrics.fontSize / 4)
+  const ascent = Math.ceil(line.ascent)
+  return {
+    padding,
+    ascent,
+    descent: Math.ceil(line.descent),
+    offset: at.x - Math.floor(at.x),
+    left: Math.floor(at.x) - padding,
+    top: Math.ceil(at.y + line.ascent) - ascent - padding,
   }
 }
 
