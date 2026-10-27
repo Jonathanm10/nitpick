@@ -5,3 +5,7 @@
 /dist/
 /.scratch/
 /.codegraph/
+node_modules/
+# Real server config lives outside the repo; only the example is tracked.
+*.env
+!*.example.env

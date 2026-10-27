@@ -33,3 +33,16 @@ make icon   # regenerate assets/AppIcon.icns from assets/icon.svg
 ```
 
 `make help` lists the full signed-release ladder (documented in [docs/release.md](docs/release.md)). The domain language lives in [CONTEXT.md](CONTEXT.md), architecture decisions in [docs/adr](docs/adr/).
+
+### Web app
+
+The web app replacing the macOS app ([ADR-0012](docs/adr/0012-remote-only-web-app.md)) lives in `server/`, `web/` and `core/`. It needs Node 24 and pnpm.
+
+```sh
+pnpm install
+pnpm dev                  # server + web app with reload: open http://localhost:5173
+pnpm typecheck && pnpm lint && pnpm test
+pnpm build && pnpm start  # the server alone, serving the built app on port 4870
+```
+
+The server reads its config from the environment, or from a file outside the repo that `NITPICK_CONFIG_FILE` points at. [server/config.example.env](server/config.example.env) lists the keys.

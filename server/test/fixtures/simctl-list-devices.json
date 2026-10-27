@@ -1,0 +1,47 @@
+{
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-4": [
+      {
+        "dataPath": "\/tmp\/x",
+        "dataPathSize": 6785384448,
+        "logPath": "\/tmp\/y",
+        "udid": "AAAA-1111",
+        "lastUsedAt": "2026-01-01T09:00:00Z",
+        "isAvailable": true,
+        "logPathSize": 630784,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+        "state": "Shutdown",
+        "name": "iPhone 17 Pro"
+      },
+      {
+        "udid": "BBBB-2222",
+        "name": "Broken iPhone",
+        "state": "Shutdown",
+        "isAvailable": false,
+        "availabilityError": "runtime profile not found"
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+      {
+        "udid": "CCCC-3333",
+        "name": "iPhone Air",
+        "state": "Booted",
+        "isAvailable": true
+      },
+      {
+        "udid": "DDDD-4444",
+        "name": "iPad (A16)",
+        "state": "Shutdown",
+        "isAvailable": true
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.watchOS-12-0": [
+      {
+        "udid": "EEEE-5555",
+        "name": "Apple Watch Ultra 3",
+        "state": "Shutdown",
+        "isAvailable": true
+      }
+    ]
+  }
+}
