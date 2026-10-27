@@ -1,7 +1,9 @@
 // Everything that depends on the machine running the devices sits behind this
 // seam (ADR-0012). Modelled on T3 Code's apps/server/src/device/DeviceHost.ts
-// (MIT); for now it only lists devices, and later issues add boot, install,
-// launch and capture as typed actions.
+// (MIT). Every effect is a typed action with an argument array; later issues
+// add capture.
+// Types only: api.ts re-exports from here, and web/ must not reach Node code.
+import type { Build } from "@nitpick/core"
 
 /** A simulator a Build can be reviewed on: the device half of a Device Context. */
 export interface SimulatorDevice {
@@ -28,4 +30,32 @@ export interface DeviceHost {
   /** The name the page and errors show for this host. */
   readonly label: string
   readonly devices: DeviceOperations
+  /** Whether the host can run a review, with its devices when it can. */
+  readonly checkHealth: () => Promise<HostHealth>
+  /** Boots `device`, installs the Build and launches it. */
+  readonly launchBuild: (build: Build, device: SimulatorDevice) => Promise<void>
 }
+
+/** What the Device Host is missing before a review can run (ADR-0002). */
+export type HostProblem =
+  /** No active developer directory: Xcode isn't installed. */
+  | { readonly kind: "xcodeNotInstalled" }
+  /**
+   * The active developer directory is the Command Line Tools, or some other
+   * non-Xcode path, which ships no simulators.
+   */
+  | {
+      readonly kind: "commandLineToolsOnly"
+      readonly developerDirectory: string
+    }
+  /**
+   * A full Xcode is selected, but its simulator tools don't answer: first
+   * launch never finished, the license is unaccepted, or Xcode is gone.
+   */
+  | { readonly kind: "xcodeSetupIncomplete" }
+  /** The tools work, but no iOS simulator device has an installed runtime. */
+  | { readonly kind: "missingIOSRuntime" }
+
+export type HostHealth =
+  | { readonly status: "ready"; readonly devices: SimulatorDevice[] }
+  | { readonly status: "notReady"; readonly problem: HostProblem }

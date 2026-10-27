@@ -17,7 +17,8 @@
     "@hono/node-server": "^2.1.5",
     "@napi-rs/canvas": "^1.0.13",
     "@nitpick/core": "workspace:*",
-    "hono": "^4.13.14"
+    "hono": "^4.13.14",
+    "plist": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^24",

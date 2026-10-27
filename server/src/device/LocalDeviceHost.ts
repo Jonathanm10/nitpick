@@ -1,6 +1,7 @@
 import type { SubprocessRunner } from "../subprocess.ts"
 import type { DeviceHost } from "./DeviceHost.ts"
-import { listSimulatorDevices } from "./simctl.ts"
+import { checkHostHealth } from "./hostHealth.ts"
+import { launchBuild, listSimulatorDevices } from "./simctl.ts"
 
 /** The machine the server runs on, the only Device Host for now. */
 export function makeLocalDeviceHost(runner: SubprocessRunner): DeviceHost {
@@ -10,5 +11,7 @@ export function makeLocalDeviceHost(runner: SubprocessRunner): DeviceHost {
     devices: {
       list: () => listSimulatorDevices(runner),
     },
+    checkHealth: () => checkHostHealth(runner),
+    launchBuild: (build, device) => launchBuild(runner, build, device),
   }
 }

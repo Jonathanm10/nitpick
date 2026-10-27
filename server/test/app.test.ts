@@ -4,6 +4,8 @@ import { join } from "node:path"
 import { describe, expect, onTestFinished, test, vi } from "vitest"
 import { createApp } from "../src/app.ts"
 import type { DeviceHost, SimulatorDevice } from "../src/device/DeviceHost.ts"
+import { Reviewer } from "../src/reviewer.ts"
+import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 
 const device: SimulatorDevice = {
   udid: "CCCC-3333",
@@ -14,12 +16,34 @@ const device: SimulatorDevice = {
 }
 
 function hostListing(list: DeviceHost["devices"]["list"]): DeviceHost {
-  return { id: "fake", label: "Fake host", devices: { list } }
+  return {
+    id: "fake",
+    label: "Fake host",
+    devices: { list },
+    checkHealth: async () => ({
+      status: "ready",
+      devices: [...(await list())],
+    }),
+    launchBuild: async () => {},
+  }
+}
+
+function appListing(
+  list: DeviceHost["devices"]["list"],
+  webRoot?: string
+): ReturnType<typeof createApp> {
+  const deviceHost = hostListing(list)
+  const reviewer = new Reviewer(join(tmpdir(), "nitpick-unused-reviewer"), {
+    deviceHost,
+    runner: new FakeSubprocessRunner(),
+    youTrack: undefined,
+  })
+  return createApp({ deviceHost, reviewer, youTrack: undefined, webRoot })
 }
 
 describe("HTTP app", () => {
   test("GET /api/devices returns the Device Host's devices", async () => {
-    const app = createApp({ deviceHost: hostListing(async () => [device]) })
+    const app = appListing(async () => [device])
 
     const response = await app.request("/api/devices")
 
@@ -29,10 +53,8 @@ describe("HTTP app", () => {
 
   test("a failed listing is a 500 carrying the error's message", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {})
-    const app = createApp({
-      deviceHost: hostListing(async () => {
-        throw new Error("The simulator device list could not be read.")
-      }),
+    const app = appListing(async () => {
+      throw new Error("The simulator device list could not be read.")
     })
 
     const response = await app.request("/api/devices")
@@ -47,7 +69,7 @@ describe("HTTP app", () => {
     const webRoot = mkdtempSync(join(tmpdir(), "nitpick-web-"))
     onTestFinished(() => rmSync(webRoot, { recursive: true }))
     writeFileSync(join(webRoot, "index.html"), "<title>nitpick</title>")
-    const app = createApp({ deviceHost: hostListing(async () => []), webRoot })
+    const app = appListing(async () => [], webRoot)
 
     const response = await app.request("/")
 
