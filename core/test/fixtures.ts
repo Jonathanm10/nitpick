@@ -6,7 +6,7 @@ import {
   type FilingProgress,
   type Finding,
   type ReviewSession,
-} from "../src/review-session.ts"
+} from "../src/reviewSession.ts"
 import type { FiledIssue } from "../src/youtrack.ts"
 
 export const session: ReviewSession = newReviewSession({

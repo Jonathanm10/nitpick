@@ -2,14 +2,12 @@
 // issue 06's; the Esc rule reads only whether work is running.
 import { describe, expect, test } from "vitest"
 import {
-  editorAllowsDiscard,
+  AnnotationSelection,
+  EditorState,
   escapeInEditor,
   escapeOnSurface,
-  openEditor,
-  selectInEditor,
-  type EditorState,
-} from "../src/editor-state.ts"
-import { addFinding } from "../src/review-session.ts"
+} from "../src/editorState.ts"
+import { addFinding } from "../src/reviewSession.ts"
 import * as fixtures from "./fixtures.ts"
 
 const idle = { isBusy: false }
@@ -20,13 +18,13 @@ function editor({ summary = "" } = {}) {
     fixtures.session,
     fixtures.finding({ summary, description: "" })
   )
-  const selected = selectInEditor(openEditor(), id, session)
+  const selected = new EditorState().selecting(id, session)
   if (selected === undefined) throw new Error("the selection was refused")
   return { editor: selected, session, id }
 }
 
 function selectionOn(target: EditorState) {
-  return { generation: target.generation, index: 0 }
+  return new AnnotationSelection<number>(0, target)
 }
 
 describe("Editor Esc rule", () => {
@@ -49,7 +47,7 @@ describe("Editor Esc rule", () => {
 
   test("a selection made on an earlier target does not block the discard", () => {
     const { editor: current, session, id } = editor()
-    const stale = selectionOn(openEditor())
+    const stale = selectionOn(new EditorState())
 
     expect(escapeOnSurface(current, stale, session, idle)).toEqual({
       action: "discard",
@@ -84,7 +82,7 @@ describe("Editor Esc rule", () => {
 
   test("Esc never discards while a label draft pins the editor", () => {
     const { editor: current, session } = editor()
-    const pinned = { ...current, hasPendingLabelDraft: true }
+    const pinned = current.withPendingLabelDraft(true)
 
     expect(escapeInEditor(pinned, session, idle)).toBeUndefined()
   })
@@ -101,10 +99,10 @@ describe("Editor Esc rule", () => {
     "Esc discards a pristine Finding exactly when the Tray's discard is allowed (running $running, label draft $labelDraft)",
     ({ isBusy, labelDraft }) => {
       const { editor: current, session, id } = editor()
-      const target = { ...current, hasPendingLabelDraft: labelDraft }
+      const target = current.withPendingLabelDraft(labelDraft)
       const activity = { isBusy }
 
-      const allowed = editorAllowsDiscard(target, activity)
+      const allowed = target.allowsDiscard(activity)
 
       expect(allowed).toBe(!isBusy && !labelDraft)
       expect(escapeInEditor(target, session, activity)).toEqual(
@@ -116,9 +114,9 @@ describe("Editor Esc rule", () => {
   test("with no Finding in the editor, Esc does nothing", () => {
     const session = fixtures.session
 
-    expect(escapeInEditor(openEditor(), session, idle)).toBeUndefined()
+    expect(escapeInEditor(new EditorState(), session, idle)).toBeUndefined()
     expect(
-      escapeOnSurface(openEditor(), undefined, session, idle)
+      escapeOnSurface(new EditorState(), undefined, session, idle)
     ).toBeUndefined()
   })
 })

@@ -2,7 +2,7 @@
 // holds. Each expectation is what Swift's JSONEncoder, with sorted keys and
 // unescaped slashes, wrote for the same value on macOS 27.
 import { describe, expect, test } from "vitest"
-import { encodeSwiftJSON } from "../src/swift-json.ts"
+import { encodeSwiftJSON } from "../src/swiftJSON.ts"
 
 describe("Swift's JSONEncoder output", () => {
   test.each([

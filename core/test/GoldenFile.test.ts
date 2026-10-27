@@ -8,8 +8,8 @@ import {
   dynamicTypeDisplayName,
   dynamicTypeSizes,
   type DeviceSettings,
-} from "../src/device-context.ts"
-import { issueDescription, metadataBlock } from "../src/review-session.ts"
+} from "../src/deviceContext.ts"
+import { issueDescription, metadataBlock } from "../src/reviewSession.ts"
 import {
   decodeStoredHistoryEntry,
   decodeStoredSession,

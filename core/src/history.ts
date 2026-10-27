@@ -1,6 +1,6 @@
 import type { BuildIdentity } from "./build.ts"
 import type { ReferenceDate } from "./date.ts"
-import type { DeviceContext } from "./device-context.ts"
+import type { DeviceContext } from "./deviceContext.ts"
 import type { FiledIssue, YouTrackProject } from "./youtrack.ts"
 
 /**

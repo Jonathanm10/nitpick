@@ -1,5 +1,5 @@
-import { selectInEditor, type EditorState } from "./editor-state.ts"
-import type { ReviewSession } from "./review-session.ts"
+import type { EditorState } from "./editorState.ts"
+import type { ReviewSession } from "./reviewSession.ts"
 
 /** A step through the Tray, as Next and Previous Finding take it. */
 export type TrayStep = "next" | "previous"
@@ -33,7 +33,5 @@ export function stepEditor(
 ): EditorState | undefined {
   if (session === undefined) return undefined
   const target = stepInTray(session, step, editor.target)
-  return target === undefined
-    ? undefined
-    : selectInEditor(editor, target, session)
+  return target === undefined ? undefined : editor.selecting(target, session)
 }

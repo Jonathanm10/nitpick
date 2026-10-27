@@ -1,8 +1,8 @@
 // Ports Tests/NitpickCoreTests/TrayNavigationTests.swift.
 import { describe, expect, test } from "vitest"
-import { openEditor, selectInEditor } from "../src/editor-state.ts"
-import { addFinding } from "../src/review-session.ts"
-import { stepEditor, stepInTray } from "../src/tray-navigation.ts"
+import { EditorState } from "../src/editorState.ts"
+import { addFinding } from "../src/reviewSession.ts"
+import { stepEditor, stepInTray } from "../src/trayNavigation.ts"
 import { newUUID } from "../src/uuid.ts"
 import * as fixtures from "./fixtures.ts"
 
@@ -81,7 +81,7 @@ describe("Tray navigation", () => {
 
   test("the editor steps to the next row and opens it fresh", () => {
     const { session, middle, newest } = threeFindings()
-    const editor = selectInEditor(openEditor(), newest, session)
+    const editor = new EditorState().selecting(newest, session)
 
     const next = editor && stepEditor(editor, "next", session)
 
@@ -91,15 +91,16 @@ describe("Tray navigation", () => {
 
   test("a pending text label pins the editor, so neither step moves it", () => {
     const { session, middle } = threeFindings()
-    const selected = selectInEditor(openEditor(), middle, session)
-    expect(selected).toBeDefined()
-    const editor = { ...selected!, hasPendingLabelDraft: true }
+    const editor = new EditorState()
+      .selecting(middle, session)
+      ?.withPendingLabelDraft(true)
+    if (editor === undefined) throw new Error("the selection was refused")
 
     expect(stepEditor(editor, "next", session)).toBeUndefined()
     expect(stepEditor(editor, "previous", session)).toBeUndefined()
   })
 
   test("with no session there is nothing to step to", () => {
-    expect(stepEditor(openEditor(), "next", undefined)).toBeUndefined()
+    expect(stepEditor(new EditorState(), "next", undefined)).toBeUndefined()
   })
 })

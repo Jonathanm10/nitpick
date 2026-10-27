@@ -5,7 +5,7 @@ import {
   findingsNeedingSummary,
   updateFinding,
   type ReviewSession,
-} from "../src/review-session.ts"
+} from "../src/reviewSession.ts"
 import * as fixtures from "./fixtures.ts"
 
 /** FilingPhaseScenarioTests.session: one Finding per summary. */

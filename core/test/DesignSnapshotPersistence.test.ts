@@ -3,12 +3,12 @@
 // files are the server's: a manifest names each snapshot's bytes by its
 // dataVersion, and the server keeps them beside it.
 import { describe, expect, test } from "vitest"
-import type { DesignSnapshot } from "../src/design-snapshot.ts"
+import type { DesignSnapshot } from "../src/designSnapshot.ts"
 import {
   addFinding,
   updateFinding,
   type ReviewSession,
-} from "../src/review-session.ts"
+} from "../src/reviewSession.ts"
 import { decodeStoredSession, encodeStoredSession } from "../src/storage.ts"
 import { newUUID } from "../src/uuid.ts"
 import * as fixtures from "./fixtures.ts"

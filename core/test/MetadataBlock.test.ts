@@ -5,13 +5,13 @@ import {
   deviceContextOf,
   dynamicTypeDisplayName,
   dynamicTypeSizes,
-} from "../src/device-context.ts"
+} from "../src/deviceContext.ts"
 import {
   metadataBlock,
   newFinding,
   newReviewSession,
   type Finding,
-} from "../src/review-session.ts"
+} from "../src/reviewSession.ts"
 
 const session = newReviewSession({
   build: {

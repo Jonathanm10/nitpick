@@ -2,14 +2,14 @@
 // a save writes, a relaunch reads back. Writing files, clearing the open slot
 // and listing History are the server's; the filing halves are issue 05's.
 import { describe, expect, test } from "vitest"
-import type { Annotation } from "../src/annotation.ts"
+import { AnnotationHistory, type Annotation } from "../src/annotation.ts"
 import type { HistoryEntry } from "../src/history.ts"
 import {
   addFinding,
   discardFinding,
   newFinding,
   updateFinding,
-} from "../src/review-session.ts"
+} from "../src/reviewSession.ts"
 import {
   decodeStoredHistoryEntry,
   decodeStoredSession,
@@ -73,13 +73,13 @@ describe("Crash-safe sessions and history", () => {
     const resumed = decodeStoredSession(saved)
     expect(resumed).toEqual(session)
 
-    // Annotations are still editable after the relaunch. Their undo history
-    // is issue 04's.
-    const edited = updateFinding(resumed, annotated.id, (finding) => ({
-      ...finding,
-      annotations: finding.annotations.slice(1),
-    }))
-    expect(edited.tray[0].finding.annotations).toHaveLength(3)
+    // Annotations are still editable after the relaunch (the pre-kill undo
+    // history is not carried across it)…
+    const history = new AnnotationHistory(resumed.tray[0].finding.annotations)
+    expect(history.canUndo).toBe(false)
+    const edited = history.removeAnnotation(0)
+    expect(edited.annotations).toHaveLength(3)
+    expect(edited.canUndo).toBe(true)
   })
 
   test("a session persisted before Type shipped still decodes — its Findings default to Bug — and files to completion", () => {

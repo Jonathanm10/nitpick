@@ -13,15 +13,15 @@ import type { Build, BuildIdentity } from "./build.ts"
 import {
   designSnapshotMediaTypes,
   type DesignSnapshot,
-} from "./design-snapshot.ts"
-import type { DeviceContext } from "./device-context.ts"
+} from "./designSnapshot.ts"
+import type { DeviceContext } from "./deviceContext.ts"
 import type { FiledFinding, HistoryEntry } from "./history.ts"
 import type {
   FilingProgress,
   ReviewSession,
   TrayItem,
-} from "./review-session.ts"
-import { encodeSwiftJSON, type SwiftJSONValue } from "./swift-json.ts"
+} from "./reviewSession.ts"
+import { encodeSwiftJSON, type SwiftJSONValue } from "./swiftJSON.ts"
 import { findingTypes } from "./triage.ts"
 import { parseUUID } from "./uuid.ts"
 import type { FiledIssue, YouTrackProject } from "./youtrack.ts"

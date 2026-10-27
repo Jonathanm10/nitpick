@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs"
 import { expect } from "vitest"
 import type { HistoryEntry } from "../src/history.ts"
-import type { Finding, ReviewSession } from "../src/review-session.ts"
+import type { Finding, ReviewSession } from "../src/reviewSession.ts"
 
 const goldenDirectory = new URL("./golden/", import.meta.url)
 

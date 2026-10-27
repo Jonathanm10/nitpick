@@ -15,7 +15,7 @@ import {
   updateFinding,
   type ReviewSession,
   type TrayItem,
-} from "../src/review-session.ts"
+} from "../src/reviewSession.ts"
 import * as fixtures from "./fixtures.ts"
 
 function item(session: ReviewSession, id: string): TrayItem {
