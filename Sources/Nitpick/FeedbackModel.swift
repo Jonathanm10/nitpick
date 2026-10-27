@@ -21,9 +21,11 @@ final class FeedbackModel: Identifiable {
     var kind: FeedbackKind = .bug
     var title = ""
     var description = ""
-    private(set) var windowImagePNG: Data?
-    private(set) var windowImage: NSImage?
-    var attachesWindowImage: Bool { windowImagePNG != nil }
+    private(set) var windowImage: AnnotatedImageModel?
+    var attachesWindowImage: Bool { windowImage != nil }
+    /// The sheet shows the window image full size under the Annotation
+    /// toolbar instead of the form.
+    var isAnnotatingWindowImage = false
     var discardConfirmationRequested = false
 
     init(core: AppCore, environment: Feedback.Environment) {
@@ -43,7 +45,7 @@ final class FeedbackModel: Identifiable {
     }
 
     var closeNeedsConfirmation: Bool {
-        isFormEditable && payload.hasText
+        isFormEditable && (payload.hasText || !payload.imageAnnotations.isEmpty)
     }
 
     var failureMessage: String? {
@@ -57,13 +59,14 @@ final class FeedbackModel: Identifiable {
             title: title,
             description: description,
             environment: environment,
-            imagePNG: windowImagePNG
+            imagePNG: windowImage?.png,
+            imageAnnotations: windowImage?.annotations ?? []
         )
     }
 
     func setWindowImage(_ png: Data?) {
-        windowImagePNG = png
-        windowImage = png.flatMap(NSImage.init(data:))
+        windowImage = png.flatMap(AnnotatedImageModel.init(png:))
+        if windowImage == nil { isAnnotatingWindowImage = false }
     }
 
     func setAttachesWindowImage(_ attaches: Bool) {

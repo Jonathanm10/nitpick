@@ -21,7 +21,7 @@ The device and settings in effect when a Finding is captured: device model, OS v
 _Avoid_: device configuration, environment
 
 **Annotation**:
-A markup element — pen stroke, arrow, rectangle, or text label — laid over a Finding's screenshot. Editable until the Finding is filed.
+A markup element — pen stroke, arrow, rectangle, or text label — laid over a Finding's screenshot or a Feedback's window image. Editable until the Finding is filed or the Feedback is sent.
 _Avoid_: drawing, markup
 
 **Editor**:
@@ -65,5 +65,5 @@ An optional named static image from the design, attached to a Finding as visual 
 _Avoid_: attachment, Figma capture, comparison image
 
 **Feedback**:
-A designer's report about nitpick itself — a Bug (nitpick misbehaves) or an Improvement (a change worth making to nitpick) — with a title, a description, and the versions in play. Sent as exactly one Issue to the nitpick project; never part of a Review Session or History.
+A designer's report about nitpick itself — a Bug (nitpick misbehaves) or an Improvement (a change worth making to nitpick) — with a title, a description, the versions in play, and optionally an image of the nitpick window carrying Annotations. Sent as exactly one Issue to the nitpick project; never part of a Review Session or History.
 _Avoid_: bug report, ticket, finding (a Finding is about the Build under review, not about nitpick)
