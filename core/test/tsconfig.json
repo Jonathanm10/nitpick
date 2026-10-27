@@ -1,7 +1,9 @@
 {
+  // The tests read the goldens from disk, so they alone get Node's types; the
+  // package's own tsconfig keeps src/ free of Node-only and browser-only APIs.
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "types": []
+    "types": ["node"]
   },
   "include": ["."]
 }
