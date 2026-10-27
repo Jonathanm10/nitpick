@@ -1,7 +1,6 @@
-// Ported from Sources/NitpickCore/EditorState.swift. EditorEscape and
-// allowsDiscard stay with the Review Session port (issue 03): they read the
-// Tray's pristine rule and the shell's activity.
+// Ported from Sources/NitpickCore/EditorState.swift.
 import type { Annotation, Vector } from "./annotation.ts"
+import { isPristine, type ReviewSession } from "./reviewSession.ts"
 
 /** What the Editor reads of a Review Session: the IDs of its Tray items. */
 export interface EditorSession {
@@ -65,6 +64,14 @@ export class EditorState {
   /** The same Editor, target and generation kept, with the Design Snapshot error set. */
   withDesignSnapshotError(error: string | undefined): EditorState {
     return copied(this, { designSnapshotError: error })
+  }
+
+  /**
+   * Never while work runs, since filing works on a copy of the session. The
+   * Esc rule reads only ShellActivity's `isBusy` (issue 06).
+   */
+  allowsDiscard(activity: { readonly isBusy: boolean }): boolean {
+    return !this.hasPendingLabelDraft && !activity.isBusy
   }
 }
 
@@ -143,4 +150,38 @@ export function annotationDrag<Overlay>(
   overlayImage: Overlay
 ): AnnotationDrag<Overlay> {
   return { annotation, overlayImage, offset: { dx: 0, dy: 0 } }
+}
+
+/**
+ * What Esc does in the Editor: release a selected Annotation first,
+ * otherwise discard a pristine Finding, the mis-capture case.
+ */
+export type EditorEscape =
+  | { readonly action: "releaseAnnotation" }
+  | { readonly action: "discard"; readonly id: string }
+
+/**
+ * Esc in the Editor at large, where a text field may hold focus: it never
+ * releases a selection, so Esc in Summary keeps standard field behaviour.
+ */
+export function escapeInEditor(
+  editor: EditorState,
+  session: ReviewSession | undefined,
+  activity: { readonly isBusy: boolean }
+): EditorEscape | undefined {
+  if (!editor.allowsDiscard(activity)) return undefined
+  const item = session?.tray.find((candidate) => candidate.id === editor.target)
+  if (item === undefined || !isPristine(item)) return undefined
+  return { action: "discard", id: item.id }
+}
+
+/** Esc on the annotation surface, where a selection on this target goes first. */
+export function escapeOnSurface<Overlay>(
+  editor: EditorState,
+  selection: AnnotationSelection<Overlay> | undefined,
+  session: ReviewSession | undefined,
+  activity: { readonly isBusy: boolean }
+): EditorEscape | undefined {
+  if (selection?.belongs(editor)) return { action: "releaseAnnotation" }
+  return escapeInEditor(editor, session, activity)
 }
