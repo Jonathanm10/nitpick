@@ -10,3 +10,5 @@ Two alternatives were rejected. Silent background capture (collect now, annotate
 - The hotkey exists only between Start review and End review; Nitpick never squats on a system-wide shortcut outside a session. ⌘S remains for when Nitpick is already key.
 - Carbon Hot Keys is a legacy-but-supported API; if it is ever removed, the fallback decision reopens (an owned mini-panel or accepting a permission prompt).
 - The default chord is fixed in v1; a collision with another app's hotkey is resolved by making it configurable, not by choosing a more obscure default.
+
+Note: superseded by ADR-0012. A web page cannot register a system-wide hotkey, and it no longer needs one: the device is shown inside nitpick, so capture is a button and a page shortcut next to it, with no focus switch to undo.

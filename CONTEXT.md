@@ -1,23 +1,31 @@
 # Nitpick
 
-A macOS companion app for design review of mobile apps: a designer captures what's on screen, annotates it, and files it to YouTrack — closing the loop between design and implementation.
+A web app for design review of mobile apps: a Reviewer runs a Build on a Device Host, captures what's on screen, annotates it, and files it to YouTrack — closing the loop between design and implementation.
 
 ## Language
 
+**Reviewer**:
+A person who runs Review Sessions: a designer or a PO. Files under their own YouTrack account.
+_Avoid_: user, tester, designer (a designer is one kind of Reviewer)
+
+**Device Host**:
+Where a Review Session's device runs: the machine that boots the simulator or emulator, installs the Build, and streams its screen to the Reviewer's browser. A shared Liip office Mac mini is one.
+_Avoid_: server, mini, CI machine, runner
+
 **Capture Source**:
-Where a Finding's screenshot comes from: the booted simulator or a mirroring window (iPhone Mirroring, Bezel). Each source contributes what metadata it can.
-_Avoid_: mirror, device (the device is what a source shows, not the source itself)
+Where a Finding's screenshot comes from: the simulator or emulator running the Build on the Device Host, captured at native pixels, never the live view in the browser. Each source contributes what metadata it can.
+_Avoid_: mirror, stream, device (the device is what a source shows, not the source itself)
 
 **Build**:
-A specific compiled instance of the app under review, identified by bundle ID, version, and build number.
+A specific compiled instance of the app under review, identified by app ID (iOS bundle ID or Android package name), version, and build number.
 _Avoid_: artifact, binary
 
 **Review Session**:
-One sitting in which a designer reviews a Build. Fixes the shared context once — Build and YouTrack project — and collects Findings until the designer files them. Its Findings may span multiple Device Contexts.
+One sitting in which a Reviewer reviews a Build. Fixes the shared context once — Build and YouTrack project — and collects Findings until the Reviewer files them. Its Findings may span multiple Device Contexts.
 _Avoid_: batch, review round
 
 **Device Context**:
-The device and settings in effect when a Finding is captured: device model, OS version, and accessibility settings (Dynamic Type, contrast, …). Stamped on each Finding, not on the Review Session.
+The device and settings in effect when a Finding is captured: device model, OS version, and accessibility settings (text size, appearance, contrast, …). Stamped on each Finding, not on the Review Session.
 _Avoid_: device configuration, environment
 
 **Annotation**:
@@ -29,7 +37,7 @@ The pane where the selected Finding is annotated and described. A Finding stays 
 _Avoid_: canvas, surface, compose area
 
 **Finding**:
-A single point of design-review feedback on the Build — a Bug or an Improvement (see Type) — captured as one annotated screenshot plus the designer's description and optional Design Snapshots. Files as exactly one Issue.
+A single point of design-review feedback on the Build — a Bug or an Improvement (see Type) — captured as one annotated screenshot plus the Reviewer's description and optional Design Snapshots. Files as exactly one Issue.
 _Avoid_: disparity, nitpick, issue (reserved — the artifact is an Issue)
 
 **Type**:
@@ -53,7 +61,7 @@ The Review Session's Findings in capture order, awaiting filing. A Finding leave
 _Avoid_: queue, basket, list
 
 **History**:
-The designer's own record of filed Review Sessions and the Issues their Findings became. Written only at filing — a discarded session leaves no trace — and never reflects later changes in YouTrack.
+The shared record of filed Review Sessions and the Issues their Findings became, visible to every Reviewer. Written only at filing — a discarded session leaves no trace — and never reflects later changes in YouTrack.
 _Avoid_: log, archive, recents
 
 **Design Reference**:
@@ -61,9 +69,9 @@ An optional Figma URL on a Review Session or a Finding, pointing at the design s
 _Avoid_: mockup, design spec
 
 **Design Snapshot**:
-An optional named static image from the design, attached to a Finding as visual reference alongside its captured app screenshot and independently of any Design Reference. A Finding may carry several Design Snapshots; each has a default name the designer may refine, and supports inspection rather than visual diffing or image editing.
+An optional named static image from the design, attached to a Finding as visual reference alongside its captured app screenshot and independently of any Design Reference. A Finding may carry several Design Snapshots; each has a default name the Reviewer may refine, and supports inspection rather than visual diffing or image editing.
 _Avoid_: attachment, Figma capture, comparison image
 
 **Feedback**:
-A designer's report about nitpick itself — a Bug (nitpick misbehaves) or an Improvement (a change worth making to nitpick) — with a title, a description, the versions in play, and optionally an image of the nitpick window carrying Annotations. Sent as exactly one Issue to the nitpick project; never part of a Review Session or History.
+A Reviewer's report about nitpick itself — a Bug (nitpick misbehaves) or an Improvement (a change worth making to nitpick) — with a title, a description, the versions in play, and optionally an image of nitpick carrying Annotations. Sent as exactly one Issue to the nitpick project; never part of a Review Session or History.
 _Avoid_: bug report, ticket, finding (a Finding is about the Build under review, not about nitpick)

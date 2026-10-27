@@ -13,3 +13,5 @@ Nitpick is a Mac app, so its affordances follow AppKit conventions — hover-rev
 - The destructive-discard **confirmation round-trip is unchanged** — the Tray still keeps no undo, so `×` stages the dialog, it does not act. Only the trigger changed, never the safety.
 - The Tray keeps its `List` for content-sized height, compression, scrolling, and the filed/interrupted row states; it simply no longer needs `swipeActions`. Should those `List` workarounds ever outlast their value, shedding `List` for a `ScrollView` is now unblocked — nothing else depended on the swipe.
 - The principle generalises: future UI prefers hover-reveal, `×`/close glyphs, and pointer/keyboard affordances over swipe, long-press, and other touch gestures, even where a UIKit instinct suggests otherwise.
+
+Note: superseded by ADR-0012. The web app takes shadcn/ui's defaults and web conventions instead of AppKit idioms. Two points carry over: reviewers use desktop browsers, so pointer and keyboard affordances still beat touch gestures, and the Tray's discard keeps its confirmation.
