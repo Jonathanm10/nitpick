@@ -1,6 +1,7 @@
 import type { BuildIdentity } from "./build.ts"
 import type { ReferenceDate } from "./date.ts"
 import type { DeviceContext } from "./deviceContext.ts"
+import { filedIssueOf, type ReviewSession } from "./reviewSession.ts"
 import type { FiledIssue, YouTrackProject } from "./youtrack.ts"
 
 /**
@@ -27,6 +28,30 @@ export interface HistoryEntry {
   readonly startedAt: ReferenceDate
   /** Every filed Finding, in Tray order. */
   readonly findings: ReadonlyArray<FiledFinding>
+}
+
+/**
+ * The entry a filed session records, ported from recordInHistory in
+ * Sources/NitpickCore/SessionPersistence.swift: every filed Finding, with the
+ * Design Reference its Issue was created under.
+ */
+export function historyEntry(session: ReviewSession): HistoryEntry {
+  return {
+    build: session.build.identity,
+    project: session.project,
+    startedAt: session.startedAt,
+    findings: session.tray.flatMap((item) => {
+      const issue = filedIssueOf(item)
+      if (issue === undefined) return []
+      const { summary, description, deviceContext, designReference } =
+        item.finding
+      return [
+        designReference === undefined
+          ? { summary, description, deviceContext, issue }
+          : { summary, description, deviceContext, designReference, issue },
+      ]
+    }),
+  }
 }
 
 /**

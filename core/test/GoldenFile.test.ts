@@ -1,7 +1,7 @@
-// Ports the metadata block, issue description, stored session and History
-// cases of Tests/NitpickCoreTests/GoldenFileTests.swift: the port renders and
-// stores what the Swift app does, byte for byte. Feedback descriptions are
-// issue 05's and the images issue 04's.
+// Ports the metadata block, issue description, Feedback description, stored
+// session and History cases of Tests/NitpickCoreTests/GoldenFileTests.swift:
+// the port renders and stores what the Swift app does, byte for byte. The
+// images are server/test/AnnotationFlattening.test.ts's.
 import { describe, expect, test } from "vitest"
 import {
   deviceContextOf,
@@ -9,6 +9,7 @@ import {
   dynamicTypeSizes,
   type DeviceSettings,
 } from "../src/deviceContext.ts"
+import { feedbackDescription, type Feedback } from "../src/feedback.ts"
 import { issueDescription, metadataBlock } from "../src/reviewSession.ts"
 import {
   decodeStoredHistoryEntry,
@@ -93,6 +94,21 @@ describe("Golden files", () => {
       )
     }
   )
+
+  test.each([
+    "with-review-session",
+    "without-review-session",
+    "without-description",
+  ])("Feedback description (%s)", (name) => {
+    const input = goldenInput<Feedback>(
+      `feedback-description/${name}.input.json`
+    )
+
+    expectMatchesGolden(
+      feedbackDescription(input),
+      `feedback-description/${name}.txt`
+    )
+  })
 
   test.each(storedSessionGoldens)("stored open session (%s)", (name) => {
     const path = `stored-session/${name}.json`

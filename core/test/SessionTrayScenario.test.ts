@@ -1,12 +1,18 @@
-// Ports the tray and pristine cases of
-// Tests/NitpickCoreTests/SessionTrayScenarioTests.swift. Its file-all cases
-// run the YouTrack filing ladder, which is issue 05's; where a case here
-// needs a filing mark, it sets the mark the ladder would have recorded.
+// Ports Tests/NitpickCoreTests/SessionTrayScenarioTests.swift: captures drop
+// Findings into the Tray, the Tray is edited and pruned, and File all turns
+// every remaining Finding into exactly one Issue. Filing records every
+// server-acknowledged step before the next request, so a failure mid-run
+// loses nothing and a retry never repeats what the instance acknowledged.
+//
+// Not ported: File all before connecting. Filing takes a YouTrackClient, so
+// there is no unconnected call to make.
 import { describe, expect, test } from "vitest"
 import type { Annotation } from "../src/annotation.ts"
+import { fileAll } from "../src/issueFiling.ts"
 import {
   addFinding,
   discardFinding,
+  filedIssueOf,
   filedIssues,
   hasUnfiledFindings,
   isEditable,
@@ -16,7 +22,11 @@ import {
   type ReviewSession,
   type TrayItem,
 } from "../src/reviewSession.ts"
+import type { YouTrackError } from "../src/youtrack.ts"
+import { bodyText, FakeHTTPTransport } from "./FakeHTTPTransport.ts"
 import * as fixtures from "./fixtures.ts"
+
+const { urls } = fixtures
 
 function item(session: ReviewSession, id: string): TrayItem {
   const found = session.tray.find((candidate) => candidate.id === id)
@@ -309,4 +319,325 @@ describe("Session tray and file-all", () => {
       expect(discardFinding(frozen, added.id)).toEqual(frozen)
     }
   )
+})
+
+describe("Session tray and file-all — File all", () => {
+  test("file-all creates exactly one issue per remaining Finding, in tray order, and lists every link", async () => {
+    const transport = new FakeHTTPTransport()
+    let session = addFinding(
+      fixtures.session,
+      fixtures.finding({ summary: "Toolbar icon is misaligned" })
+    ).session
+    const dropped = addFinding(
+      session,
+      fixtures.finding({ summary: "Not a real problem" })
+    )
+    session = addFinding(
+      dropped.session,
+      fixtures.finding({ summary: "Label truncates" })
+    ).session
+    session = discardFinding(session, dropped.id)
+    fixtures.enqueueTagLookups(transport)
+    fixtures.enqueueLadder(transport, fixtures.createdIssue421)
+    fixtures.enqueueLadder(transport, fixtures.createdIssue422)
+
+    const outcome = await fileAll(session, fixtures.filing(transport))
+
+    expect(outcome.failure).toBeUndefined()
+    expect(filedIssues(outcome.session)).toEqual([
+      fixtures.filedIssue("RM-421"),
+      fixtures.filedIssue("RM-422"),
+    ])
+    expect(outcome.session.tray.map(filedIssueOf)).toEqual([
+      fixtures.filedIssue("RM-421"),
+      fixtures.filedIssue("RM-422"),
+    ])
+
+    // Both tags resolved up front, then create → attach → design-review →
+    // Type tag per Finding, in tray order.
+    expect(transport.urls).toEqual([
+      urls.designReviewLookup,
+      urls.bugTypeLookup,
+      urls.createIssue,
+      urls.attachments("3-505"),
+      urls.tags("3-505"),
+      urls.tags("3-505"),
+      urls.createIssue,
+      urls.attachments("3-506"),
+      urls.tags("3-506"),
+      urls.tags("3-506"),
+    ])
+    // Each created Issue carries its own Finding's summary; the discarded
+    // one never files.
+    const creationBodies = transport.sentRequests
+      .filter((request) => request.url === urls.createIssue)
+      .map((request) => bodyText(request) ?? "")
+    expect(creationBodies).toHaveLength(2)
+    expect(creationBodies[0]).toContain(
+      `"summary":"Toolbar icon is misaligned"`
+    )
+    expect(creationBodies[1]).toContain(`"summary":"Label truncates"`)
+
+    // Filed items are History: edits and discards are refused.
+    const firstID = outcome.session.tray[0].id
+    let after = updateFinding(outcome.session, firstID, (finding) => ({
+      ...finding,
+      summary: "Too late",
+    }))
+    after = discardFinding(after, firstID)
+    expect(after).toEqual(outcome.session)
+  })
+
+  test("a transport failure between Findings keeps every mark; the rest stay editable and retry files only the remainder", async () => {
+    const transport = new FakeHTTPTransport()
+    const session = fixtures.sessionWith(["First", "Second", "Third"])
+    // The network dies on the second Finding's creation request.
+    fixtures.enqueueTagLookups(transport)
+    fixtures.enqueueLadder(transport, fixtures.createdIssue421)
+    transport.enqueueError(new TypeError("network connection lost"))
+
+    const outcome = await fileAll(session, fixtures.filing(transport))
+
+    expect(outcome.failure).toBeInstanceOf(TypeError)
+    expect(filedIssueOf(outcome.session.tray[0])).toEqual(
+      fixtures.filedIssue("RM-421")
+    )
+    expect(isEditable(outcome.session.tray[1])).toBe(true)
+    expect(isEditable(outcome.session.tray[2])).toBe(true)
+    // Two tag lookups, the first ladder (4) and the failed creation.
+    expect(transport.sentRequests).toHaveLength(7)
+
+    // The still-editable second Finding is sharpened before retrying…
+    const retried = updateFinding(
+      outcome.session,
+      outcome.session.tray[1].id,
+      (finding) => ({ ...finding, summary: "Second — sharpened" })
+    )
+
+    // …and the retry files only the remainder.
+    fixtures.enqueueTagLookups(transport)
+    fixtures.enqueueLadder(transport, fixtures.createdIssue422)
+    fixtures.enqueueLadder(transport, fixtures.createdIssue423)
+
+    const second = await fileAll(retried, fixtures.filing(transport))
+
+    expect(second.failure).toBeUndefined()
+    expect(filedIssues(second.session)).toEqual([
+      fixtures.filedIssue("RM-421"),
+      fixtures.filedIssue("RM-422"),
+      fixtures.filedIssue("RM-423"),
+    ])
+    // Exactly one creation per Finding across both runs: the first Finding
+    // is never filed twice, and the retried creation carries the sharpened
+    // summary.
+    const creationBodies = transport.sentRequests
+      .filter((request) => request.url === urls.createIssue)
+      .map((request) => bodyText(request) ?? "")
+    expect(creationBodies).toHaveLength(4) // including the failed attempt
+    const count = (summary: string) =>
+      creationBodies.filter((body) => body.includes(`"summary":"${summary}"`))
+        .length
+    expect(count("First")).toBe(1)
+    expect(count("Second — sharpened")).toBe(1)
+    expect(count("Third")).toBe(1)
+  })
+
+  test("a failure after issue creation freezes the item and retry resumes at attachments — never a second issue", async () => {
+    const transport = new FakeHTTPTransport()
+    const session = fixtures.sessionWith(["Solo"])
+    fixtures.enqueueTagLookups(transport)
+    transport.enqueue(fixtures.createdIssue421)
+    transport.enqueueError(new TypeError("timed out"))
+
+    const outcome = await fileAll(session, fixtures.filing(transport))
+
+    expect(outcome.failure).toBeInstanceOf(TypeError)
+    const item = outcome.session.tray[0]
+    expect(item.filingProgress).toEqual({
+      state: "issueCreated",
+      issueID: "3-505",
+      idReadable: "RM-421",
+    })
+    expect(filedIssueOf(item)).toBeUndefined()
+    // The Issue exists on the instance, so the item froze: an edit now would
+    // diverge from what RM-421 already says.
+    expect(isEditable(item)).toBe(false)
+    let frozen = updateFinding(outcome.session, item.id, (finding) => ({
+      ...finding,
+      summary: "Diverged",
+    }))
+    frozen = discardFinding(frozen, item.id)
+    expect(frozen).toEqual(outcome.session)
+
+    fixtures.enqueueTagLookups(transport)
+    transport.enqueue(fixtures.attachmentsJSON)
+    transport.enqueue(fixtures.appliedTagJSON)
+    transport.enqueue(fixtures.appliedTypeTagJSON)
+
+    const second = await fileAll(outcome.session, fixtures.filing(transport))
+
+    expect(second.failure).toBeUndefined()
+    expect(filedIssues(second.session)).toEqual([fixtures.filedIssue("RM-421")])
+    expect(transport.urls).toEqual([
+      urls.designReviewLookup,
+      urls.bugTypeLookup,
+      urls.createIssue,
+      urls.attachments("3-505"), // failed
+      urls.designReviewLookup,
+      urls.bugTypeLookup,
+      urls.attachments("3-505"),
+      urls.tags("3-505"),
+      urls.tags("3-505"),
+    ])
+  })
+
+  test("a failure at tag application resumes at the tag alone — attachments are never re-uploaded", async () => {
+    const transport = new FakeHTTPTransport()
+    fixtures.enqueueTagLookups(transport)
+    transport.enqueue(fixtures.createdIssue421)
+    transport.enqueue(fixtures.attachmentsJSON)
+    transport.enqueueError(new TypeError("network connection lost"))
+
+    const outcome = await fileAll(
+      fixtures.sessionWith(["Solo"]),
+      fixtures.filing(transport)
+    )
+
+    expect(outcome.failure).toBeInstanceOf(TypeError)
+    expect(outcome.session.tray[0].filingProgress).toEqual({
+      state: "attachmentsUploaded",
+      issueID: "3-505",
+      idReadable: "RM-421",
+    })
+
+    fixtures.enqueueTagLookups(transport)
+    transport.enqueue(fixtures.appliedTagJSON)
+    transport.enqueue(fixtures.appliedTypeTagJSON)
+
+    const second = await fileAll(outcome.session, fixtures.filing(transport))
+
+    expect(second.failure).toBeUndefined()
+    expect(filedIssues(second.session)).toEqual([fixtures.filedIssue("RM-421")])
+    expect(transport.urls).toEqual([
+      urls.designReviewLookup,
+      urls.bugTypeLookup,
+      urls.createIssue,
+      urls.attachments("3-505"),
+      urls.tags("3-505"), // design-review, failed
+      urls.designReviewLookup,
+      urls.bugTypeLookup,
+      urls.tags("3-505"), // design-review
+      urls.tags("3-505"), // Type
+    ])
+  })
+
+  test("a failure at the Type tag resumes at that tag alone — the issue, attachments, and design-review tag are never redone", async () => {
+    const transport = new FakeHTTPTransport()
+    // Everything through the design-review tag succeeds; the Type tag POST
+    // dies, and the item rests at reviewTagged, one rung short.
+    fixtures.enqueueTagLookups(transport)
+    transport.enqueue(fixtures.createdIssue421)
+    transport.enqueue(fixtures.attachmentsJSON)
+    transport.enqueue(fixtures.appliedTagJSON)
+    transport.enqueueError(new TypeError("network connection lost"))
+
+    const outcome = await fileAll(
+      fixtures.sessionWith(["Solo"]),
+      fixtures.filing(transport)
+    )
+
+    expect(outcome.failure).toBeInstanceOf(TypeError)
+    expect(outcome.session.tray[0].filingProgress).toEqual({
+      state: "reviewTagged",
+      issueID: "3-505",
+      idReadable: "RM-421",
+    })
+    expect(filedIssueOf(outcome.session.tray[0])).toBeUndefined()
+
+    // The retry applies the Type tag alone: no re-created Issue, no
+    // re-uploaded attachments, no re-applied design-review tag.
+    fixtures.enqueueTagLookups(transport)
+    transport.enqueue(fixtures.appliedTypeTagJSON)
+
+    const second = await fileAll(outcome.session, fixtures.filing(transport))
+
+    expect(second.failure).toBeUndefined()
+    expect(filedIssues(second.session)).toEqual([fixtures.filedIssue("RM-421")])
+    expect(transport.urls).toEqual([
+      urls.designReviewLookup,
+      urls.bugTypeLookup,
+      urls.createIssue,
+      urls.attachments("3-505"),
+      urls.tags("3-505"), // design-review
+      urls.tags("3-505"), // Type, failed
+      urls.designReviewLookup,
+      urls.bugTypeLookup,
+      urls.tags("3-505"), // Type
+    ])
+  })
+
+  // Pre-flight
+
+  test("a summary-less Finding stops file-all before the first request — never a half-filed tray", async () => {
+    const transport = new FakeHTTPTransport()
+    const session = fixtures.sessionWith(["Fine", "  \n"])
+
+    const outcome = await fileAll(session, fixtures.filing(transport))
+
+    expect((outcome.failure as YouTrackError).failure).toEqual({
+      kind: "summaryRequired",
+    })
+    expect(outcome.session).toBe(session)
+    expect(outcome.session.tray.every(isEditable)).toBe(true)
+    expect(transport.sentRequests).toEqual([])
+  })
+
+  test("file-all with nothing left to file touches nothing", async () => {
+    const transport = new FakeHTTPTransport()
+
+    const outcome = await fileAll(fixtures.session, fixtures.filing(transport))
+
+    expect(outcome.failure).toBeUndefined()
+    expect(outcome.session).toBe(fixtures.session)
+    expect(transport.sentRequests).toEqual([])
+  })
+
+  // Not in the Swift suite: IssueFiling.swift's comment that a mixed Bug and
+  // Improvement run resolves each Type's tag once, in a stable order.
+  test("a mixed Bug and Improvement run looks each Type tag up once, in name order, and applies each Finding's own", async () => {
+    const transport = new FakeHTTPTransport()
+    let session = addFinding(
+      fixtures.session,
+      fixtures.finding({
+        summary: "Spacing could breathe",
+        type: "improvement",
+      })
+    ).session
+    session = addFinding(
+      session,
+      fixtures.finding({ summary: "Wrong red" })
+    ).session
+    transport.enqueue(fixtures.existingTagJSON)
+    transport.enqueue(fixtures.existingTypeTagJSON)
+    transport.enqueue(`[{"id":"6-6","name":"nitpick-type:improvement"}]`)
+    transport.enqueue(fixtures.createdIssue421)
+    transport.enqueue(fixtures.attachmentsJSON)
+    transport.enqueue(fixtures.appliedTagJSON)
+    transport.enqueue(`{"id":"6-6","name":"nitpick-type:improvement"}`)
+    fixtures.enqueueLadder(transport, fixtures.createdIssue422)
+
+    const outcome = await fileAll(session, fixtures.filing(transport))
+
+    expect(outcome.failure).toBeUndefined()
+    expect(transport.urls.slice(0, 3)).toEqual([
+      urls.designReviewLookup,
+      urls.bugTypeLookup,
+      `${fixtures.base}/api/tags?fields=id,name&query=nitpick-type:improvement&$top=100`,
+    ])
+    const typeTags = transport.sentRequests
+      .filter((request) => request.url.endsWith("/tags?fields=id,name"))
+      .map(bodyText)
+      .filter((body) => body !== `{"id":"6-4"}`)
+    expect(typeTags).toEqual([`{"id":"6-6"}`, `{"id":"6-5"}`])
+  })
 })
