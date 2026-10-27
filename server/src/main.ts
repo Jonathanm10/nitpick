@@ -25,7 +25,10 @@ if (config.youTrack === undefined) {
   )
 }
 
-const deviceHost = makeLocalDeviceHost(nodeSubprocessRunner)
+const deviceHost = makeLocalDeviceHost(
+  nodeSubprocessRunner,
+  join(config.dataDirectory, "captures")
+)
 const youTrack =
   config.youTrack && new YouTrackClient(fetchTransport, config.youTrack)
 const reviewer = new Reviewer(

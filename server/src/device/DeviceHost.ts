@@ -1,9 +1,8 @@
 // Everything that depends on the machine running the devices sits behind this
 // seam (ADR-0012). Modelled on T3 Code's apps/server/src/device/DeviceHost.ts
-// (MIT). Every effect is a typed action with an argument array; later issues
-// add capture.
+// (MIT). Every effect is a typed action with an argument array.
 // Types only: api.ts re-exports from here, and web/ must not reach Node code.
-import type { Build } from "@nitpick/core"
+import type { Build, DeviceSettings } from "@nitpick/core"
 
 /** A simulator a Build can be reviewed on: the device half of a Device Context. */
 export interface SimulatorDevice {
@@ -34,6 +33,18 @@ export interface DeviceHost {
   readonly checkHealth: () => Promise<HostHealth>
   /** Boots `device`, installs the Build and launches it. */
   readonly launchBuild: (build: Build, device: SimulatorDevice) => Promise<void>
+  /**
+   * The booted device's screen at native pixels with the accessibility
+   * state it was taken under. Refuses a device that isn't booted.
+   */
+  readonly captureScreen: (deviceUDID: string) => Promise<ScreenCapture>
+}
+
+/** One capture: the device as it is now, its screenshot and its settings. */
+export interface ScreenCapture {
+  readonly device: SimulatorDevice
+  readonly png: Uint8Array
+  readonly settings: DeviceSettings
 }
 
 /** What the Device Host is missing before a review can run (ADR-0002). */

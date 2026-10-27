@@ -31,11 +31,7 @@ import type {
   StartReviewResponse,
 } from "../src/api.ts"
 import { createApp } from "../src/app.ts"
-import type {
-  DeviceHost,
-  HostHealth,
-  SimulatorDevice,
-} from "../src/device/DeviceHost.ts"
+import type { SimulatorDevice } from "../src/device/DeviceHost.ts"
 import { RuntimeUnavailable } from "../src/device/simctl.ts"
 import { Reviewer } from "../src/reviewer.ts"
 import {
@@ -43,6 +39,7 @@ import {
   temporaryDirectory,
   writeAppBundle,
 } from "./BuildFixtures.ts"
+import { FakeDeviceHost } from "./FakeDeviceHost.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 
 const iPhone: SimulatorDevice = {
@@ -69,31 +66,10 @@ const brokenPhone: SimulatorDevice = {
 
 const schemaJSON = `[{"field":{"name":"Priority"},"bundle":{"values":[{"name":"Critical"},{"name":"Normal"}]}}]`
 
-/** Records launches instead of running simctl. */
-class FakeDeviceHost implements DeviceHost {
-  readonly id = "fake"
-  readonly label = "Fake host"
-  health: HostHealth = { status: "ready", devices: [iPad, iPhone, brokenPhone] }
-  launchFailure: Error | undefined
-  readonly launches: { build: Build; device: SimulatorDevice }[] = []
-
-  readonly devices = {
-    list: async () =>
-      this.health.status === "ready" ? this.health.devices : [],
-  }
-
-  checkHealth = async () => this.health
-
-  launchBuild = async (build: Build, device: SimulatorDevice) => {
-    if (this.launchFailure !== undefined) throw this.launchFailure
-    this.launches.push({ build, device })
-  }
-}
-
 function harness({ withYouTrack = true } = {}) {
   const reviewerDirectory = join(temporaryDirectory(), "reviewers", "interim")
   const runner = new FakeSubprocessRunner()
-  const deviceHost = new FakeDeviceHost()
+  const deviceHost = new FakeDeviceHost([iPad, iPhone, brokenPhone])
   const transport = new FakeHTTPTransport()
   const youTrack = withYouTrack
     ? new YouTrackClient(
@@ -313,7 +289,7 @@ describe("Start review", () => {
       status: "started",
       session: {
         project: { id: "0-12", shortName: "RM", name: "Review Me" },
-        unfiledFindingCount: 0,
+        tray: [],
       },
       device: iPhone,
       schema: { priorities: [{ name: "Critical" }, { name: "Normal" }] },
@@ -356,7 +332,7 @@ describe("Start review", () => {
 
     expect(await review(h)).toMatchObject({
       build: reviewMe,
-      session: { project: { shortName: "RM" }, unfiledFindingCount: 0 },
+      session: { project: { shortName: "RM" }, tray: [] },
     })
   })
 
@@ -526,7 +502,7 @@ describe("A session left open", () => {
       session: {
         project: session.project,
         startedAt: session.startedAt,
-        unfiledFindingCount: 2,
+        tray: session.tray,
       },
     })
   })
