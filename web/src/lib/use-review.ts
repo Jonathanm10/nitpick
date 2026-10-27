@@ -339,17 +339,18 @@ export function useReview() {
 
   /**
    * Discards a Finding at once, with no undo. Should the server refuse, the
-   * Finding comes back where it was and the error says why.
+   * Finding comes back where it was, the error says why, and its edits not
+   * yet saved go out.
    */
   async function discard(itemID: string) {
     const current = saver.session
     if (current === undefined) return
     const index = current.tray.findIndex((item) => item.id === itemID)
     if (index === -1) return
-    saver.forget(itemID)
     setSession(discardFinding(current, itemID))
     try {
       await api.discardFinding(itemID)
+      saver.forget(itemID)
     } catch (error) {
       const now = saver.session
       if (now !== undefined) {
@@ -359,6 +360,7 @@ export function useReview() {
         })
       }
       setErrorMessage(error instanceof Error ? error.message : String(error))
+      void saver.flush()
     }
   }
 

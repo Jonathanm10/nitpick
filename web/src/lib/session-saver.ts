@@ -78,7 +78,7 @@ export class SessionSaver {
     return this.#saving
   }
 
-  /** A discarded Finding's pending edits have nowhere to go. */
+  /** A Finding the server discarded takes its pending edits with it. */
   forget(itemID: string): void {
     this.#dirty.delete(itemID)
   }
@@ -116,6 +116,15 @@ export class SessionSaver {
   async #send(work: Map<string, Set<string>>): Promise<void> {
     let failure: string | undefined
     for (const [key, fields] of work) {
+      // A Finding being discarded keeps its edits until the server confirms
+      // the discard (`forget`), so a refused discard still saves them.
+      if (
+        key !== sessionKey &&
+        !this.#session?.tray.some((item) => item.id === key)
+      ) {
+        this.#requeue(key, fields)
+        continue
+      }
       try {
         await this.#save(key, fields)
       } catch (error) {
@@ -123,9 +132,7 @@ export class SessionSaver {
         // edits with it.
         if (error instanceof APIError && error.status === 404) continue
         failure = error instanceof Error ? error.message : String(error)
-        const pending = this.#dirty.get(key) ?? new Set()
-        for (const field of fields) pending.add(field)
-        this.#dirty.set(key, pending)
+        this.#requeue(key, fields)
       }
     }
     if (failure === undefined) {
@@ -137,6 +144,12 @@ export class SessionSaver {
     this.#typingSave = save
     this.#report(`Your edits aren't saved yet: ${failure} Retrying…`)
     this.#schedule(due)
+  }
+
+  #requeue(key: string, fields: Set<string>): void {
+    const pending = this.#dirty.get(key) ?? new Set()
+    for (const field of fields) pending.add(field)
+    this.#dirty.set(key, pending)
   }
 
   async #save(key: string, fields: Set<string>): Promise<void> {
