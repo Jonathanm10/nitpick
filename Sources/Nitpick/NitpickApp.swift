@@ -48,7 +48,8 @@ struct MainWindowContent: View {
 
     var body: some View {
         ContentView(model: model)
-            .sheet(item: $model.feedback) { feedback in
+            // A quiet snapshot run stages the sheet in a parked window instead.
+            .sheet(item: WindowSnapshot.isQuiet ? .constant(nil) : $model.feedback) { feedback in
                 FeedbackSheet(feedback: feedback, isConnected: model.isFeedbackConnected)
             }
     }

@@ -90,6 +90,20 @@ enum WindowSnapshot {
 
     private static var offscreenWindow: NSWindow?
 
+    /// A quiet run never attaches a sheet, since attaching pulls the parked
+    /// window and the sheet onto the screen. A staged sheet is hosted in its
+    /// own parked window instead, and renders composite it where it would hang.
+    private static var stagedSheet: NSWindow?
+
+    static func stageSheet(_ content: some View) {
+        let controller = NSHostingController(rootView: content)
+        controller.sizingOptions = .preferredContentSize
+        let window = ParkedWindow(size: controller.view.fittingSize)
+        window.contentViewController = controller
+        window.orderBack(nil)
+        stagedSheet = window
+    }
+
     /// Hosts a second `ContentView` over the same model in a borderless
     /// window parked off every screen. Called once, after launch restored
     /// the session, so the copy renders the same state as the real window.
@@ -187,7 +201,8 @@ enum WindowSnapshot {
               let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)
         else { return nil }
         frame.cacheDisplay(in: frame.bounds, to: rep)
-        var sheet = window.attachedSheet
+        let staged = window.attachedSheet == nil ? stagedSheet : nil
+        var sheet = window.attachedSheet ?? staged
         guard sheet != nil, let context = NSGraphicsContext(bitmapImageRep: rep) else { return rep }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
@@ -195,10 +210,10 @@ enum WindowSnapshot {
             if let sheetView = current.contentView?.superview,
                let sheetRep = sheetView.bitmapImageRepForCachingDisplay(in: sheetView.bounds) {
                 sheetView.cacheDisplay(in: sheetView.bounds, to: sheetRep)
-                let origin = CGPoint(
-                    x: current.frame.minX - window.frame.minX,
-                    y: current.frame.minY - window.frame.minY
-                )
+                // A staged sheet hangs centered from the top of the content.
+                let origin = current === staged
+                    ? CGPoint(x: (window.frame.width - current.frame.width) / 2, y: window.frame.height - current.frame.height)
+                    : CGPoint(x: current.frame.minX - window.frame.minX, y: current.frame.minY - window.frame.minY)
                 sheetRep.draw(in: CGRect(origin: origin, size: current.frame.size))
                 print("snapshot: sheet \(current.frame.width)×\(current.frame.height) pt at \(origin)")
                 fflush(stdout)
@@ -528,14 +543,11 @@ extension AppModel {
     }
 
     func stageFeedbackSnapshot(_ state: String) async {
-        // Attaching the sheet pulls the parked window on screen.
-        guard !WindowSnapshot.isQuiet else {
-            print("feedback snapshot: refused, attaching the sheet would pull windows onto the screen")
-            fflush(stdout)
-            return
-        }
         await presentFeedback()
         guard let feedback else { return }
+        if WindowSnapshot.isQuiet {
+            WindowSnapshot.stageSheet(FeedbackSheet(feedback: feedback, isConnected: isFeedbackConnected))
+        }
         guard state != "not-connected" else {
             print("feedback snapshot: state=\(state) connected=\(isFeedbackConnected)")
             fflush(stdout)
@@ -554,7 +566,21 @@ extension AppModel {
             // The toggle and the discard dialog need the sheet on screen first.
             try? await Task.sleep(for: .seconds(1.5))
             feedback.setAttachesWindowImage(true)
-            if let png = feedback.windowImagePNG, let path = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_PATH"] {
+            if let png = feedback.windowImage?.png, let path = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_PATH"] {
+                try? png.write(to: URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("window-image.png"))
+            }
+        case "annotating", "annotated":
+            try? await Task.sleep(for: .seconds(1.5))
+            feedback.setAttachesWindowImage(true)
+            guard let image = feedback.windowImage, let size = image.capturePixelSize else { break }
+            // Fictional marks, placed relative to the image so any window size works.
+            image.addAnnotation(.rectangle(CGRect(x: size.width * 0.03, y: size.height * 0.2, width: size.width * 0.3, height: size.height * 0.12)))
+            image.annotationColor = .blue
+            image.addAnnotation(.arrow(from: CGPoint(x: size.width * 0.55, y: size.height * 0.45), to: CGPoint(x: size.width * 0.35, y: size.height * 0.3)))
+            image.addAnnotation(.label("Too tight", at: CGPoint(x: size.width * 0.56, y: size.height * 0.45)))
+            feedback.isAnnotatingWindowImage = state == "annotating"
+            if let path = ProcessInfo.processInfo.environment["NITPICK_SNAPSHOT_PATH"],
+               let png = try? DecodedScreenshot.annotatedPNG(image.png, with: image.annotations) {
                 try? png.write(to: URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("window-image.png"))
             }
         case "sending":
@@ -580,7 +606,7 @@ extension AppModel {
         default:
             break
         }
-        print("feedback snapshot: state=\(state) canSend=\(feedback.canSend) hasText=\(feedback.payload.hasText)")
+        print("feedback snapshot: state=\(state) canSend=\(feedback.canSend) hasText=\(feedback.payload.hasText) annotations=\(feedback.payload.imageAnnotations.count) closeNeedsConfirmation=\(feedback.closeNeedsConfirmation)")
         fflush(stdout)
     }
 }
