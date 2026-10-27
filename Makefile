@@ -8,6 +8,7 @@
 #   make test
 #   make release VERSION=1.1.0 BUILD=3   full signed + notarized ladder
 #   make publish VERSION=1.1.0 BUILD=3   upload the zip + appcast to GitHub
+#   make ship                         next version: release + publish + vX.Y.Z
 #   make bundle|sign|verify|notarize|package|appcast   individual stages
 #   make drill                        local Sparkle vN->vN+1 update drill
 #   make setup                        one-time signing/hosting wizard
@@ -25,7 +26,7 @@ ZIP    = dist/releases/Nitpick-$(VERSION)-$(BUILD).zip
 # -> staple -> package -> appcast); never run them in parallel.
 .NOTPARALLEL:
 .PHONY: help run test icon bundle sign verify notarize verify-release package \
-        appcast release publish drill setup clean require-version
+        appcast release publish ship drill setup clean require-version
 
 help:
 	@echo 'nitpick make targets:'
@@ -34,6 +35,7 @@ help:
 	@echo '  icon                       regenerate assets/AppIcon.icns from assets/icon.svg'
 	@echo '  release VERSION= BUILD=    full signed + notarized release ladder'
 	@echo '  publish VERSION= BUILD=    upload the release zip + appcast to GitHub'
+	@echo '  ship                       next version and build: release, publish, vX.Y.Z'
 	@echo '  bundle|sign|verify|notarize|package|appcast   individual stages'
 	@echo '  drill                      local Sparkle update drill (no Apple account)'
 	@echo '  setup                      one-time signing/hosting wizard'
@@ -97,6 +99,11 @@ release: bundle sign verify notarize verify-release package appcast
 # across versions. gh infers the repo from the origin remote.
 publish: require-version
 	gh release upload updates "$(ZIP)" dist/releases/appcast.xml --clobber
+
+# The one-press path (the T3 Code "Release" action): derives VERSION and BUILD,
+# then runs release, publish and the versioned GitHub release. See ship.sh.
+ship:
+	$(REL)/ship.sh
 
 # --- local QA / setup ------------------------------------------------------
 drill:

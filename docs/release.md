@@ -40,7 +40,38 @@ The steps, for reference:
    (HTTPS). Set `NITPICK_FEED_URL` (the appcast's final URL) and
    `NITPICK_DOWNLOAD_URL_PREFIX` (the directory the zips are served from).
 
-## Cutting a release
+## One-press release
+
+```sh
+make ship
+```
+
+This is what the T3 Code **Release** action runs. `scripts/release/ship.sh`
+does everything below in one go:
+
+1. Preflight: branch `main`, clean tree, `HEAD` equal to `origin/main`, and
+   the Swift checks workflow green on that commit.
+2. Picks the version and build. `VERSION` bumps the latest `vX.Y.Z` tag:
+   minor when a commit since that tag is a `feat`, patch otherwise. `BUILD` is
+   the published appcast's highest build + 1.
+3. Drafts user-facing notes from the commit subjects with `claude -p`, or
+   lists the merged PRs when claude is unavailable, then adds the usual
+   "Built from" and "Sparkle auto-update" footer (`dist/notes-vX.Y.Z.md`).
+4. Makes `dist/releases/` mirror the published feed. It copies in the live
+   appcast, downloads any published zip that is missing, and moves any local
+   zip that was never uploaded to `dist/unpublished/`.
+5. Runs `make release`, then creates `vX.Y.Z` as a draft, runs
+   `make publish`, and publishes the draft as Latest.
+6. Checks that the live appcast lists the new build and that its zip
+   resolves.
+
+Nothing leaves the machine before step 5, so Ctrl-C during the build or
+notarization aborts cleanly. You can override the defaults with
+`NITPICK_BUMP=major|minor|patch`, `NITPICK_VERSION=X.Y.Z` or
+`NITPICK_NOTES_FILE=notes.md`. `NITPICK_SHIP_DRY_RUN=1 make ship` shows the
+plan and the notes, and builds nothing.
+
+## Cutting a release by hand
 
 ```sh
 make release VERSION=1.1.0 BUILD=3
