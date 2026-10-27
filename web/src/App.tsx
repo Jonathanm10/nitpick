@@ -40,12 +40,14 @@ export function App() {
   }, [session, state?.build])
 
   /**
-   * Accepted on home and in a session alike. While work runs the drop bounces
-   * with the busy message. The guard doesn't check the file first: a stray
-   * non-Build over unfiled work confirms, then fails with the ingest error and
-   * leaves the session alone.
+   * Accepted on home and in a session alike, once the open session is known:
+   * until then its unfiled Findings can't be counted for the guard. While work
+   * runs the drop bounces with the busy message. The guard doesn't check the
+   * file first: a stray non-Build over unfiled work confirms, then fails with
+   * the ingest error and leaves the session alone.
    */
   function takeBuild(file: File) {
+    if (state === undefined) return
     if (model.busy.current) {
       model.reportBusyDrop()
     } else if (unfiled > 0) {
@@ -104,7 +106,7 @@ export function App() {
             <BuildDropZone
               build={state?.build}
               isDragging={isDragging}
-              disabled={isBusy}
+              disabled={isBusy || state === undefined}
               onChoose={takeBuild}
             />
             {host.status === "notReady" ? (
