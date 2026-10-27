@@ -21,3 +21,11 @@ export interface FindingAssignee {
   readonly login: string
   readonly fullName: string
 }
+
+/**
+ * The tag a filed Finding of this Type carries, created on first use like
+ * `design-review` and queried alongside it.
+ */
+export function findingTypeTagName(type: FindingType): string {
+  return `nitpick-type:${type}`
+}
