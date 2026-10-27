@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { parseEnv } from "node:util"
+import { YouTrackCredentials } from "@nitpick/core"
 
 export interface ServerConfig {
   /**
@@ -12,6 +13,13 @@ export interface ServerConfig {
   readonly port: number
   /** Where the server keeps its data, from Review Session storage on. */
   readonly dataDirectory: string
+  /**
+   * The one YouTrack instance and token the server reads projects and files
+   * with until sign-in exists (issue 10). Undefined when neither key is set.
+   * The token sits in the credentials' private field, so logging the config
+   * never prints it.
+   */
+  readonly youTrack: YouTrackCredentials | undefined
 }
 
 export const defaultPort = 4870
@@ -41,7 +49,24 @@ export function loadConfig(
       value("NITPICK_DATA_DIR") ??
         join(homedir(), "Library", "Application Support", "nitpick-server")
     ),
+    youTrack: youTrackCredentials(
+      value("NITPICK_YOUTRACK_URL"),
+      value("NITPICK_YOUTRACK_TOKEN")
+    ),
   }
+}
+
+function youTrackCredentials(
+  url: string | undefined,
+  token: string | undefined
+): YouTrackCredentials | undefined {
+  if (url === undefined && token === undefined) return undefined
+  if (url === undefined || token === undefined) {
+    throw new Error(
+      "NITPICK_YOUTRACK_URL and NITPICK_YOUTRACK_TOKEN must be set together."
+    )
+  }
+  return new YouTrackCredentials(url, token)
 }
 
 function parsePort(value: string | undefined): number {

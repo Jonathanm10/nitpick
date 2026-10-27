@@ -1,6 +1,9 @@
+import type { Build } from "@nitpick/core"
+import { appBundlePath } from "../buildIngestion.ts"
 import {
   SubprocessFailure,
   type SubprocessCommand,
+  type SubprocessResult,
   type SubprocessRunner,
 } from "../subprocess.ts"
 import type { SimulatorDevice } from "./DeviceHost.ts"
@@ -32,15 +35,77 @@ export class MalformedDeviceList extends Error {
 export async function listSimulatorDevices(
   runner: SubprocessRunner
 ): Promise<SimulatorDevice[]> {
-  const result = await runner.run(listDevicesCommand)
-  if (result.exitCode !== 0) {
+  const result = await runRequiringSuccess(runner, listDevicesCommand)
+  return parseDeviceList(result.standardOutput.toString("utf8"))
+}
+
+/** `launchBuild` was asked to boot a device whose OS runtime is missing. */
+export class RuntimeUnavailable extends Error {
+  constructor(device: SimulatorDevice) {
+    super(
+      `${device.name} can't be booted: its ${device.osName} simulator runtime isn't installed on the Device Host. Ask whoever runs the Device Host to install it.`
+    )
+    this.name = "RuntimeUnavailable"
+  }
+}
+
+/**
+ * Boots the device, installs the Build and launches it (ADR-0002). Nobody
+ * sits at the Device Host, so no Simulator window is brought forward: the
+ * page shows the device. nitpick never touches the device's accessibility
+ * state (ADR-0009); it reads it back at capture.
+ */
+export async function launchBuild(
+  runner: SubprocessRunner,
+  build: Build,
+  device: SimulatorDevice
+): Promise<void> {
+  // The picker already greys such a device out; refusing here keeps the
+  // invariant for a stale selection, with the runtime story instead of an
+  // obscure boot error.
+  if (!device.isRuntimeAvailable) throw new RuntimeUnavailable(device)
+
+  // Exit 149: "Unable to boot device in current state: Booted". Launching
+  // onto a booted device is normal, not a failure.
+  await runRequiringSuccess(runner, simctl("boot", device.udid), [0, 149])
+  // `simctl boot` returns while the device may still be booting; bootstatus
+  // -b blocks until it is usable, and returns at once for a booted device.
+  await runRequiringSuccess(runner, simctl("bootstatus", device.udid, "-b"))
+  await runRequiringSuccess(
+    runner,
+    simctl("install", device.udid, appBundlePath(build))
+  )
+  await runRequiringSuccess(
+    runner,
+    simctl("launch", device.udid, build.identity.bundleID)
+  )
+}
+
+function simctl(...simctlArguments: string[]): SubprocessCommand {
+  return {
+    executablePath: "/usr/bin/xcrun",
+    arguments: ["simctl", ...simctlArguments],
+  }
+}
+
+/**
+ * Runs a command through the subprocess seam and turns a disallowed exit
+ * code into a SubprocessFailure carrying the command and its stderr.
+ */
+export async function runRequiringSuccess(
+  runner: SubprocessRunner,
+  command: SubprocessCommand,
+  allowedExitCodes: ReadonlyArray<number> = [0]
+): Promise<SubprocessResult> {
+  const result = await runner.run(command)
+  if (!allowedExitCodes.includes(result.exitCode)) {
     throw new SubprocessFailure(
-      listDevicesCommand,
+      command,
       result.exitCode,
       result.standardError.toString("utf8")
     )
   }
-  return parseDeviceList(result.standardOutput.toString("utf8"))
+  return result
 }
 
 export function parseDeviceList(json: string): SimulatorDevice[] {
