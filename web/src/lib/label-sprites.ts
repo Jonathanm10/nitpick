@@ -11,7 +11,13 @@ import {
 } from "@nitpick/core"
 
 // A sprite's query names its pixels, so each one loads once per page.
-const sprites = new Map<string, HTMLImageElement | "loading">()
+const sprites = new Map<
+  string,
+  {
+    image?: HTMLImageElement
+    readonly loading: Promise<HTMLImageElement>
+  }
+>()
 
 /**
  * Draws `annotations` in stacking order as the server flattens them: labels
@@ -50,20 +56,26 @@ function labelSprite(
   onLoaded: () => void
 ): HTMLImageElement | undefined {
   const url = `/api/label-sprite?${query}`
-  const cached = sprites.get(url)
-  if (cached instanceof HTMLImageElement) return cached
-  if (cached === undefined) {
-    sprites.set(url, "loading")
+  let sprite = sprites.get(url)
+  if (sprite === undefined) {
     const image = new Image()
     image.src = url
-    image.decode().then(
-      () => {
-        sprites.set(url, image)
-        onLoaded()
+    const entry: {
+      image?: HTMLImageElement
+      loading: Promise<HTMLImageElement>
+    } = { loading: image.decode().then(() => image) }
+    entry.loading.then(
+      (loaded) => {
+        entry.image = loaded
       },
       // The text stands in; a later draw asks again.
       () => sprites.delete(url)
     )
+    sprites.set(url, entry)
+    sprite = entry
   }
+  if (sprite.image !== undefined) return sprite.image
+  // Every surface that drew the text redraws, a reopened one included.
+  sprite.loading.then(onLoaded, () => {})
   return undefined
 }
