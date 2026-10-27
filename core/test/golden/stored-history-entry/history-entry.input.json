@@ -1,0 +1,52 @@
+{
+  "historyEntry" : {
+    "build" : {
+      "buildNumber" : "421",
+      "bundleID" : "ch.liip.reviewme",
+      "version" : "2.1.0"
+    },
+    "findings" : [
+      {
+        "description" : "The primary button is #FF0000, the design says #E64545.",
+        "designReference" : "https://www.figma.com/file/abc123/ReviewMe",
+        "deviceContext" : {
+          "accessibilitySettings" : [
+            "Dynamic Type XL",
+            "Increase Contrast"
+          ],
+          "deviceModel" : "iPhone 17 Pro",
+          "osName" : "iOS 26.4"
+        },
+        "issue" : {
+          "idReadable" : "RM-421",
+          "url" : "https://youtrack.example.com/yt/issue/RM-421"
+        },
+        "summary" : "Button color is off"
+      },
+      {
+        "description" : "",
+        "deviceContext" : {
+          "accessibilitySettings" : [
+
+          ],
+          "deviceModel" : "iPhone 17 Pro",
+          "osName" : "iOS 26.4"
+        },
+        "issue" : {
+          "idReadable" : "RM-422",
+          "url" : "https://youtrack.example.com/yt/issue/RM-422"
+        },
+        "summary" : "Label truncates"
+      }
+    ],
+    "project" : {
+      "id" : "0-12",
+      "name" : "ReviewMe",
+      "shortName" : "RM"
+    },
+    "startedAt" : {
+      "iso8601" : "2026-07-04T09:15:32.473Z",
+      "secondsSinceReferenceDate" : 804849332.4729061
+    }
+  }
+}

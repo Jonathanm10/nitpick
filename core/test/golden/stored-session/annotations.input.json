@@ -1,0 +1,122 @@
+{
+  "session" : {
+    "build" : {
+      "appBundleURL" : "file:///tmp/ReviewMe.app/",
+      "identity" : {
+        "buildNumber" : "421",
+        "bundleID" : "ch.liip.reviewme",
+        "version" : "2.1.0"
+      }
+    },
+    "designReference" : "https://www.figma.com/file/sess42/ReviewMe",
+    "project" : {
+      "id" : "0-12",
+      "name" : "ReviewMe",
+      "shortName" : "RM"
+    },
+    "startedAt" : {
+      "iso8601" : "2026-07-04T09:15:32.473Z",
+      "secondsSinceReferenceDate" : 804849332.4729061
+    },
+    "tray" : [
+      {
+        "filingProgress" : {
+          "state" : "notStarted"
+        },
+        "finding" : {
+          "annotations" : [
+            {
+              "color" : "red",
+              "kind" : "pen",
+              "points" : [
+                {
+                  "x" : 60,
+                  "y" : 120
+                },
+                {
+                  "x" : 90.5,
+                  "y" : 180.25
+                },
+                {
+                  "x" : 140,
+                  "y" : 150
+                }
+              ]
+            },
+            {
+              "color" : "yellow",
+              "from" : {
+                "x" : 240,
+                "y" : 400
+              },
+              "kind" : "arrow",
+              "to" : {
+                "x" : 120.75,
+                "y" : 300
+              }
+            },
+            {
+              "color" : "green",
+              "kind" : "rectangle",
+              "rect" : {
+                "height" : 160,
+                "width" : 240,
+                "x" : 60,
+                "y" : 500
+              }
+            },
+            {
+              "at" : {
+                "x" : 100,
+                "y" : 700
+              },
+              "color" : "blue",
+              "kind" : "label",
+              "text" : "2pt off — 8/10 \"tight\""
+            },
+            {
+              "color" : "black",
+              "kind" : "pen",
+              "points" : [
+                {
+                  "x" : -4,
+                  "y" : 12
+                },
+                {
+                  "x" : 10,
+                  "y" : -3.5
+                }
+              ]
+            },
+            {
+              "color" : "white",
+              "kind" : "rectangle",
+              "rect" : {
+                "height" : 12,
+                "width" : 33.25,
+                "x" : 0.5,
+                "y" : 0.5
+              }
+            }
+          ],
+          "description" : "Spacing is 2pt off — compare with \"Header\".\nSee the second row too.",
+          "designReference" : "https://www.figma.com/design/abc123/ReviewMe?node-id=12-34",
+          "designSnapshots" : [
+
+          ],
+          "deviceContext" : {
+            "accessibilitySettings" : [
+              "Dynamic Type AX2",
+              "Dark Mode"
+            ],
+            "deviceModel" : "iPad Pro 13-inch (M4)",
+            "osName" : "iOS 26.4"
+          },
+          "summary" : "Header spacing is off",
+          "type" : "bug"
+        },
+        "id" : "00000000-0000-4000-8000-000000000010"
+      }
+    ]
+  }
+}

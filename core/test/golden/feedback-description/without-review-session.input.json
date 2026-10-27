@@ -1,0 +1,10 @@
+{
+  "description" : "After capturing, the summary field is not focused.",
+  "environment" : {
+    "macOS" : "Version 26.1 (Build 25B78)",
+    "nitpick" : "1.4.0 (57)",
+    "xcode" : "26.1 (17B55)"
+  },
+  "kind" : "bug",
+  "title" : "Tray loses focus after capture"
+}
