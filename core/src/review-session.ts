@@ -257,12 +257,12 @@ export function issueDescription(
 }
 
 /**
- * Swift's `.whitespacesAndNewlines`: Unicode spaces, tab, and U+000A–U+000D,
- * U+0085, U+2028 and U+2029. Unlike JS's `trim`, it keeps U+FEFF and
- * trims U+0085.
+ * Swift's `.whitespacesAndNewlines`: Unicode spaces (Zs), tab, U+000A–U+000D,
+ * U+0085, U+200B, U+2028 and U+2029. Unlike JS's `trim`, it trims U+0085 and
+ * U+200B and keeps U+FEFF.
  */
 const edgeWhitespace =
-  /^[\p{Zs}\t\n\v\f\r\u0085\u2028\u2029]+|[\p{Zs}\t\n\v\f\r\u0085\u2028\u2029]+$/gu
+  /^[\p{Zs}\t\n\v\f\r\u0085\u200b\u2028\u2029]+|[\p{Zs}\t\n\v\f\r\u0085\u200b\u2028\u2029]+$/gu
 
 function trimWhitespaceAndNewlines(text: string): string {
   return text.replace(edgeWhitespace, "")

@@ -66,6 +66,39 @@ describe("Session tray and file-all", () => {
     expect(isPristine(item(session, id))).toBe(true)
   })
 
+  // The same case over every scalar of Swift's .whitespacesAndNewlines, as
+  // probed with swift on macOS 27, which JS's trim doesn't match exactly.
+  test.each(
+    [
+      0x9, 0xa, 0xb, 0xc, 0xd, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x2001, 0x2002,
+      0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a, 0x200b,
+      0x2028, 0x2029, 0x202f, 0x205f, 0x3000,
+    ].map((scalar) => [
+      scalar.toString(16).toUpperCase().padStart(4, "0"),
+      scalar,
+    ])
+  )(
+    "whitespace-only summary and description still count as pristine (U+%s)",
+    (_hex, scalar) => {
+      const space = String.fromCodePoint(scalar)
+      const { session, id } = addFinding(
+        fixtures.session,
+        fixtures.finding({ summary: space, description: space })
+      )
+
+      expect(isPristine(item(session, id))).toBe(true)
+    }
+  )
+
+  test("a summary of U+FEFF alone is not whitespace to Swift", () => {
+    const { session, id } = addFinding(
+      fixtures.session,
+      fixtures.finding({ summary: "\ufeff", description: "" })
+    )
+
+    expect(isPristine(item(session, id))).toBe(false)
+  })
+
   test("Esc keeps a Finding that carries only a pasted Design Snapshot", () => {
     const { session: added, id } = addFinding(
       fixtures.session,
