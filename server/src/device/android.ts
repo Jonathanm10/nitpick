@@ -279,13 +279,14 @@ export async function bootEmulator(
   options: BootOptions = {}
 ): Promise<string> {
   if (!device.isRuntimeAvailable) throw new RuntimeUnavailable(device)
-  const wait =
-    options.wait ??
-    ((milliseconds) =>
-      new Promise((resolve) => setTimeout(resolve, milliseconds)))
+  const wait = options.wait ?? sleep
   const deadline =
     (options.timeoutMilliseconds ?? bootTimeoutMilliseconds) / pollMilliseconds
   let serial = (await runningEmulators(runner, sdk)).get(device.udid)
+  // An emulator restored from its snapshot reports the boot complete at
+  // once, then drops adb for a moment: one it starts has to look booted on
+  // two polls in a row.
+  const healthyPollsNeeded = serial === undefined ? 2 : 1
   if (serial === undefined) {
     starter.start({
       executablePath: sdk.emulator,
@@ -298,23 +299,65 @@ export async function bootEmulator(
       ],
     })
   }
+  let healthyPolls = 0
   for (let poll = 0; poll < deadline; poll++) {
     serial ??= (await runningEmulators(runner, sdk)).get(device.udid)
-    if (serial !== undefined) {
-      const booted = await runner.run(
-        adb(sdk, serial, "shell", "getprop", "sys.boot_completed")
-      )
-      if (
-        booted.exitCode === 0 &&
-        String(booted.standardOutput).trim() === "1"
-      ) {
-        return serial
-      }
+    healthyPolls =
+      serial !== undefined && (await isBooted(runner, sdk, serial))
+        ? healthyPolls + 1
+        : 0
+    if (serial !== undefined && healthyPolls >= healthyPollsNeeded) {
+      return serial
     }
     await wait(pollMilliseconds)
   }
   if (serial !== undefined) await shutdownEmulator(runner, sdk, serial)
   throw new EmulatorBootTimedOut(device)
+}
+
+/** Android says the boot is complete, and its package manager answers. */
+async function isBooted(
+  runner: SubprocessRunner,
+  sdk: AndroidSDK,
+  serial: string
+): Promise<boolean> {
+  const completed = await runner.run(
+    adb(sdk, serial, "shell", "getprop", "sys.boot_completed")
+  )
+  if (
+    completed.exitCode !== 0 ||
+    String(completed.standardOutput).trim() !== "1"
+  ) {
+    return false
+  }
+  const framework = await runner.run(
+    adb(sdk, serial, "shell", "pm", "path", "android")
+  )
+  return (
+    framework.exitCode === 0 &&
+    String(framework.standardOutput).startsWith("package:")
+  )
+}
+
+const installRetries = 2
+const installRetryMilliseconds = 2_000
+
+/** adb lost the device, as opposed to Android refusing the install. */
+function isTransientADBFailure(result: {
+  readonly exitCode: number
+  readonly standardOutput: Buffer
+  readonly standardError: Buffer
+}): boolean {
+  return (
+    result.exitCode !== 0 &&
+    /device offline|Error: closed|device '[^']*' not found|no devices\/emulators found/.test(
+      `${result.standardOutput}${result.standardError}`
+    )
+  )
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 /** Stops a running emulator, as closing its window would. */
@@ -346,12 +389,22 @@ export async function installAndLaunch(
   runner: SubprocessRunner,
   sdk: AndroidSDK,
   serial: string,
-  apk: { readonly path: string; readonly packageID: string }
+  apk: { readonly path: string; readonly packageID: string },
+  { wait = sleep }: Pick<BootOptions, "wait"> = {}
 ): Promise<void> {
   if (!packageName.test(apk.packageID))
     throw new NoLauncherActivity(apk.packageID)
   const install = adb(sdk, serial, "install", "-r", "-t", "-d", apk.path)
-  const installed = await runner.run(install)
+  // A just-booted emulator can still drop adb for a moment.
+  let installed = await runner.run(install)
+  for (
+    let retry = 0;
+    retry < installRetries && isTransientADBFailure(installed);
+    retry++
+  ) {
+    await wait(installRetryMilliseconds)
+    installed = await runner.run(install)
+  }
   if (installed.exitCode !== 0) {
     const output = `${installed.standardOutput}${installed.standardError}`
     if (

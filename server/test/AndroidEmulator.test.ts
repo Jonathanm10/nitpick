@@ -219,29 +219,65 @@ describe("the Android health check", () => {
 describe("booting", () => {
   const stopped = { ...emulatorDevice, isBooted: false, serial: undefined }
 
-  test("starts the AVD headless, then waits for its serial and Android's boot", async () => {
-    const sdk = sdkWith([proof])
+  /**
+   * The emulator over time: `adb devices` lists it from the `listed`th
+   * call, and each readiness poll answers the next of `polls` (the boot flag
+   * and whether the package manager answers), the last one repeating.
+   */
+  function emulatorBooting({
+    listed = 1,
+    polls,
+  }: {
+    listed?: number
+    polls: ReadonlyArray<{ booted: boolean; packageManager: boolean }>
+  }) {
     const runner = new FakeSubprocessRunner()
+    let listings = 0
+    let poll = -1
+    runner.run = async (command) => {
+      runner.executedCommands.push(command)
+      const line = command.arguments.join(" ")
+      const answer = (standardOutput: string, exitCode = 0) => ({
+        exitCode,
+        standardOutput: Buffer.from(standardOutput),
+        standardError: Buffer.alloc(0),
+      })
+      if (line === "devices") {
+        return answer(
+          listings++ >= listed - 1
+            ? "List of devices attached\nemulator-5554\tdevice\n"
+            : "List of devices attached\n\n"
+        )
+      }
+      if (line.endsWith("emu avd name"))
+        return answer("nitpick-proof-13\r\nOK\r\n")
+      if (line.endsWith("getprop sys.boot_completed")) {
+        poll = Math.min(poll + 1, polls.length - 1)
+        return answer(polls[poll]!.booted ? "1\n" : "\n")
+      }
+      if (line.endsWith("pm path android")) {
+        return polls[poll]!.packageManager
+          ? answer("package:/system/framework/framework-res.apk\n")
+          : answer("", 255)
+      }
+      return answer("OK\r\n")
+    }
+    return runner
+  }
+
+  const ready = { booted: true, packageManager: true }
+
+  test("starts the AVD headless, then waits for its serial and a boot that holds on two polls", async () => {
+    const runner = emulatorBooting({
+      listed: 2,
+      polls: [{ booted: false, packageManager: false }, ready, ready],
+    })
     const started: SubprocessCommand[] = []
-    runner.enqueue({
-      exitCode: 0,
-      standardOutput: "List of devices attached\n\n",
-    })
-    runner.enqueue({
-      exitCode: 0,
-      standardOutput: "List of devices attached\nemulator-5554\tdevice\n",
-    })
-    runner.enqueue({
-      exitCode: 0,
-      standardOutput: "nitpick-proof-13\r\nOK\r\n",
-    })
-    runner.enqueue({ exitCode: 0, standardOutput: "\n" })
-    runner.enqueue({ exitCode: 0, standardOutput: "1\n" })
 
     const serial = await bootEmulator(
       runner,
       { start: (command) => started.push(command) },
-      sdk,
+      sdkWith([proof]),
       stopped,
       { wait: async () => {} }
     )
@@ -250,58 +286,83 @@ describe("booting", () => {
     expect(started.map(commandLine)).toEqual([
       "emulator -avd nitpick-proof-13 -no-window -no-audio -no-boot-anim",
     ])
-    expect(runner.executedCommands.map(commandLine).slice(3)).toEqual([
-      "adb -s emulator-5554 shell getprop sys.boot_completed",
-      "adb -s emulator-5554 shell getprop sys.boot_completed",
-    ])
+    expect(
+      runner.executedCommands
+        .map(commandLine)
+        .filter((line) => line.includes("boot_completed"))
+    ).toHaveLength(3)
   })
 
-  test("a running AVD isn't started again", async () => {
-    const runner = new FakeSubprocessRunner()
-    runner.enqueue({
-      exitCode: 0,
-      standardOutput: "List of devices attached\nemulator-5554\tdevice\n",
+  test("a snapshot that reports the boot at once, then drops adb, isn't booted yet", async () => {
+    const runner = emulatorBooting({
+      listed: 2,
+      polls: [ready, { booted: false, packageManager: false }, ready, ready],
     })
-    runner.enqueue({
-      exitCode: 0,
-      standardOutput: "nitpick-proof-13\r\nOK\r\n",
+
+    await bootEmulator(runner, { start: () => {} }, sdkWith([proof]), stopped, {
+      wait: async () => {},
     })
-    runner.enqueue({ exitCode: 0, standardOutput: "1\n" })
+
+    expect(
+      runner.executedCommands
+        .map(commandLine)
+        .filter((line) => line.includes("boot_completed"))
+    ).toHaveLength(4)
+  })
+
+  test("a package manager that doesn't answer yet isn't a boot", async () => {
+    const runner = emulatorBooting({
+      listed: 2,
+      polls: [
+        { booted: true, packageManager: false },
+        { booted: true, packageManager: false },
+        ready,
+        ready,
+      ],
+    })
+
+    await bootEmulator(runner, { start: () => {} }, sdkWith([proof]), stopped, {
+      wait: async () => {},
+    })
+
+    expect(
+      runner.executedCommands
+        .map(commandLine)
+        .filter((line) => line.includes("pm path android"))
+    ).toHaveLength(4)
+  })
+
+  test("a running AVD isn't started again, and one healthy poll will do", async () => {
+    const runner = emulatorBooting({ polls: [ready] })
     const started: SubprocessCommand[] = []
 
     await bootEmulator(
       runner,
       { start: (command) => started.push(command) },
       sdkWith([proof]),
-      stopped
+      stopped,
+      { wait: async () => {} }
     )
 
     expect(started).toEqual([])
+    expect(
+      runner.executedCommands
+        .map(commandLine)
+        .filter((line) => line.includes("boot_completed"))
+    ).toHaveLength(1)
   })
 
   test("an emulator that doesn't finish booting is shut down, and the Reviewer told", async () => {
-    const runner = new FakeSubprocessRunner()
-    runner.enqueue({
-      exitCode: 0,
-      standardOutput: "List of devices attached\nemulator-5554\tdevice\n",
+    const runner = emulatorBooting({
+      polls: [{ booted: false, packageManager: false }],
     })
-    runner.enqueue({
-      exitCode: 0,
-      standardOutput: "nitpick-proof-13\r\nOK\r\n",
-    })
-    for (let poll = 0; poll < 3; poll++)
-      runner.enqueue({ exitCode: 0, standardOutput: "\n" })
-    runner.enqueue({ exitCode: 0, standardOutput: "OK\r\n" })
 
     const boot = bootEmulator(
       runner,
       { start: () => {} },
       sdkWith([proof]),
       stopped,
-      {
-        wait: async () => {},
-        timeoutMilliseconds: 3_000,
-      }
+      { wait: async () => {}, timeoutMilliseconds: 3_000 }
     )
 
     await expect(boot).rejects.toThrow(EmulatorBootTimedOut)
@@ -387,6 +448,33 @@ describe("install and launch", () => {
     expect(
       runner.executedCommands.map((command) => command.arguments[2])
     ).toEqual(["install", "uninstall", "install", "shell", "shell"])
+  })
+
+  test("adb losing a just-booted emulator for a moment is retried", async () => {
+    const runner = new FakeSubprocessRunner()
+    runner.enqueue({
+      exitCode: 1,
+      standardError:
+        "adb: failed to run abb_exec. Error: closed\nadb: connect error for write: device offline\n",
+    })
+    runner.enqueue({ exitCode: 0, standardOutput: "Success\n" })
+    runner.enqueue({
+      exitCode: 0,
+      standardOutput: "dev.nitpick.fixture.smokedroid/.MainActivity\n",
+    })
+    runner.enqueue({ exitCode: 0, standardOutput: "Status: ok\n" })
+    const waits: number[] = []
+
+    await installAndLaunch(runner, sdkWith([]), "emulator-5554", apk, {
+      wait: async (milliseconds) => {
+        waits.push(milliseconds)
+      },
+    })
+
+    expect(
+      runner.executedCommands.map((command) => command.arguments[2])
+    ).toEqual(["install", "install", "shell", "shell"])
+    expect(waits).toEqual([2_000])
   })
 
   test("any other install failure stops the launch", async () => {
