@@ -11,6 +11,8 @@
 #   host.sh restore <backup>   put a backup (a folder, or its date) back
 #   host.sh android            install or update what Android reviews need,
 #                              then restart the server
+#   host.sh tls <address>...   make a certificate for the addresses and host
+#                              names Reviewers open, for HTTPS
 #
 # Where things live; each environment variable overrides its default:
 #   NITPICK_CHECKOUT     ~/nitpick                   git checkout of main
@@ -67,7 +69,7 @@ fail() {
 }
 
 usage() {
-	fail "usage: host.sh update [ref] | status | backup | restore <backup> | android"
+	fail "usage: host.sh update [ref] | status | backup | restore <backup> | android | tls <address>..."
 }
 
 # --- update ------------------------------------------------------------------
@@ -310,20 +312,24 @@ stop_agent() {
 	done
 }
 
+scheme() { if [ -n "$(value tlsCertificateFile)" ]; then printf https; else printf http; fi; }
+
 # Over loopback when the server listens on every address.
 base_url() {
 	case $(value host) in
-	0.0.0.0 | :: | '') printf 'http://127.0.0.1:%s' "$(value port)" ;;
-	*:*) printf 'http://[%s]:%s' "$(value host)" "$(value port)" ;;
-	*) printf 'http://%s:%s' "$(value host)" "$(value port)" ;;
+	0.0.0.0 | :: | '') printf '%s://127.0.0.1:%s' "$(scheme)" "$(value port)" ;;
+	*:*) printf '%s://[%s]:%s' "$(scheme)" "$(value host)" "$(value port)" ;;
+	*) printf '%s://%s:%s' "$(scheme)" "$(value host)" "$(value port)" ;;
 	esac
 }
 
-# The page loads, and the API answers 401 until someone signs in.
+# The page loads, and the API answers 401 until someone signs in. The
+# certificate names what Reviewers open, not loopback, so curl doesn't
+# check it here; status checks its dates.
 answers() {
-	page=$(curl -fsS --max-time 3 "$(base_url)/" 2>/dev/null) || return 1
+	page=$(curl -fsSk --max-time 3 "$(base_url)/" 2>/dev/null) || return 1
 	case $page in *'<div id="root">'*) ;; *) return 1 ;; esac
-	[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$(base_url)/api/me")" = 401 ]
+	[ "$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "$(base_url)/api/me")" = 401 ]
 }
 
 wait_until_serving() {
@@ -349,11 +355,22 @@ status() {
 		say "Server: NOT RUNNING. Last exit: $(printf '%s\n' "$service" | sed -n 's/^	last exit code = //p'). See $logs/server.log."
 		problems=$((problems + 1))
 	fi
+	label=$(scheme | tr '[:lower:]' '[:upper:]')
 	if answers; then
-		say "HTTP: the page and the API answer on port $(value port)"
+		say "$label: the page and the API answer on port $(value port)"
 	else
-		say "HTTP: NOT ANSWERING on port $(value port)"
+		say "$label: NOT ANSWERING on port $(value port)"
 		problems=$((problems + 1))
+	fi
+	certificate=$(value tlsCertificateFile)
+	if [ -n "$certificate" ]; then
+		expiry=$(openssl x509 -in "$certificate" -noout -enddate 2>/dev/null | sed 's/^notAfter=//') || expiry=
+		if openssl x509 -in "$certificate" -noout -checkend $((30 * 86400)) >/dev/null 2>&1; then
+			say "Certificate: valid until $expiry"
+		else
+			say "Certificate: EXPIRES WITHIN 30 DAYS, or can't be read: ${expiry:-$certificate}. Make a new one (docs/operations.md, HTTPS)."
+			problems=$((problems + 1))
+		fi
 	fi
 	if [ -n "$pid" ]; then
 		listening=$(server_sockets "$pid")
@@ -640,6 +657,73 @@ install_ffmpeg() {
 	ln -sfn "ffmpeg-$build" "$runtime/ffmpeg"
 }
 
+# --- tls ---------------------------------------------------------------------
+
+# A certificate for the addresses and host names Reviewers open, from a CA
+# made for it alone: the CA may sign only those names, and its key is gone
+# once it has signed, so the CA each Reviewer trusts vouches for nothing
+# else. Apple accepts at most 825 days for a server certificate.
+tls() {
+	[ $# -ge 1 ] || usage
+	folder=$(dirname "$config")/tls
+	[ ! -e "$folder" ] ||
+		fail "$folder exists already. Reviewers trust its ca.crt, and a new one has each of them trust it again: to make one, delete the folder, then run this again."
+	names=
+	permitted=
+	for name in "$@"; do
+		case $name in
+		*[!0-9.]*)
+			case $name in *[!A-Za-z0-9.-]* | .* | *.) fail "not an IPv4 address or a host name: $name" ;; esac
+			names="$names,DNS:$name"
+			permitted="$permitted,permitted;DNS:$name"
+			;;
+		*)
+			names="$names,IP:$name"
+			permitted="$permitted,permitted;IP:$name/255.255.255.255"
+			;;
+		esac
+	done
+	work=$(mktemp -d)
+	trap 'rm -rf "$work"' EXIT
+	cat >"$work/openssl.cnf" <<EOF
+[req]
+distinguished_name = subject
+prompt = no
+[subject]
+O = nitpick
+CN = nitpick CA for $1, $(date +%Y-%m-%d)
+[ca]
+basicConstraints = critical,CA:TRUE,pathlen:0
+keyUsage = critical,keyCertSign
+nameConstraints = critical$permitted
+subjectKeyIdentifier = hash
+[server]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = serverAuth
+subjectAltName = ${names#,}
+authorityKeyIdentifier = keyid
+EOF
+	(
+		cd "$work"
+		umask 077
+		openssl ecparam -name prime256v1 -genkey -noout -out ca.key
+		openssl ecparam -name prime256v1 -genkey -noout -out server.key
+		openssl req -new -x509 -config openssl.cnf -extensions ca -key ca.key -sha256 -days 825 -out ca.crt
+		openssl req -new -key server.key -subj '/O=nitpick/CN=nitpick server' -out server.csr
+		openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -set_serial "0x$(openssl rand -hex 16)" \
+			-sha256 -days 825 -extfile openssl.cnf -extensions server -out server.crt
+	) >"$work/openssl.log" 2>&1 || fail "openssl couldn't make the certificate: $(cat "$work/openssl.log")"
+	mkdir -m 700 "$folder"
+	mv "$work/ca.crt" "$work/server.crt" "$work/server.key" "$folder/"
+	say "Made a certificate for $*, valid until $(openssl x509 -in "$folder/server.crt" -noout -enddate | sed 's/^notAfter=//')."
+	say "Each Reviewer trusts $folder/ca.crt once (docs/operations.md, HTTPS). Its SHA-256 fingerprint:"
+	openssl x509 -in "$folder/ca.crt" -noout -fingerprint -sha256 | sed 's/^.*=//'
+	say "To serve HTTPS, set these in $config, then restart the server:"
+	say "NITPICK_TLS_CERT=$folder/server.crt"
+	say "NITPICK_TLS_KEY=$folder/server.key"
+}
+
 main() {
 	exec </dev/null
 	[ $# -ge 1 ] || usage
@@ -651,6 +735,7 @@ main() {
 	backup) backup ;;
 	restore) restore "$@" ;;
 	android) android ;;
+	tls) tls "$@" ;;
 	*) usage ;;
 	esac
 }

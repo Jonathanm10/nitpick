@@ -102,6 +102,25 @@ describe("Server config", () => {
     }
   })
 
+  test("HTTPS takes a certificate and its key together, and plain HTTP neither", () => {
+    const config = loadConfig(
+      {
+        NITPICK_TLS_CERT: "/tls/server.crt",
+        NITPICK_TLS_KEY: "/tls/server.key",
+      },
+      noFile
+    )
+
+    expect(config.tlsCertificateFile).toBe("/tls/server.crt")
+    expect(config.tlsKeyFile).toBe("/tls/server.key")
+    expect(loadConfig({}, noFile).tlsCertificateFile).toBeUndefined()
+    for (const key of ["NITPICK_TLS_CERT", "NITPICK_TLS_KEY"]) {
+      expect(() => loadConfig({ [key]: "/tls/file" }, noFile)).toThrow(
+        "Set both NITPICK_TLS_CERT and NITPICK_TLS_KEY to serve HTTPS, or neither."
+      )
+    }
+  })
+
   test.each(["NITPICK_YOUTRACK_TOKEN", "NITPICK_ACCESS_TOKEN"])(
     "the retired %s is refused, so no token sits in the config for nothing",
     (key) => {
