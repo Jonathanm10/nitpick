@@ -85,12 +85,14 @@ export class DeviceClaims {
    * device another Reviewer is using, and makes room under the cap by
    * shutting down unused booted devices. `devices` is the host's list as
    * the start read it. The claimant's previous device becomes unused.
+   * Answers the rollback for a launch that fails: the claimant keeps their
+   * previous device, if it still runs, and the new one is free again.
    */
   claim(
     claimant: Claimant,
     device: SimulatorDevice,
     devices: ReadonlyArray<SimulatorDevice>
-  ): Promise<void> {
+  ): Promise<() => void> {
     const decided = this.#turn.then(() =>
       this.#claim(claimant, device, devices)
     )
@@ -107,7 +109,7 @@ export class DeviceClaims {
     claimant: Claimant,
     device: SimulatorDevice,
     devices: ReadonlyArray<SimulatorDevice>
-  ): Promise<void> {
+  ): Promise<() => void> {
     const now = this.#now()
     const others = [...this.#claims.values()].filter(
       (claim) =>
@@ -117,40 +119,49 @@ export class DeviceClaims {
     const holder = others.find((claim) => claim.udid === device.udid)
     if (holder !== undefined) throw new DeviceInUse(device, holder.claimant)
 
-    if (this.limit !== undefined && !device.isBooted) {
+    if (this.limit !== undefined) {
       const held = new Set(others.map((claim) => claim.udid))
       // Others' devices count while they boot too, before the list shows it.
+      // The device itself counts whatever the list says: an earlier claim
+      // may have shut it down since the list was read.
       const occupied = new Set([
         ...held,
         ...devices.filter((each) => each.isBooted).map((each) => each.udid),
+        device.udid,
       ])
-      occupied.delete(device.udid)
       const previous = this.#claims.get(claimant.login)?.udid
       const unused = [...occupied]
-        .filter((udid) => !held.has(udid))
+        .filter((udid) => !held.has(udid) && udid !== device.udid)
         // The claimant's own previous device goes first.
         .sort((a, b) => Number(b === previous) - Number(a === previous))
       for (const udid of unused) {
-        if (occupied.size < this.limit) break
+        if (occupied.size <= this.limit) break
         await this.#shutDown(udid)
         occupied.delete(udid)
         this.#dropClaimsOn(udid)
       }
-      if (occupied.size >= this.limit) {
+      if (occupied.size > this.limit) {
         throw new DeviceHostFull(
           others.map((claim) => claim.claimant),
           this.limit
         )
       }
     }
-    this.#claims.set(claimant.login, {
-      udid: device.udid,
-      claimant,
-      lastSeen: now,
-    })
+    // Still there unless its device was shut down for room just now.
+    const kept = this.#claims.get(claimant.login)
+    // A device changes hands only once its holder went idle; their claim
+    // goes with it, or their next request would revive it.
+    this.#dropClaimsOn(device.udid)
+    const claim = { udid: device.udid, claimant, lastSeen: now }
+    this.#claims.set(claimant.login, claim)
+    return () => {
+      if (this.#claims.get(claimant.login) !== claim) return
+      if (kept === undefined) this.#claims.delete(claimant.login)
+      else this.#claims.set(claimant.login, kept)
+    }
   }
 
-  /** A device shut down for room is nobody's any more. */
+  /** A device shut down for room, or taken over, is nobody else's. */
   #dropClaimsOn(udid: string): void {
     for (const [login, claim] of this.#claims) {
       if (claim.udid === udid) this.#claims.delete(login)

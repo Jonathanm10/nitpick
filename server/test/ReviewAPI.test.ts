@@ -490,6 +490,16 @@ describe("The host's cap on booted devices", () => {
     )
   })
 
+  test("a launch that fails gives the device up at once", async () => {
+    const h = await cappedHarness()
+    h.deviceHost.launchFailure = new Error("Failed to install")
+    enqueueProjectsAndSchema(h)
+
+    expect((await startReview(h)).status).toBe(500)
+
+    await h.deviceClaims.claim(noor, iPad, [iPad, iPhone])
+  })
+
   test.each([
     [
       "End review",

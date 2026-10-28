@@ -174,6 +174,62 @@ describe("With a cap of 1", () => {
   })
 })
 
+describe("Racing and failing starts", () => {
+  test("a start that read the list before another one shut its device down can't boot it past the cap", async () => {
+    const { claims: c, shutdowns } = claims(1)
+    // Both read the list while A still ran for nobody.
+    const listed = [device("A", true), device("B")]
+
+    const outcomes = await Promise.allSettled([
+      c.claim(noor, device("B"), listed),
+      c.claim(vera, device("A", true), listed),
+    ])
+
+    expect(shutdowns).toEqual(["A"])
+    expect(outcomes.map((outcome) => outcome.status)).toEqual([
+      "fulfilled",
+      "rejected",
+    ])
+  })
+
+  test("a launch that fails frees the device it claimed", async () => {
+    const { claims: c } = claims(1)
+    const rollback = await c.claim(vera, device("A"), [device("A")])
+
+    rollback()
+
+    await c.claim(noor, device("B"), [device("A"), device("B")])
+  })
+
+  test("a switch that fails keeps the Reviewer's previous device theirs", async () => {
+    const { claims: c } = claims(undefined)
+    await c.claim(vera, device("A"), [device("A")])
+    const rollback = await c.claim(vera, device("B"), [
+      device("A", true),
+      device("B"),
+    ])
+
+    rollback()
+
+    await expect(
+      c.claim(noor, device("A", true), [device("A", true)])
+    ).rejects.toThrow(DeviceInUse)
+    await c.claim(noor, device("B"), [device("A", true), device("B")])
+  })
+
+  test("a device taken over from an idle Reviewer stays its new Reviewer's when the old one comes back", async () => {
+    const { claims: c, shutdowns, advance } = claims(1)
+    await c.claim(vera, device("A"), [device("A")])
+    advance(claimIdleAfter)
+    await c.claim(noor, device("A", true), [device("A", true)])
+
+    c.seen(vera.login)
+
+    await c.claim(noor, device("B"), [device("A", true), device("B")])
+    expect(shutdowns).toEqual(["A"])
+  })
+})
+
 describe("With a cap of 2", () => {
   test("the refusal names everyone using the host", async () => {
     const { claims: c } = claims(2)

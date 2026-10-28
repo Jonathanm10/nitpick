@@ -351,8 +351,16 @@ status() {
 		say "Uptime: $days days (reboot before day 49)"
 	fi
 
-	say "Xcode: $(xcodebuild -version 2>/dev/null | tr '\n' ' ')"
-	say "iOS runtimes: $(xcrun simctl list runtimes 2>/dev/null | sed -n 's/^\(iOS [0-9.]*\) .*/\1/p' | tr '\n' ' ')"
+	xcode=$(xcodebuild -version 2>/dev/null | tr '\n' ' ') || xcode=
+	runtimes=$(xcrun simctl list runtimes 2>/dev/null | grep -v unavailable |
+		sed -n 's/^\(iOS [0-9.]*\) .*/\1/p' | tr '\n' ' ') || runtimes=
+	if [ -z "$xcode" ] || [ -z "$runtimes" ]; then
+		say "Xcode: NOT READY. Xcode: ${xcode:-none}; usable iOS runtimes: ${runtimes:-none}."
+		problems=$((problems + 1))
+	else
+		say "Xcode: $xcode"
+		say "iOS runtimes: $runtimes"
+	fi
 	booted=$(xcrun simctl list devices booted 2>/dev/null | grep -c '(Booted)' || true)
 	say "Booted devices: $booted (cap: $(value maxBootedDevices | sed 's/^$/none/'))"
 	say "Memory: $(memory_pressure -Q 2>/dev/null | sed -n 's/^System-wide memory free percentage: /free /p')"

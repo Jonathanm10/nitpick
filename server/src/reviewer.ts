@@ -249,8 +249,17 @@ export class Reviewer {
       const device = deviceNamed(request.deviceUDID, health.devices)
       const project =
         open?.project ?? (await this.#project(request.projectID, youTrack))
-      await this.#dependencies.deviceClaims.claim(user, device, health.devices)
-      await this.#dependencies.deviceHost.launchBuild(build, device)
+      const rollback = await this.#dependencies.deviceClaims.claim(
+        user,
+        device,
+        health.devices
+      )
+      await this.#dependencies.deviceHost
+        .launchBuild(build, device)
+        .catch((error: unknown) => {
+          rollback()
+          throw error
+        })
       const recentDevices = await this.#recordRecentDevice(device)
       // Non-fatal: an empty schema hides the Editor's controls, and capture
       // and filing proceed regardless (ADR-0008).
@@ -291,8 +300,17 @@ export class Reviewer {
       const deviceHost = this.#dependencies.deviceHost
       const devices = await deviceHost.devices.list()
       const device = deviceNamed(deviceUDID, devices)
-      await this.#dependencies.deviceClaims.claim(user, device, devices)
-      await deviceHost.launchBuild(open.build, device)
+      const rollback = await this.#dependencies.deviceClaims.claim(
+        user,
+        device,
+        devices
+      )
+      await deviceHost
+        .launchBuild(open.build, device)
+        .catch((error: unknown) => {
+          rollback()
+          throw error
+        })
       return { device, recentDevices: await this.#recordRecentDevice(device) }
     })
   }
