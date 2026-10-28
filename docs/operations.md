@@ -19,7 +19,10 @@ account that is logged in at the host's console.
 | The server's config | `~/.config/nitpick/server.env` (mode 0600) |
 | The data: open Review Sessions, History, sign-ins | `NITPICK_DATA_DIR` in the config |
 | Backups, one folder per day | `~/nitpick-backups/<YYYY-MM-DD>` |
-| Logs | `~/Library/Logs/nitpick/server.log` and `backup.log` |
+| Logs | `~/Library/Logs/nitpick/server.log` and `backup.log`, and `android.log` from the last Android setup |
+| For Android: the SDK, its emulator and system image | `~/Library/Android/sdk` |
+| For Android: the AVD Reviewers boot | `~/.android/avd` |
+| For Android: Java for the SDK's tools, and ffmpeg | `~/.nitpick/java` and `~/.nitpick/ffmpeg` |
 | The services: LaunchAgents | `~/Library/LaunchAgents/ch.liip.nitpick.server.plist` and `ch.liip.nitpick.backup.plist` |
 
 - **The server** runs as a LaunchAgent in the console login's GUI session,
@@ -78,11 +81,8 @@ Do this once per Mac, at the Mac.
    SSH key to the account's `~/.ssh/authorized_keys`.
 5. Keep the Mac awake, and have it start again after a power cut:
    `sudo pmset -a sleep 0 disksleep 0 autorestart 1`.
-6. For Android reviews ([ADR-0013](adr/0013-android-on-the-device-host.md)),
-   install the Android SDK with an AVD and build-tools in its default place,
-   `~/Library/Android/sdk`, and an `ffmpeg` with libx264 from Homebrew. The
-   LaunchAgent doesn't pass your shell's `ANDROID_HOME`, so the server reads
-   the default places. Without them, the server still reviews iOS, and the
+6. For Android reviews, run `host.sh android` after the first deploy
+   ([Android](#android)). Without it, the server still reviews iOS, and the
    page says what Android lacks.
 7. If the macOS firewall is on, allow incoming connections for the pinned
    Node after the first deploy. Otherwise the first start waits on a prompt
@@ -148,6 +148,10 @@ problem. It checks:
 - **Uptime:** it warns from day 35 ([Reboots](#reboots-and-the-497-day-bug)).
 - **The host:** Xcode, the installed iOS runtimes, the booted devices
   against the cap, free memory and free disk.
+- **Android:** the server's own check, in the server's environment: the SDK,
+  the emulator, build-tools, an ffmpeg with libx264, and an AVD with its
+  system image. A host never set up for Android says so, and that isn't a
+  problem. A half-installed one is.
 - **Backups:** the newest one. A missing backup, or one older than a day,
   counts as a problem.
 
@@ -243,8 +247,70 @@ counts iOS simulators and Android emulators alike.
   - an emulator: `~/Library/Android/sdk/platform-tools/adb devices`, then
     `~/Library/Android/sdk/platform-tools/adb -s <serial> emu kill`
 
-Measured on the 8 GB mini with one iPhone 17 Pro simulator booted and
-streaming: free memory went from 74% to 54%. Two devices don't fit there.
+Measured on the 8 GB mini, one device booted and streaming:
+
+- an iPhone 17 Pro simulator: free memory went from 74% to 54%
+- the Android AVD: from 76% to 46% (3.6 to 1.9 GB available)
+
+Two devices don't fit there. Switching platforms means shutting one device
+down and booting the other. From the emulator to a simulator, that takes 26
+to 28 s to the first frame, and about 42 s to a simulator that never booted
+before. Meanwhile the host is busy: load near 27, free memory down to 28%.
+
+## Android
+
+Android reviews ([ADR-0013](adr/0013-android-on-the-device-host.md)) need
+the Android SDK with an emulator, a system image, build-tools to read an
+`.apk`, an AVD, and an `ffmpeg` with libx264 for the stream. One command sets
+them all up, without Homebrew or sudo:
+
+```sh
+ssh <host> '~/nitpick/scripts/deploy/host.sh android'
+```
+
+It installs, then restarts the server so it finds them, and ends with the
+server's own Android check. Run it when nobody is reviewing. Running it
+accepts the Android SDK's licenses, as Android Studio's setup does.
+
+| What | Where from | Checked against |
+| --- | --- | --- |
+| Java, for `sdkmanager` and `avdmanager`: the newest Temurin 21 runtime | Adoptium | the SHA-256 Adoptium's API lists |
+| The SDK's command-line tools, to start with | dl.google.com, the zip `host.sh` pins | the SHA-256 developer.android.com lists, pinned in `host.sh` |
+| The latest command-line tools, platform-tools, the emulator, build-tools and the Android system image `host.sh` names | `sdkmanager` | the SDK repository's checksums, by `sdkmanager` |
+| `ffmpeg` with libx264: the newest release of Martin Riedl's static macOS build | ffmpeg.martin-riedl.de | the SHA-256 published beside it; the binary must list libx264 |
+
+- **The AVD** is `Pixel_10`, with 2 GB of RAM: the page shows it as
+  "Pixel 10 — Android 17". `host.sh android` creates it once, and leaves an
+  existing one as it is.
+- **The server finds them** where the LaunchAgent looks: the SDK in its
+  default place, `~/Library/Android/sdk`, and `ffmpeg` on the LaunchAgent's
+  `PATH`. The LaunchAgent passes no `ANDROID_HOME` from your shell.
+- **The first boot is cold:** 29 s from Start review to the review running,
+  and 33 s to the first frame. Shutting the emulator down saves a snapshot,
+  so later boots take about 8 s, and 11 s to the first frame.
+- **Once the emulator runs,** the stream's first frame comes about 1.8 s after
+  the page asks for it. A capture answers in about 0.3 s.
+- **Disk:** about 7 GB for the SDK, and 5.4 GB for the AVD once it has booted
+  (its snapshot and its data). Java and `ffmpeg` add about 0.2 GB.
+- **Memory:** the emulator alone fills the 8 GB host's room for one device.
+  Keep `NITPICK_MAX_BOOTED_DEVICES` at 1 there ([The device cap](#the-device-cap)).
+- **Internet:** the hub downloads its scrcpy server the first time it
+  streams an emulator.
+
+To update Java, the SDK's packages and `ffmpeg`, run `host.sh android`
+again. Do it when nobody is reviewing: it restarts the server, and
+`sdkmanager` may replace the emulator a review runs on. It keeps the AVD.
+
+To start an AVD again from scratch, for example when its data fills up or it
+no longer boots:
+
+1. Shut it down if it runs ([The device cap](#the-device-cap)).
+2. Delete it:
+   `JAVA_HOME=~/.nitpick/java/Contents/Home ~/Library/Android/sdk/cmdline-tools/latest/bin/avdmanager delete avd -n Pixel_10`.
+3. Run `host.sh android`, which creates it again.
+
+The page offers every AVD in `~/.android/avd`, so another one made with
+`avdmanager` shows up too.
 
 ## Xcode, simulator runtime and macOS updates
 

@@ -597,10 +597,7 @@ install_android_packages() {
 	sdk_tool "$sdkmanager" --update
 }
 
-# The AVD Reviewers boot. One that exists already stays as it is. Where
-# avdmanager's defaults differ from Android Studio's, it gets Studio's: the
-# host's GPU, and a hardware keyboard, so typing from the page brings up no
-# on-screen keyboard.
+# The AVD Reviewers boot. One that exists already stays as it is.
 create_avd() {
 	"$android_sdk/emulator/emulator" -list-avds 2>/dev/null | grep -qx "$android_avd" && return 0
 	say "Creating the AVD ${android_avd}…"
@@ -608,10 +605,8 @@ create_avd() {
 		--name "$android_avd" --package "$android_image" --device "$android_avd_profile"
 	avd_config=$HOME/.android/avd/$android_avd.avd/config.ini
 	[ -f "$avd_config" ] || fail "avdmanager made no $avd_config."
-	sed -i '' -e '/^hw\.ramSize=/d' -e '/^hw\.gpu\.enabled=/d' -e '/^hw\.keyboard=/d' \
-		-e '/^avd\.ini\.displayname=/d' "$avd_config"
-	printf '%s\n' "hw.ramSize=$android_avd_ram_mb" hw.gpu.enabled=yes hw.keyboard=yes \
-		"avd.ini.displayname=$android_avd_name" >>"$avd_config"
+	sed -i '' -e '/^hw\.ramSize=/d' -e '/^avd\.ini\.displayname=/d' "$avd_config"
+	printf 'hw.ramSize=%s\navd.ini.displayname=%s\n' "$android_avd_ram_mb" "$android_avd_name" >>"$avd_config"
 }
 
 # ffmpeg with libx264, which serve-emu encodes an emulator's screen with:
