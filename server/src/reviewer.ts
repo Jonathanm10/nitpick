@@ -373,18 +373,15 @@ export class Reviewer {
     } catch (error) {
       failure = error
     }
+    const filed = failure === undefined && recorded !== undefined
+    if (!filed) await this.#store.unmarkFiling().catch(() => {})
+    // The ending and the end of the run publish together, so a retry the
+    // page sends on seeing the ending is never refused as busy.
     const notice = outcome && droppedFieldNotice(outcome.droppedFields)
     const dropped = notice === undefined ? {} : { droppedFieldNotice: notice }
-    if (failure === undefined && recorded !== undefined) {
-      this.#filing = { status: "filed", result: recorded, ...dropped }
-    } else {
-      this.#filing = {
-        status: "failed",
-        error: failureMessage(failure),
-        ...dropped,
-      }
-      await this.#store.unmarkFiling().catch(() => {})
-    }
+    this.#filing = filed
+      ? { status: "filed", result: recorded!, ...dropped }
+      : { status: "failed", error: failureMessage(failure), ...dropped }
     this.#activity = this.#activity.end()
   }
 
