@@ -27,7 +27,8 @@ export interface SubprocessRunner {
  * outlives the request that booted it, as a booted simulator does.
  */
 export interface ProcessStarter {
-  start(command: SubprocessCommand): void
+  /** Starts it, and answers what stops it. */
+  start(command: SubprocessCommand): { stop(): void }
 }
 
 /** A subprocess exited non-zero where the server required success. */
@@ -93,5 +94,15 @@ export const nodeProcessStarter: ProcessStarter = {
     // A start that fails shows as the device never booting.
     child.on("error", () => {})
     child.unref()
+    return {
+      // Its own process group, the emulator's included.
+      stop: () => {
+        try {
+          if (child.pid !== undefined) process.kill(-child.pid, "SIGTERM")
+        } catch {
+          // Already gone.
+        }
+      },
+    }
   },
 }

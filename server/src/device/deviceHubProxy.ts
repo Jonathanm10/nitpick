@@ -173,6 +173,15 @@ export async function proxyHubHTTP(
   const signedOut = new AbortController()
   const stopWatching = route.admission.onEnd(() => signedOut.abort())
   const signal = AbortSignal.any([request.signal, signedOut.signal])
+  // WebRTC signaling is a small JSON body, read here to follow its session.
+  let signaling: string | undefined
+  if (request.method === "POST") {
+    signaling = await textUpTo(request, signalingBodyLimit)
+    if (signaling === undefined) {
+      stopWatching()
+      return refusal({ status: 413 })
+    }
+  }
   let upstream: Response
   try {
     const contentType = request.headers.get("content-type")
@@ -182,13 +191,15 @@ export async function proxyHubHTTP(
         authorization: `Bearer ${route.hub.token}`,
         ...(contentType !== null && { "content-type": contentType }),
       },
-      ...(request.body !== null && { body: request.body, duplex: "half" }),
+      ...(signaling !== undefined && { body: signaling }),
       signal,
     })
   } catch {
     stopWatching()
     return refusal({ status: 502 })
   }
+  if (signaling !== undefined)
+    followWebRTCSession(route, signaling, upstream.ok)
   // The hub refusing its own token means it restarted under the request.
   if (upstream.status === 401 || upstream.status === 403) {
     stopWatching()
@@ -211,6 +222,68 @@ export async function proxyHubHTTP(
     status: upstream.status,
     headers,
   })
+}
+
+/** serve-emu caps WebRTC signaling bodies at 256 KiB itself. */
+const signalingBodyLimit = 256 * 1024
+
+/**
+ * The WebRTC sessions serve-emu answered, by session ID, each with what
+ * stops following it. Their media flows straight from the hub, outside the
+ * proxy, so each is closed on serve-emu when the sign-in that opened it
+ * ends, as an HTTP stream is. The viewer's own close forgets it.
+ */
+const webRTCSessions = new Map<string, () => void>()
+
+function followWebRTCSession(
+  route: Extract<HubRoute, { upstream: string }>,
+  signaling: string,
+  answered: boolean
+): void {
+  let sessionId: unknown
+  try {
+    sessionId = (JSON.parse(signaling) as { sessionId?: unknown }).sessionId
+  } catch {
+    return
+  }
+  if (typeof sessionId !== "string") return
+  const url = new URL(route.upstream)
+  if (url.pathname.endsWith("/webrtc/close")) {
+    webRTCSessions.get(sessionId)?.()
+    return
+  }
+  if (!answered || webRTCSessions.has(sessionId)) return
+  url.pathname = url.pathname.replace(/\/offer$/, "/close")
+  const stop = route.admission.onEnd(() => {
+    webRTCSessions.delete(sessionId)
+    void fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${route.hub.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ sessionId }),
+    }).catch(() => {})
+  })
+  webRTCSessions.set(sessionId, () => {
+    webRTCSessions.delete(sessionId)
+    stop()
+  })
+}
+
+/** The request's body as text, or undefined past `limit` bytes. */
+async function textUpTo(
+  request: Request,
+  limit: number
+): Promise<string | undefined> {
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for await (const chunk of request.body ?? []) {
+    size += chunk.byteLength
+    if (size > limit) return undefined
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks).toString("utf8")
 }
 
 /**

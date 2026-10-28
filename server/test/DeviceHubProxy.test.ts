@@ -360,6 +360,64 @@ describe("device hub proxy: forwarding", () => {
     expect(forwarded.origin).toBeUndefined()
   })
 
+  describe("a WebRTC session, whose media flows outside the proxy", () => {
+    const sessionId = "6f0c3a52-58f1-4b7e-9d43-2a0e8c1f7b10"
+    const sameOrigin = { host: "nitpick.test", origin: "http://nitpick.test" }
+    const signal = (
+      app: Awaited<ReturnType<typeof fixture>>["app"],
+      cookie: string,
+      path: "offer" | "close"
+    ) =>
+      app.request(
+        `${proxy}/vendor/serve-emu/webrtc/${path}?device=${serial}`,
+        posting(
+          { cookie, ...sameOrigin },
+          JSON.stringify({ type: "offer", sdp: "v=0 offer", sessionId })
+        )
+      )
+    const closes = (hub: FakeDeviceHub) =>
+      hub.requests.filter((request) => request.url.includes("/webrtc/close"))
+
+    test("closes on serve-emu when the sign-in that opened it ends", async () => {
+      const { app, hub, signedIn } = await fixture()
+
+      expect((await signal(app, signedIn.cookie, "offer")).status).toBe(200)
+      await app.request("/api/sign-out", { method: "POST", headers: signedIn })
+
+      await eventually(() => expect(closes(hub)).toHaveLength(1))
+      const [close] = closes(hub)
+      expect(close!.url).toBe(`/vendor/serve-emu/webrtc/close?device=${serial}`)
+      expect(JSON.parse(close!.body ?? "")).toEqual({ sessionId })
+      expect(close!.headers.authorization).toBe(`Bearer ${hub.token}`)
+    })
+
+    test("the viewer's own close ends following it", async () => {
+      const { app, hub, signedIn } = await fixture()
+
+      await signal(app, signedIn.cookie, "offer")
+      await signal(app, signedIn.cookie, "close")
+      await app.request("/api/sign-out", { method: "POST", headers: signedIn })
+      await new Promise((resolve) => setTimeout(resolve, 100))
+
+      expect(closes(hub)).toHaveLength(1)
+    })
+
+    test("a signaling body past serve-emu's own 256 KiB cap is refused before the hub", async () => {
+      const { app, hub, signedIn } = await fixture()
+
+      const response = await app.request(
+        `${proxy}/vendor/serve-emu/webrtc/offer?device=${serial}`,
+        posting(
+          { cookie: signedIn.cookie, ...sameOrigin },
+          "x".repeat(256 * 1024 + 1)
+        )
+      )
+
+      expect(response.status).toBe(413)
+      expect(hub.requests).toEqual([])
+    })
+  })
+
   test("an MJPEG stream re-sends its last frame once the screen goes still", async () => {
     const { app, signedIn } = await fixture()
 

@@ -287,18 +287,19 @@ export async function bootEmulator(
   // once, then drops adb for a moment: one it starts has to look booted on
   // two polls in a row.
   const healthyPollsNeeded = serial === undefined ? 2 : 1
-  if (serial === undefined) {
-    starter.start({
-      executablePath: sdk.emulator,
-      arguments: [
-        "-avd",
-        device.udid,
-        "-no-window",
-        "-no-audio",
-        "-no-boot-anim",
-      ],
-    })
-  }
+  const started =
+    serial === undefined
+      ? starter.start({
+          executablePath: sdk.emulator,
+          arguments: [
+            "-avd",
+            device.udid,
+            "-no-window",
+            "-no-audio",
+            "-no-boot-anim",
+          ],
+        })
+      : undefined
   let healthyPolls = 0
   for (let poll = 0; poll < deadline; poll++) {
     serial ??= (await runningEmulators(runner, sdk)).get(device.udid)
@@ -312,6 +313,8 @@ export async function bootEmulator(
     await wait(pollMilliseconds)
   }
   if (serial !== undefined) await shutdownEmulator(runner, sdk, serial)
+  // One adb never saw comes down too.
+  started?.stop()
   throw new EmulatorBootTimedOut(device)
 }
 

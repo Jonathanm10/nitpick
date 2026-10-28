@@ -219,6 +219,16 @@ describe("the Android health check", () => {
 describe("booting", () => {
   const stopped = { ...emulatorDevice, isBooted: false, serial: undefined }
 
+  /** Records what it starts, and whether each was stopped. */
+  function starting(started: SubprocessCommand[], stops: string[] = []) {
+    return {
+      start: (command: SubprocessCommand) => {
+        started.push(command)
+        return { stop: () => stops.push(commandLine(command)) }
+      },
+    }
+  }
+
   /**
    * The emulator over time: `adb devices` lists it from the `listed`th
    * call, and each readiness poll answers the next of `polls` (the boot flag
@@ -276,7 +286,7 @@ describe("booting", () => {
 
     const serial = await bootEmulator(
       runner,
-      { start: (command) => started.push(command) },
+      starting(started),
       sdkWith([proof]),
       stopped,
       { wait: async () => {} }
@@ -299,7 +309,7 @@ describe("booting", () => {
       polls: [ready, { booted: false, packageManager: false }, ready, ready],
     })
 
-    await bootEmulator(runner, { start: () => {} }, sdkWith([proof]), stopped, {
+    await bootEmulator(runner, starting([]), sdkWith([proof]), stopped, {
       wait: async () => {},
     })
 
@@ -321,7 +331,7 @@ describe("booting", () => {
       ],
     })
 
-    await bootEmulator(runner, { start: () => {} }, sdkWith([proof]), stopped, {
+    await bootEmulator(runner, starting([]), sdkWith([proof]), stopped, {
       wait: async () => {},
     })
 
@@ -332,17 +342,34 @@ describe("booting", () => {
     ).toHaveLength(4)
   })
 
+  test("an emulator adb never sees comes down when the boot times out", async () => {
+    const runner = emulatorBooting({
+      listed: Number.POSITIVE_INFINITY,
+      polls: [{ booted: false, packageManager: false }],
+    })
+    const stops: string[] = []
+
+    const boot = bootEmulator(
+      runner,
+      starting([], stops),
+      sdkWith([proof]),
+      stopped,
+      { wait: async () => {}, timeoutMilliseconds: 3_000 }
+    )
+
+    await expect(boot).rejects.toThrow(EmulatorBootTimedOut)
+    expect(stops).toEqual([
+      "emulator -avd nitpick-proof-13 -no-window -no-audio -no-boot-anim",
+    ])
+  })
+
   test("a running AVD isn't started again, and one healthy poll will do", async () => {
     const runner = emulatorBooting({ polls: [ready] })
     const started: SubprocessCommand[] = []
 
-    await bootEmulator(
-      runner,
-      { start: (command) => started.push(command) },
-      sdkWith([proof]),
-      stopped,
-      { wait: async () => {} }
-    )
+    await bootEmulator(runner, starting(started), sdkWith([proof]), stopped, {
+      wait: async () => {},
+    })
 
     expect(started).toEqual([])
     expect(
@@ -357,13 +384,10 @@ describe("booting", () => {
       polls: [{ booted: false, packageManager: false }],
     })
 
-    const boot = bootEmulator(
-      runner,
-      { start: () => {} },
-      sdkWith([proof]),
-      stopped,
-      { wait: async () => {}, timeoutMilliseconds: 3_000 }
-    )
+    const boot = bootEmulator(runner, starting([]), sdkWith([proof]), stopped, {
+      wait: async () => {},
+      timeoutMilliseconds: 3_000,
+    })
 
     await expect(boot).rejects.toThrow(EmulatorBootTimedOut)
     await expect(boot).rejects.toThrow(
