@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { newUUID } from "@nitpick/core"
 import type { SubprocessRunner } from "../subprocess.ts"
 import type { DeviceHost } from "./DeviceHost.ts"
-import { checkHostHealth } from "./hostHealth.ts"
+import { checkHostHealth, macOSVersion, xcodeVersion } from "./hostHealth.ts"
 import { captureScreen, launchBuild, listSimulatorDevices } from "./simctl.ts"
 
 /**
@@ -31,5 +31,9 @@ export function makeLocalDeviceHost(
         join(captureDirectory, `${newUUID()}.png`)
       )
     },
+    versions: async () => ({
+      macOS: await macOSVersion(runner),
+      xcode: await xcodeVersion(runner),
+    }),
   }
 }

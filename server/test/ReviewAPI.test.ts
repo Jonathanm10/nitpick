@@ -33,6 +33,7 @@ import type {
 import { createApp } from "../src/app.ts"
 import type { SimulatorDevice } from "../src/device/DeviceHost.ts"
 import { RuntimeUnavailable } from "../src/device/simctl.ts"
+import { HistoryStore } from "../src/historyStore.ts"
 import { Reviewer } from "../src/reviewer.ts"
 import {
   simulatorInfoPlist,
@@ -77,12 +78,20 @@ function harness({ withYouTrack = true } = {}) {
         new YouTrackCredentials("https://youtrack.example.com", "perm:server")
       )
     : undefined
+  const history = new HistoryStore(join(temporaryDirectory(), "history"))
   const reviewer = new Reviewer(reviewerDirectory, {
     deviceHost,
     runner,
     youTrack,
+    history,
   })
-  const app = createApp({ deviceHost, reviewer, youTrack })
+  const app = createApp({
+    deviceHost,
+    reviewer,
+    youTrack,
+    history,
+    serverVersion: "0.0.0",
+  })
   return { app, runner, deviceHost, transport, reviewerDirectory }
 }
 
@@ -170,7 +179,10 @@ describe("Build upload", () => {
 
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ build: reviewMe })
-    expect(await review(h)).toEqual({ build: reviewMe })
+    expect(await review(h)).toEqual({
+      build: reviewMe,
+      filing: { status: "idle" },
+    })
     // The zip is gone once extracted; its Build stays for the launch.
     expect(readdirSync(join(h.reviewerDirectory, "uploads"))).toEqual([])
     expect(buildDirectories(h)).toHaveLength(1)
@@ -226,6 +238,7 @@ describe("Build upload", () => {
         name: "NextUp",
         identity: { ...reviewMe.identity, buildNumber: "422" },
       },
+      filing: { status: "idle" },
     })
     expect(storedSession(h)).toBeUndefined()
     expect(buildDirectories(h)).not.toContain(oldBuild)
@@ -462,7 +475,10 @@ describe("In the session", () => {
 
     expect(response.status).toBe(204)
     expect(storedSession(h)).toBeUndefined()
-    expect(await review(h)).toEqual({ build: reviewMe })
+    expect(await review(h)).toEqual({
+      build: reviewMe,
+      filing: { status: "idle" },
+    })
   })
 })
 
@@ -504,6 +520,7 @@ describe("A session left open", () => {
         startedAt: session.startedAt,
         tray: session.tray,
       },
+      filing: { status: "idle" },
     })
   })
 })

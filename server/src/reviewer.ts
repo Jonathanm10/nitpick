@@ -1,7 +1,8 @@
 // One Reviewer's side of the server: the Build they uploaded, their open
 // Review Session and Recent devices, and the one run at a time they may have
 // going. The operations follow Sources/Nitpick/AppModel.swift's ingest,
-// startReview, switchDevice, endReview, captureScreen and the Editor's edits.
+// startReview, switchDevice, endReview, captureScreen, the Editor's edits and
+// fileAllFindings.
 import { createWriteStream } from "node:fs"
 import { readFile, rm } from "node:fs/promises"
 import { Readable } from "node:stream"
@@ -13,6 +14,10 @@ import {
   designSnapshotMediaType,
   deviceContextOf,
   discardFinding,
+  droppedFieldNotice,
+  fileAll,
+  filedIssueOf,
+  historyEntry,
   isEditable,
   loadProjectSchema,
   newFinding,
@@ -24,16 +29,21 @@ import {
   ShellBusy,
   updateFinding,
   verifyYouTrack,
+  youTrackUser,
   type Build,
   type DesignSnapshot,
+  type FileAllOutcome,
+  type HistoryEntry,
   type ProjectSchema,
   type RecentDevices,
   type ReviewSession,
   type TrayItem,
   type YouTrackClient,
   type YouTrackProject,
+  type YouTrackUser,
 } from "@nitpick/core"
-import type { FindingPatch, SessionPatch } from "./api.ts"
+import { annotatedScreenshotPNG } from "./annotationFlattening.ts"
+import type { FilingStatus, FindingPatch, SessionPatch } from "./api.ts"
 import { readBuildFromArchive, zipArchiveName } from "./buildIngestion.ts"
 import { checkDesignSnapshotImage } from "./designSnapshotImage.ts"
 import { designReference, patchedFinding } from "./findingPatch.ts"
@@ -42,6 +52,7 @@ import type {
   HostProblem,
   SimulatorDevice,
 } from "./device/DeviceHost.ts"
+import type { HistoryStore } from "./historyStore.ts"
 import { ReviewerStore } from "./reviewerStore.ts"
 import type { SubprocessRunner } from "./subprocess.ts"
 
@@ -67,6 +78,8 @@ export interface ReviewerDependencies {
   readonly runner: SubprocessRunner
   /** Undefined when the server has no YouTrack connection configured. */
   readonly youTrack: YouTrackClient | undefined
+  /** Every Reviewer's filed sessions, one store for all. */
+  readonly history: HistoryStore
 }
 
 export type HostStatus =
@@ -106,19 +119,29 @@ export class Reviewer {
    * session keeps its own Build on disk.
    */
   #uploadedBuild: Build | undefined
+  /**
+   * File all's run and its ending, in memory as AppModel held them: a
+   * server restart forgets a failure (the rows say "Filing interrupted —
+   * retry") and a held result (ADR-0007: a quit returns to plain home).
+   */
+  #filing: FilingStatus = { status: "idle" }
+  /** Who the YouTrack token files as, read once. */
+  #identity: YouTrackUser | undefined
 
   constructor(directory: string, dependencies: ReviewerDependencies) {
     this.#dependencies = dependencies
     this.#store = new ReviewerStore(directory)
   }
 
-  /** The Build and the open session, as a reload finds them. */
+  /** The Build, the open session and File all, as a reload finds them. */
   async state(): Promise<{
     readonly build: Build | undefined
     readonly session: ReviewSession | undefined
+    readonly filing: FilingStatus
   }> {
+    const filing = this.#filing
     const session = await this.#store.openSession()
-    return { build: session?.build ?? this.#uploadedBuild, session }
+    return { build: session?.build ?? this.#uploadedBuild, session, filing }
   }
 
   async hostStatus(): Promise<HostStatus> {
@@ -155,6 +178,8 @@ export class Reviewer {
         )
         await this.#serialized(() => this.#store.clearOpenSession())
         this.#uploadedBuild = build
+        // The next Build dismisses a held filing result (ADR-0007).
+        this.#filing = { status: "idle" }
         await this.#store.pruneBuilds(slot.id)
         return build
       } catch (error) {
@@ -200,6 +225,8 @@ export class Reviewer {
       const session = open ?? newReviewSession({ build, project })
       if (open === undefined) {
         await this.#serialized(() => this.#store.saveOpenSession(session))
+        // A held result never shows beside a live session.
+        this.#filing = { status: "idle" }
       }
       return {
         status: "started",
@@ -242,8 +269,137 @@ export class Reviewer {
         const open = await this.#store.openSession()
         if (open !== undefined) this.#uploadedBuild = open.build
         await this.#store.clearOpenSession()
+        // Or the next session would open on a stale "File n remaining".
+        this.#filing = { status: "idle" }
       })
     )
+  }
+
+  /**
+   * Files every Finding not yet filed, as AppModel's fileAllFindings. A run
+   * already going refuses at once with ShellBusy; otherwise the run starts,
+   * and the returned promise settles when it ends, without throwing: its
+   * ending is `filingStatus`. The request that started it doesn't wait, so
+   * closing the tab never stops a run.
+   *
+   * Each acknowledged step is saved before the next request (core's
+   * fileAll), and the open session carries a mark while the run goes, so
+   * a server killed mid-ladder resumes where it stopped on its next start.
+   */
+  fileAll(): Promise<void> {
+    const youTrack = this.#requireYouTrack("it can't file")
+    this.#activity = this.#activity.begin("filing")
+    this.#filing = { status: "running" }
+    return this.#file(youTrack)
+  }
+
+  /**
+   * Resumes the File all a server restart cut short, if one did, and
+   * answers once the run is going, with the run: the server opens its port
+   * only then, so a page loading meanwhile follows the run instead of
+   * finding none. A mark without an open session is a run that recorded
+   * History and died before removing it.
+   */
+  async resumeInterruptedFiling(): Promise<
+    { readonly run: Promise<void> } | undefined
+  > {
+    if (!(await this.#store.isMarkedFiling())) return undefined
+    if (
+      this.#dependencies.youTrack === undefined ||
+      (await this.#store.openSession()) === undefined
+    ) {
+      await this.#store.unmarkFiling()
+      return undefined
+    }
+    return { run: this.fileAll() }
+  }
+
+  filingStatus(): FilingStatus {
+    return this.#filing
+  }
+
+  /** Done on the filing result: home again, with the Build still loaded. */
+  dismissFilingResult(): void {
+    if (this.#filing.status === "filed") this.#filing = { status: "idle" }
+  }
+
+  /** Who this Reviewer files as: the YouTrack account of the token. */
+  async identity(): Promise<YouTrackUser | undefined> {
+    const youTrack = this.#dependencies.youTrack
+    if (youTrack === undefined) return undefined
+    this.#identity ??= await youTrackUser(youTrack)
+    return this.#identity
+  }
+
+  async #file(youTrack: YouTrackClient): Promise<void> {
+    let outcome: FileAllOutcome | undefined
+    let recorded: HistoryEntry | undefined
+    let failure: unknown
+    try {
+      const session = await this.#requireOpenSession()
+      if (session.tray.length === 0) {
+        throw new ReviewRefused("Capture a Finding before filing.")
+      }
+      await this.#store.markFiling()
+      const filedBy = await this.identity()
+      const record = async (entry: HistoryEntry) => {
+        recorded = await this.#recordInHistory(session, { ...entry, filedBy })
+      }
+      outcome = await fileAll(session, {
+        youTrack,
+        flatten: annotatedScreenshotPNG,
+        store: {
+          saveOpenSession: (next) =>
+            this.#serialized(() => this.#store.saveOpenSession(next)),
+          recordInHistory: record,
+          capturePNG: (itemID) => readFile(this.#store.capturePath(itemID)),
+          designSnapshotData: (itemID, snapshot) =>
+            readFile(this.#store.designSnapshotPath(itemID, snapshot)),
+        },
+      })
+      failure = outcome.failure
+      // A restart that landed between the last filing mark and the History
+      // record finds the whole Tray filed, and core files nothing: record
+      // it now, as Swift's loadOpenSession healed it.
+      if (
+        failure === undefined &&
+        recorded === undefined &&
+        outcome.session.tray.every((item) => filedIssueOf(item) !== undefined)
+      ) {
+        await record(historyEntry(outcome.session))
+      }
+    } catch (error) {
+      failure = error
+    }
+    const notice = outcome && droppedFieldNotice(outcome.droppedFields)
+    const dropped = notice === undefined ? {} : { droppedFieldNotice: notice }
+    if (failure === undefined && recorded !== undefined) {
+      this.#filing = { status: "filed", result: recorded, ...dropped }
+    } else {
+      this.#filing = {
+        status: "failed",
+        error: failureMessage(failure),
+        ...dropped,
+      }
+      await this.#store.unmarkFiling().catch(() => {})
+    }
+    this.#activity = this.#activity.end()
+  }
+
+  /**
+   * Records the filed session in the shared History, then clears the open
+   * slot with its captures. The entry exists before the slot clears, so a
+   * crash between the two resumes into a fully filed session, which records
+   * again over the same file. The Build stays loaded for the next review.
+   */
+  async #recordInHistory(
+    session: ReviewSession,
+    entry: HistoryEntry
+  ): Promise<HistoryEntry> {
+    await this.#dependencies.history.record(entry)
+    await this.#serialized(() => this.#store.clearOpenSession())
+    this.#uploadedBuild = session.build
+    return entry
   }
 
   /**
@@ -459,14 +615,20 @@ export class Reviewer {
     return recent
   }
 
-  /** The picked project, looked up on YouTrack rather than taken on trust. */
-  async #project(projectID: string | undefined): Promise<YouTrackProject> {
+  /** `consequence` finishes "The nitpick server has no YouTrack connection configured, so …". */
+  #requireYouTrack(consequence: string): YouTrackClient {
     const youTrack = this.#dependencies.youTrack
     if (youTrack === undefined) {
       throw new ReviewRefused(
-        "The nitpick server has no YouTrack connection configured, so a review can't pick a project."
+        `The nitpick server has no YouTrack connection configured, so ${consequence}.`
       )
     }
+    return youTrack
+  }
+
+  /** The picked project, looked up on YouTrack rather than taken on trust. */
+  async #project(projectID: string | undefined): Promise<YouTrackProject> {
+    const youTrack = this.#requireYouTrack("a review can't pick a project")
     if (projectID === undefined) {
       throw new ReviewRefused(
         "Pick the YouTrack project the review files into."
@@ -481,6 +643,13 @@ export class Reviewer {
     }
     return project
   }
+}
+
+/** The run's error in the Reviewer's words: core's texts are already theirs. */
+function failureMessage(failure: unknown): string {
+  return failure instanceof Error && failure.message !== ""
+    ? failure.message
+    : "Filing stopped for an unknown reason."
 }
 
 /** The item, if filing hasn't touched it; its Issue would diverge otherwise. */

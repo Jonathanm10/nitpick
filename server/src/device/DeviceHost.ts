@@ -38,6 +38,16 @@ export interface DeviceHost {
    * state it was taken under. Refuses a device that isn't booted.
    */
   readonly captureScreen: (deviceUDID: string) => Promise<ScreenCapture>
+  /** The host's macOS and Xcode, for a Feedback's Environment. */
+  readonly versions: () => Promise<HostVersions>
+}
+
+/** What the host could tell of itself; a value it couldn't read is absent. */
+export interface HostVersions {
+  /** "Version 26.1 (Build 25B78)" */
+  readonly macOS?: string
+  /** "26.1 (17B55)" */
+  readonly xcode?: string
 }
 
 /** One capture: the device as it is now, its screenshot and its settings. */

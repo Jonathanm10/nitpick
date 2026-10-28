@@ -6,6 +6,7 @@
 //   <reviewer>/open-session/session.json
 //   <reviewer>/open-session/captures/<item id>.png
 //   <reviewer>/open-session/design-snapshots/<item id>/<data version>.<ext>
+//   <reviewer>/open-session/filing             while a File all runs
 //   <reviewer>/recent-devices.json
 //   <reviewer>/builds/<id>/…          one extracted upload each
 //   <reviewer>/uploads/<id>.zip       an upload until it is extracted
@@ -102,6 +103,23 @@ export class ReviewerStore {
   }
 
   /**
+   * Marks the open session as being filed. A run that ends takes the mark
+   * away; one a server restart cut short leaves it, so the next start
+   * resumes it.
+   */
+  async markFiling(): Promise<void> {
+    await writeAtomically(this.#filingMark, "")
+  }
+
+  async unmarkFiling(): Promise<void> {
+    await rm(this.#filingMark, { force: true })
+  }
+
+  async isMarkedFiling(): Promise<boolean> {
+    return (await readIfPresent(this.#filingMark)) !== undefined
+  }
+
+  /**
    * Ends the open session without filing, so it isn't there to resume.
    * Removes the whole slot, captures included.
    */
@@ -171,6 +189,10 @@ export class ReviewerStore {
     return join(this.directory, "open-session", "session.json")
   }
 
+  get #filingMark(): string {
+    return join(this.directory, "open-session", "filing")
+  }
+
   get #capturesDirectory(): string {
     return join(this.directory, "open-session", "captures")
   }
@@ -192,7 +214,7 @@ export class ReviewerStore {
   }
 }
 
-async function readIfPresent(path: string): Promise<string | undefined> {
+export async function readIfPresent(path: string): Promise<string | undefined> {
   try {
     return await readFile(path, "utf8")
   } catch (error) {
@@ -219,7 +241,7 @@ async function removeAllBut(
 }
 
 /** A crash mid-write keeps the previous good file. */
-async function writeAtomically(
+export async function writeAtomically(
   path: string,
   contents: string | Uint8Array
 ): Promise<void> {

@@ -2,6 +2,9 @@
 // Sources/NitpickCore/Setup.swift. Reviewers can't fix the host, so a
 // problem carries only the reason the page shows; the fix steps live in the
 // ops runbook.
+import { readFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
+import { parse } from "plist"
 import { SubprocessFailure, type SubprocessRunner } from "../subprocess.ts"
 import type { HostHealth, HostProblem, SimulatorDevice } from "./DeviceHost.ts"
 import {
@@ -69,6 +72,61 @@ export async function checkHostHealth(
     return { status: "notReady", problem: { kind: "missingIOSRuntime" } }
   }
   return { status: "ready", devices }
+}
+
+/**
+ * The Feedback Environment's Device Host Xcode line, ported from
+ * xcodeVersion in Sources/NitpickCore/Setup.swift: `version.plist` beside the
+ * active developer directory, as "26.1 (17B55)". Undefined when there is no
+ * developer directory or no readable version.
+ */
+export async function xcodeVersion(
+  runner: SubprocessRunner
+): Promise<string | undefined> {
+  try {
+    const developerDirectory = await activeDeveloperDirectory(runner)
+    const info = parse(
+      await readFile(join(dirname(developerDirectory), "version.plist"), "utf8")
+    )
+    if (typeof info !== "object" || info === null || Array.isArray(info)) {
+      return undefined
+    }
+    const { CFBundleShortVersionString: version, ProductBuildVersion: build } =
+      info as Record<string, unknown>
+    if (typeof version !== "string" || version === "") return undefined
+    return typeof build === "string" && build !== ""
+      ? `${version} (${build})`
+      : version
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The Feedback Environment's Device Host macOS line, in the words Swift's
+ * `ProcessInfo.operatingSystemVersionString` used: "Version 26.1 (Build
+ * 25B78)". Undefined when `sw_vers` can't say.
+ */
+export async function macOSVersion(
+  runner: SubprocessRunner
+): Promise<string | undefined> {
+  const read = async (flag: string) => {
+    const result = await runRequiringSuccess(runner, {
+      executablePath: "/usr/bin/sw_vers",
+      arguments: [flag],
+    })
+    return result.standardOutput.toString("utf8").trim()
+  }
+  try {
+    const version = await read("-productVersion")
+    const build = await read("-buildVersion")
+    if (version === "") return undefined
+    return build === ""
+      ? `Version ${version}`
+      : `Version ${version} (Build ${build})`
+  } catch {
+    return undefined
+  }
 }
 
 /**

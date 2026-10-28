@@ -7,8 +7,10 @@ import { createApp } from "./app.ts"
 import { loadConfig } from "./config.ts"
 import { makeLocalDeviceHost } from "./device/LocalDeviceHost.ts"
 import { fetchTransport } from "./fetchTransport.ts"
+import { HistoryStore } from "./historyStore.ts"
 import { Reviewer } from "./reviewer.ts"
 import { nodeSubprocessRunner } from "./subprocess.ts"
+import { readServerVersion } from "./version.ts"
 
 /** Until sign-in exists (issue 10), the server has one Reviewer. */
 const interimReviewerID = "interim"
@@ -31,15 +33,25 @@ const deviceHost = makeLocalDeviceHost(
 )
 const youTrack =
   config.youTrack && new YouTrackClient(fetchTransport, config.youTrack)
+const history = new HistoryStore(join(config.dataDirectory, "history"))
 const reviewer = new Reviewer(
   join(config.dataDirectory, "reviewers", interimReviewerID),
-  { deviceHost, runner: nodeSubprocessRunner, youTrack }
+  { deviceHost, runner: nodeSubprocessRunner, youTrack, history }
 )
+
+// A File all the server's last run didn't finish picks up where its saved
+// marks stop, before the port opens, so no page sees it idle meanwhile.
+const resumed = await reviewer.resumeInterruptedFiling()
+if (resumed !== undefined) {
+  console.log("Resuming the File all a restart interrupted.")
+}
 
 const app = createApp({
   deviceHost,
   reviewer,
   youTrack,
+  history,
+  serverVersion: await readServerVersion(nodeSubprocessRunner),
   webRoot: hasWebBuild ? webRoot : undefined,
 })
 

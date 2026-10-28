@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { describe, expect, onTestFinished, test, vi } from "vitest"
 import { createApp } from "../src/app.ts"
 import type { DeviceHost, SimulatorDevice } from "../src/device/DeviceHost.ts"
+import { HistoryStore } from "../src/historyStore.ts"
 import { Reviewer } from "../src/reviewer.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 
@@ -28,6 +29,7 @@ function hostListing(list: DeviceHost["devices"]["list"]): DeviceHost {
     captureScreen: async () => {
       throw new Error("not captured here")
     },
+    versions: async () => ({}),
   }
 }
 
@@ -36,12 +38,21 @@ function appListing(
   webRoot?: string
 ): ReturnType<typeof createApp> {
   const deviceHost = hostListing(list)
+  const history = new HistoryStore(join(tmpdir(), "nitpick-unused-history"))
   const reviewer = new Reviewer(join(tmpdir(), "nitpick-unused-reviewer"), {
     deviceHost,
     runner: new FakeSubprocessRunner(),
     youTrack: undefined,
+    history,
   })
-  return createApp({ deviceHost, reviewer, youTrack: undefined, webRoot })
+  return createApp({
+    deviceHost,
+    reviewer,
+    youTrack: undefined,
+    history,
+    serverVersion: "0.0.0",
+    webRoot,
+  })
 }
 
 describe("HTTP app", () => {
