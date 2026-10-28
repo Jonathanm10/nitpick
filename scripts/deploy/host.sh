@@ -9,14 +9,19 @@
 #   host.sh status             the health check
 #   host.sh backup             copy the data directory to a dated folder
 #   host.sh restore <backup>   put a backup (a folder, or its date) back
+#   host.sh android            install or update what Android reviews need,
+#                              then restart the server
 #
 # Where things live; each environment variable overrides its default:
 #   NITPICK_CHECKOUT     ~/nitpick                   git checkout of main
-#   NITPICK_RUNTIME      ~/.nitpick                  the pinned Node
+#   NITPICK_RUNTIME      ~/.nitpick                  the pinned Node, and
+#                                                    Java and ffmpeg for Android
 #   NITPICK_CONFIG_FILE  ~/.config/nitpick/server.env  the server's config
 #   NITPICK_BACKUP_DIR   ~/nitpick-backups           one folder per day
 #   NITPICK_BACKUP_KEEP  14                          days of backups kept
 #   logs                 ~/Library/Logs/nitpick/
+#   the Android SDK      ~/Library/Android/sdk       where the server looks
+#   its AVDs             ~/.android/avd
 #
 # Every function runs from main, below the definitions, with stdin closed:
 # a script read from stdin (sh -s) is never eaten by a command it runs.
@@ -34,8 +39,26 @@ server_label=ch.liip.nitpick.server
 backup_label=ch.liip.nitpick.backup
 domain=gui/$(id -u)
 node=$runtime/node/bin/node
+# The server's PATH: its Node, and the ffmpeg host.sh android installs.
+agent_path=$runtime/node/bin:$runtime/ffmpeg:/usr/bin:/bin:/usr/sbin:/sbin
 # Days of uptime after which status warns; the tcp_now bug strikes at 49.7.
 uptime_warning_days=35
+
+# What Android reviews need (ADR-0013), in the SDK's default place: the
+# LaunchAgent passes no ANDROID_HOME, so that is where the server looks.
+android_sdk=$HOME/Library/Android/sdk
+android_image='system-images;android-37.0;google_apis;arm64-v8a'
+android_build_tools='build-tools;37.0.0'
+android_avd=Pixel_10
+android_avd_profile=pixel_10
+android_avd_name='Pixel 10'
+# The AVD's RAM, for a cap of one device on an 8 GB host.
+android_avd_ram_mb=2048
+# Bootstraps sdkmanager, checked against the SHA-256 that
+# developer.android.com/studio lists. sdkmanager then installs its own
+# latest, and checks each package against the SDK repository's checksums.
+cmdline_tools=commandlinetools-mac_arm64-15859902_latest.zip
+cmdline_tools_sha256=835b62a26162b229b441d1f6d4680383815a270809eb33522c0d480fa5002c4e
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -44,7 +67,7 @@ fail() {
 }
 
 usage() {
-	fail "usage: host.sh update [ref] | status | backup | restore <backup>"
+	fail "usage: host.sh update [ref] | status | backup | restore <backup> | android"
 }
 
 # --- update ------------------------------------------------------------------
@@ -68,7 +91,7 @@ update() {
 	restart "$server_label"
 	restart "$backup_label"
 	wait_until_serving
-	prune_old_nodes
+	prune_old node node-v
 	say "nitpick $(git -C "$checkout" rev-parse --short HEAD) is serving on port $(value port)."
 }
 
@@ -137,10 +160,11 @@ run_pnpm() {
 		"$runtime/node/bin/pnpm" "$@"
 }
 
-# The running server keeps its Node until the restart; older ones go after.
-prune_old_nodes() {
-	current=$(readlink "$runtime/node")
-	for installed in "$runtime"/node-v*; do
+# The running server keeps its Node and ffmpeg until the restart; then each
+# install of a tool goes, but the one its link names.
+prune_old() {
+	current=$(readlink "$runtime/$1")
+	for installed in "$runtime/$2"*; do
 		[ -d "$installed" ] && [ "${installed##*/}" != "$current" ] && rm -rf "$installed"
 	done
 	return 0
@@ -196,7 +220,7 @@ write_server_agent() {
 		<key>NITPICK_CONFIG_FILE</key>
 		<string>$(xml "$config")</string>
 		<key>PATH</key>
-		<string>$(xml "$runtime/node/bin"):/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>$(xml "$agent_path")</string>
 	</dict>
 	<key>LimitLoadToSessionType</key>
 	<string>Aqua</string>
@@ -363,12 +387,22 @@ status() {
 	fi
 	booted=$(xcrun simctl list devices booted 2>/dev/null | grep -c '(Booted)' || true)
 	# Running emulators count against the cap too, where the SDK is installed.
-	adb=${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb
+	adb=$android_sdk/platform-tools/adb
 	if [ -x "$adb" ]; then
 		emulators=$("$adb" devices 2>/dev/null | grep -c '^emulator-[0-9]*	device$' || true)
 		booted=$((booted + emulators))
 	fi
 	say "Booted devices: $booted (cap: $(value maxBootedDevices | sed 's/^$/none/'))"
+	android=$(android_health) || android="failed: the server's Android check didn't run."
+	# No SDK folder at all is a host set up for iOS only; a part of one isn't.
+	if [ "${android%%:*}" = ready ]; then
+		say "Android: ready. ${android#ready: }"
+	elif [ "${android%%:*}" = sdkMissing ] && [ ! -d "$android_sdk" ]; then
+		say "Android: not set up, so iOS only. host.sh android sets it up."
+	else
+		say "Android: NOT READY. ${android#*: }"
+		problems=$((problems + 1))
+	fi
 	say "Memory: $(memory_pressure -Q 2>/dev/null | sed -n 's/^System-wide memory free percentage: /free /p')"
 	say "Disk: $(df -h "$(value dataDirectory)" 2>/dev/null | awk 'NR == 2 { print $4 " free" }')"
 
@@ -385,6 +419,22 @@ status() {
 	fi
 	[ "$problems" -eq 0 ] || fail "$problems problem(s) above."
 	say "Healthy."
+}
+
+# The server's own Android check, in its LaunchAgent's environment: "ready:"
+# with the AVDs, or the problem's kind and the reason the page shows.
+android_health() {
+	# shellcheck disable=SC2016 # JavaScript, not shell.
+	env -i HOME="$HOME" PATH="$agent_path" "$node" --no-warnings --input-type=module -e '
+		const [android, { androidProblemReason }, { nodeSubprocessRunner: runner }] =
+			await Promise.all(process.argv.slice(1).map((path) => import(path)))
+		const ffmpeg = await android.ffmpegPath(process.env)
+		const health = await android.checkAndroidHealth(runner, android.androidSDK(process.env),
+			async () => ffmpeg !== undefined && (await android.hasLibx264(runner, ffmpeg)))
+		console.log(health.status === "ready"
+			? `ready: AVDs ${health.devices.map((device) => `${device.name} (${device.osName})`).join(", ")}; ffmpeg ${ffmpeg}`
+			: `${health.problem.kind}: ${androidProblemReason(health.problem)}`)
+	' "$checkout/server/src/device/android.ts" "$checkout/server/src/device/hostHealth.ts" "$checkout/server/src/subprocess.ts"
 }
 
 # Listening TCP addresses of the server and its children, one per line.
@@ -459,6 +509,137 @@ restore() {
 	say "Restored $from. The data directory it replaced, if any, is at $aside."
 }
 
+# --- android -----------------------------------------------------------------
+
+# What Android reviews need (ADR-0013), installed or brought up to date
+# without Homebrew or sudo: Java for the SDK's tools, the SDK's packages,
+# one AVD, and an ffmpeg with libx264 for serve-emu's stream. The server
+# finds them when it starts, so it restarts last.
+android() {
+	preflight
+	[ "$(uname -m)" = arm64 ] || fail "host.sh android sets up Apple silicon hosts only."
+	load_config
+	mkdir -p "$logs" "$agents"
+	: >"$logs/android.log"
+	install_java
+	install_android_packages
+	create_avd
+	install_ffmpeg
+	write_server_agent
+	restart "$server_label"
+	wait_until_serving
+	prune_old java jdk-
+	prune_old ffmpeg ffmpeg-
+	android=$(android_health)
+	case $android in
+	ready:*) say "Android is ready. ${android#ready: }" ;;
+	*) fail "Android isn't ready: ${android#*: }" ;;
+	esac
+}
+
+# Java for sdkmanager and avdmanager: the newest Temurin 21 runtime, checked
+# against the checksum Adoptium publishes.
+install_java() {
+	assets=$(curl -fsSL 'https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=aarch64&image_type=jre&os=mac&vendor=eclipse') ||
+		fail "api.adoptium.net can't be reached for Java."
+	# shellcheck disable=SC2016 # JavaScript, not shell.
+	fields=$("$node" -e '
+		const asset = JSON.parse(process.argv[1]).find(({ binary }) => binary.package.name.endsWith(".tar.gz"))
+		console.log(asset.release_name, asset.binary.package.link, asset.binary.package.checksum)' "$assets") ||
+		fail "api.adoptium.net lists no Java 21 runtime for macOS on arm64."
+	read -r release link checksum <<EOF
+$fields
+EOF
+	case $release in jdk-21*) ;; *) fail "api.adoptium.net named an unexpected Java: $release" ;; esac
+	case $release in *[!A-Za-z0-9.+-]*) fail "api.adoptium.net named an unexpected Java: $release" ;; esac
+	if [ ! -x "$runtime/$release-jre/Contents/Home/bin/java" ]; then
+		say "Installing Java ${release#jdk-} for the Android SDK's tools…"
+		download=$(mktemp -d)
+		curl -fsSL -o "$download/java.tar.gz" "$link"
+		(cd "$download" && printf '%s  java.tar.gz\n' "$checksum" | shasum -a 256 -c - >/dev/null) ||
+			fail "$link doesn't match Adoptium's checksum."
+		tar -xzf "$download/java.tar.gz" -C "$download"
+		[ -x "$download/$release-jre/Contents/Home/bin/java" ] || fail "$link holds no $release-jre."
+		mv "$download/$release-jre" "$runtime/$release-jre"
+		rm -rf "$download"
+	fi
+	ln -sfn "$release-jre" "$runtime/java"
+}
+
+# The SDK's tools run on nitpick's Java. Their progress goes to a log, which
+# holds the last run.
+sdk_tool() {
+	tool=$1
+	shift
+	JAVA_HOME=$runtime/java/Contents/Home "$tool" "$@" >>"$logs/android.log" 2>&1 || {
+		tail -n 20 "$logs/android.log" >&2
+		fail "${tool##*/} $* failed (above). The whole log is $logs/android.log."
+	}
+}
+
+# Accepts the SDK's licenses, as Android Studio's setup does. sdkmanager
+# checks what it downloads against the SDK repository's checksums.
+install_android_packages() {
+	sdkmanager=$android_sdk/cmdline-tools/latest/bin/sdkmanager
+	if [ ! -x "$sdkmanager" ]; then
+		say "Installing the Android SDK's command-line tools…"
+		download=$(mktemp -d)
+		curl -fsSL -o "$download/$cmdline_tools" "https://dl.google.com/android/repository/$cmdline_tools"
+		(cd "$download" && printf '%s  %s\n' "$cmdline_tools_sha256" "$cmdline_tools" | shasum -a 256 -c - >/dev/null) ||
+			fail "$cmdline_tools doesn't match the checksum developer.android.com lists."
+		unzip -q "$download/$cmdline_tools" -d "$download"
+		yes | sdk_tool "$download/cmdline-tools/bin/sdkmanager" --sdk_root="$android_sdk" --licenses
+		sdk_tool "$download/cmdline-tools/bin/sdkmanager" --sdk_root="$android_sdk" --install 'cmdline-tools;latest'
+		rm -rf "$download"
+	fi
+	say "Installing or updating the SDK's packages; the first time downloads about 3 GB…"
+	yes | sdk_tool "$sdkmanager" --licenses
+	sdk_tool "$sdkmanager" --install platform-tools emulator "$android_build_tools" "$android_image"
+	sdk_tool "$sdkmanager" --update
+}
+
+# The AVD Reviewers boot. One that exists already stays as it is.
+create_avd() {
+	"$android_sdk/emulator/emulator" -list-avds 2>/dev/null | grep -qx "$android_avd" && return 0
+	say "Creating the AVD ${android_avd}…"
+	echo no | sdk_tool "$android_sdk/cmdline-tools/latest/bin/avdmanager" create avd \
+		--name "$android_avd" --package "$android_image" --device "$android_avd_profile"
+	avd_config=$HOME/.android/avd/$android_avd.avd/config.ini
+	[ -f "$avd_config" ] || fail "avdmanager made no $avd_config."
+	sed -i '' -e '/^hw\.ramSize=/d' -e '/^avd\.ini\.displayname=/d' "$avd_config"
+	printf 'hw.ramSize=%s\navd.ini.displayname=%s\n' "$android_avd_ram_mb" "$android_avd_name" >>"$avd_config"
+}
+
+# ffmpeg with libx264, which serve-emu encodes an emulator's screen with:
+# the newest release of Martin Riedl's static macOS build, checked against
+# the SHA-256 published beside it. The server finds it on its PATH.
+install_ffmpeg() {
+	latest=$(curl -fsS -o /dev/null -w '%{redirect_url}' https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip) ||
+		fail "ffmpeg.martin-riedl.de can't be reached for ffmpeg."
+	case $latest in
+	https://ffmpeg.martin-riedl.de/download/macos/arm64/*/ffmpeg.zip) ;;
+	*) fail "ffmpeg.martin-riedl.de named no ffmpeg build: $latest" ;;
+	esac
+	build=${latest%/ffmpeg.zip}
+	build=${build##*/}
+	case $build in '' | *[!A-Za-z0-9._-]*) fail "ffmpeg.martin-riedl.de named an unexpected build: $build" ;; esac
+	if [ ! -x "$runtime/ffmpeg-$build/ffmpeg" ]; then
+		say "Installing ffmpeg ${build#*_}…"
+		checksum=$(curl -fsSL "$latest.sha256" | cut -d ' ' -f 1)
+		case $checksum in *[!0-9a-f]* | '') fail "ffmpeg.martin-riedl.de has no checksum for $latest." ;; esac
+		download=$(mktemp -d)
+		curl -fsSL -o "$download/ffmpeg.zip" "$latest"
+		(cd "$download" && printf '%s  ffmpeg.zip\n' "$checksum" | shasum -a 256 -c - >/dev/null) ||
+			fail "$latest doesn't match its published checksum."
+		unzip -q "$download/ffmpeg.zip" -d "$download/ffmpeg-$build"
+		"$download/ffmpeg-$build/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -q ' libx264 ' ||
+			fail "the ffmpeg in $latest has no libx264."
+		mv "$download/ffmpeg-$build" "$runtime/ffmpeg-$build"
+		rm -rf "$download"
+	fi
+	ln -sfn "ffmpeg-$build" "$runtime/ffmpeg"
+}
+
 main() {
 	exec </dev/null
 	[ $# -ge 1 ] || usage
@@ -469,6 +650,7 @@ main() {
 	status) status ;;
 	backup) backup ;;
 	restore) restore "$@" ;;
+	android) android ;;
 	*) usage ;;
 	esac
 }

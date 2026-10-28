@@ -47,7 +47,7 @@ pnpm build && pnpm start  # the server alone, serving the built app on port 4870
 
 The server reads its config from the environment, or from a file outside the repo that `NITPICK_CONFIG_FILE` points at. [server/config.example.env](server/config.example.env) lists the keys.
 
-Android Builds (`.apk`) need the Android SDK with an AVD, build-tools and an `ffmpeg` with libx264 on the Device Host ([ADR-0013](docs/adr/0013-android-on-the-device-host.md)). Without them the server still reviews iOS, and the device picker says what Android lacks.
+Android Builds (`.apk`) need the Android SDK with an AVD, build-tools and an `ffmpeg` with libx264 on the Device Host ([ADR-0013](docs/adr/0013-android-on-the-device-host.md)); `scripts/deploy/host.sh android` sets them up ([docs/operations.md](docs/operations.md#android)). Without them the server still reviews iOS, and the device picker says what Android lacks.
 
 `scripts/deploy/deploy.sh <host>` installs or updates it on the Device Host over SSH. [docs/operations.md](docs/operations.md) is the runbook: install, health check, logs, reboots, Xcode updates, backups and moving hosts.
 
