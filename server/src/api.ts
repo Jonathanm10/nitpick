@@ -5,6 +5,7 @@ import type {
   Annotation,
   BuildIdentity,
   DesignSnapshot,
+  DevicePlatform,
   FeedbackEnvironment,
   FeedbackKind,
   FindingAssignee,
@@ -56,9 +57,11 @@ export interface SignedInResponse {
 
 /** A Build as the page shows it: name plus identity, never a server path. */
 export interface BuildSummary {
-  /** The .app's name without `.app`. */
+  /** The .app's name without `.app`, or the .apk's without `.apk`. */
   readonly name: string
   readonly identity: BuildIdentity
+  /** Which devices run it. */
+  readonly platform: DevicePlatform
 }
 
 /** The open Review Session: everything but its Build's server path. */
@@ -181,10 +184,15 @@ export interface FeedbackResponse {
 /** The devices the host can run, with the Reviewer's Recent devices. */
 export interface ReadyHost {
   readonly status: "ready"
-  /** iOS devices, newest OS first, then by name. */
+  /**
+   * iOS simulators, newest OS first, then by name; then Android emulators,
+   * likewise.
+   */
   readonly devices: ReadonlyArray<SimulatorDevice>
   /** Most recent first: the source of Recent and the preselection. */
   readonly recentDeviceUDIDs: ReadonlyArray<string>
+  /** Why no Android emulator is listed, when the host can't run one. */
+  readonly androidProblem?: string
 }
 
 /** The Device Host can't run a review; `reason` says why. */
@@ -201,7 +209,7 @@ export interface ProjectsResponse {
   readonly projects: ReadonlyArray<YouTrackProject>
 }
 
-/** `POST /api/build?name=<file name>`, with the zip as the request body. */
+/** `POST /api/build?name=<file name>`, with the zip or .apk as the request body. */
 export interface BuildResponse {
   readonly build: BuildSummary
 }
@@ -291,14 +299,24 @@ export interface DesignSnapshotRename {
 
 /**
  * `POST /api/device-stream`: starts streaming the booted device the Build
- * runs on: 204. A stopped device answers 409 with `deviceNotRunning`.
+ * runs on. A stopped device answers 409 with `deviceNotRunning`.
  */
 export interface DeviceStreamRequest {
   readonly deviceUDID: string
 }
 
+export interface DeviceStreamResponse {
+  /** What the hub names the device by: a UDID, or an emulator's serial. */
+  readonly hubDevice: string
+}
+
+// Through the proxy to the hub, for an iOS simulator:
 // `GET /api/device-hub/vendor/serve-sim/helper/:udid/stream.avcc` (H.264) and
 // `…/stream.mjpeg`, and the input WebSocket at
-// `/api/device-hub/vendor/serve-sim/helper/ws?device=:udid`, go to the hub
-// through the proxy. Anything else under /api/device-hub is a 404, any method
-// but GET a 405, and a request without a live sign-in a 401.
+// `/api/device-hub/vendor/serve-sim/helper/ws?device=:udid`. For an Android
+// emulator: `POST /api/device-hub/vendor/serve-emu/webrtc/offer?device=:serial`
+// and `…/webrtc/close?device=:serial` (JSON), and the input WebSocket at
+// `/api/device-hub/vendor/serve-emu/ws?device=:serial`, which carries no
+// video. Anything else under /api/device-hub is a 404, another method a 405,
+// a request without a live sign-in a 401, and a POST or WebSocket from
+// another origin a 403.

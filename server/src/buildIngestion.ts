@@ -1,12 +1,13 @@
 // Uploaded Build intake, ported from Sources/NitpickCore/BuildIngestion.swift
 // and the errors of Sources/NitpickCore/Build.swift. A browser uploads files,
-// not bundles, so only a zip is accepted: the server extracts it, finds the
-// first .app breadth-first and reads the Build's identity from its Info.plist.
+// not bundles, so an iOS Build comes as a zip: the server extracts it, finds
+// the first .app breadth-first and reads the Build's identity from its
+// Info.plist. An Android Build is the .apk itself, read with aapt2 (issue 13).
 import type { Dirent } from "node:fs"
 import { readdir, readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import type { Build } from "@nitpick/core"
+import { buildPlatform, type Build } from "@nitpick/core"
 import { parse, type PlistValue } from "plist"
 import {
   SubprocessFailure,
@@ -31,6 +32,14 @@ export type BuildIngestFailure =
       readonly bundleName: string
       readonly platforms: ReadonlyArray<string>
     }
+  /** aapt2 couldn't read the .apk, or it names no valid package. */
+  | { readonly kind: "unreadableAPK"; readonly apkName: string }
+  | {
+      readonly kind: "missingManifestKeys"
+      readonly apkName: string
+      readonly keys: ReadonlyArray<string>
+    }
+  | { readonly kind: "noLauncherActivity"; readonly apkName: string }
 
 export class BuildIngestError extends Error {
   readonly failure: BuildIngestFailure
@@ -45,7 +54,7 @@ export class BuildIngestError extends Error {
 function message(failure: BuildIngestFailure): string {
   switch (failure.kind) {
     case "unsupportedFileType":
-      return `“${failure.fileName}” is not a Build. Drop or choose a zip containing a simulator .app.`
+      return `“${failure.fileName}” is not a Build. Drop or choose a zip containing a simulator .app, or an Android .apk.`
     case "noAppBundleInArchive":
       return `“${failure.archiveName}” contains no .app bundle.`
     case "missingInfoPlist":
@@ -61,26 +70,35 @@ function message(failure: BuildIngestFailure): string {
           : failure.platforms.join(", ")
       return `“${failure.bundleName}” is built for ${built}, not the iOS simulator. Ask for a simulator Build from CI.`
     }
+    case "unreadableAPK":
+      return `“${failure.apkName}” can't be read as an Android app. Is it a complete .apk?`
+    case "missingManifestKeys":
+      return `The manifest in “${failure.apkName}” is missing ${failure.keys.join(", ")}.`
+    case "noLauncherActivity":
+      return `“${failure.apkName}” has no launcher activity, so nitpick can't open it.`
   }
 }
 
 /**
- * The uploaded file's name when it names a zip, so the upload is refused
- * before its bytes are read. Like Foundation's pathExtension, a name that is
- * only dots before the extension (".zip", "..zip") has no extension.
+ * The uploaded file's name and kind when it names a zip or an .apk, so the
+ * upload is refused before its bytes are read. Like Foundation's
+ * pathExtension, a name that is only dots before the extension (".zip",
+ * "..apk") has no extension.
  */
-export function zipArchiveName(fileName: string): string {
+export function buildUploadName(fileName: string): {
+  readonly name: string
+  /** The name without its extension. */
+  readonly stem: string
+  readonly kind: "zip" | "apk"
+} {
   const name = basename(fileName)
   const dot = name.lastIndexOf(".")
   const stem = name.slice(0, dot)
-  const isZip =
-    dot > 0 &&
-    !/^\.+$/.test(stem) &&
-    name.slice(dot + 1).toLowerCase() === "zip"
-  if (!isZip) {
+  const kind = name.slice(dot + 1).toLowerCase()
+  if (dot <= 0 || /^\.+$/.test(stem) || (kind !== "zip" && kind !== "apk")) {
     throw new BuildIngestError({ kind: "unsupportedFileType", fileName: name })
   }
-  return name
+  return { name, stem, kind }
 }
 
 /**
@@ -235,14 +253,81 @@ function isDictionary(
   )
 }
 
+/**
+ * Reads an Android Build's identity from the .apk at `apk.path` with
+ * `aapt2 dump badging`: the package name, version name and version code. An
+ * .apk without a launcher activity is refused here, as an .app built for
+ * another platform is, since nothing could open it on the emulator.
+ */
+export async function readBuildFromAPK(
+  runner: SubprocessRunner,
+  aapt2: string,
+  apk: { readonly path: string; readonly name: string }
+): Promise<Build> {
+  const result = await runner.run({
+    executablePath: aapt2,
+    arguments: ["dump", "badging", apk.path],
+  })
+  const badging = String(result.standardOutput)
+  const packageLine = /^package: (.*)$/m.exec(badging)?.[1]
+  if (result.exitCode !== 0 || packageLine === undefined) {
+    throw new BuildIngestError({ kind: "unreadableAPK", apkName: apk.name })
+  }
+  const attribute = (key: string) =>
+    new RegExp(`(?:^| )${key}='([^']*)'`).exec(packageLine)?.[1]
+  const bundleID = attribute("name")
+  if (bundleID === undefined || !packageName.test(bundleID)) {
+    throw new BuildIngestError({ kind: "unreadableAPK", apkName: apk.name })
+  }
+  const version = nonEmpty(attribute("versionName"))
+  const buildNumber = nonEmpty(attribute("versionCode"))
+  if (version === undefined || buildNumber === undefined) {
+    throw new BuildIngestError({
+      kind: "missingManifestKeys",
+      apkName: apk.name,
+      keys: [
+        ...(version === undefined ? ["versionName"] : []),
+        ...(buildNumber === undefined ? ["versionCode"] : []),
+      ],
+    })
+  }
+  if (!/^launchable-activity: /m.test(badging)) {
+    throw new BuildIngestError({
+      kind: "noLauncherActivity",
+      apkName: apk.name,
+    })
+  }
+  return {
+    identity: { bundleID, version, buildNumber },
+    appBundleURL: pathToFileURL(apk.path).href,
+  }
+}
+
+/** A package name as Android accepts it: dotted Java identifiers. */
+export const packageName = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/
+
 /** The .app on disk, without the URL's trailing slash, as Swift's `path`. */
 export function appBundlePath(build: Build): string {
   return fileURLToPath(build.appBundleURL).slice(0, -1)
 }
 
-/** The name the page shows for a Build: its .app's name without `.app`. */
+/** An Android Build's .apk on disk. */
+export function apkPath(build: Build): string {
+  return fileURLToPath(build.appBundleURL)
+}
+
+/**
+ * The name the page shows for a Build: its .app's name without `.app`, or
+ * its .apk's without `.apk`.
+ */
 export function buildName(build: Build): string {
-  return basename(appBundlePath(build)).replace(/\.app$/, "")
+  return buildPlatform(build) === "android"
+    ? basename(apkPath(build), ".apk")
+    : basename(appBundlePath(build)).replace(/\.app$/, "")
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return value === undefined || value === "" ? undefined : value
 }
 
 /** Not locale-aware, like the Swift app's `<` on names. */

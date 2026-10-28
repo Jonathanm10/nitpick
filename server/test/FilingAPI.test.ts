@@ -175,7 +175,11 @@ describe("File all", () => {
       filedBy: { login: "vera", fullName: "Vera Baumann" },
     }
     expect(await review(h)).toEqual({
-      build: { name: "ReviewMe", identity: session.build.identity },
+      build: {
+        name: "ReviewMe",
+        identity: session.build.identity,
+        platform: "ios",
+      },
       filing: { status: "filed", result: entry },
     })
     expect(await (await h.app.request("/api/history")).json()).toEqual({
@@ -324,6 +328,7 @@ describe("File all", () => {
       build: {
         name: "ReviewMe",
         identity: sessionFrom(golden.session).build.identity,
+        platform: "ios",
       },
       filing: { status: "idle" },
     })

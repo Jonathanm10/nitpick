@@ -6,7 +6,12 @@ import { readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { parse } from "plist"
 import { SubprocessFailure, type SubprocessRunner } from "../subprocess.ts"
-import type { HostHealth, HostProblem, SimulatorDevice } from "./DeviceHost.ts"
+import type {
+  AndroidProblem,
+  HostHealth,
+  HostProblem,
+  SimulatorDevice,
+} from "./DeviceHost.ts"
 import {
   listSimulatorDevices,
   MalformedDeviceList,
@@ -24,6 +29,33 @@ export function hostProblemReason(problem: HostProblem): string {
       return "Xcode is installed on the Device Host, but its simulator tools aren't working yet."
     case "missingIOSRuntime":
       return "No iOS simulator is ready to use on the Device Host: the iOS platform isn't installed."
+  }
+}
+
+/**
+ * Why the page lists no Android emulator. The fix steps live in the ops
+ * runbook, as the iOS ones do.
+ */
+export function androidProblemReason(problem: AndroidProblem): string {
+  switch (problem.kind) {
+    case "sdkMissing":
+      return "The Android SDK isn't installed on the Device Host, so Android Builds can't be reviewed."
+    case "emulatorMissing":
+      return "The Android Emulator isn't installed on the Device Host, so Android Builds can't be reviewed."
+    case "buildToolsMissing":
+      return "The Android SDK Build-Tools aren't installed on the Device Host, so an .apk can't be read."
+    case "ffmpegMissing":
+      return "ffmpeg with libx264 isn't installed on the Device Host, so Android emulators can't stream."
+    case "noEmulator":
+      return "No Android emulator is set up on the Device Host: it needs an AVD with an installed system image."
+  }
+}
+
+/** The host can't do what an Android Build needs. */
+export class AndroidUnavailable extends Error {
+  constructor(problem: AndroidProblem) {
+    super(androidProblemReason(problem))
+    this.name = "AndroidUnavailable"
   }
 }
 

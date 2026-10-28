@@ -29,6 +29,33 @@ const device: SimulatorDevice = {
   isRuntimeAvailable: true,
 }
 
+function emulator(running: { serial?: string } = {}): SimulatorDevice {
+  return {
+    udid: "nitpick-proof",
+    name: "Pixel 10",
+    osName: "Android 17",
+    isBooted: running.serial !== undefined,
+    isRuntimeAvailable: true,
+    platform: "android",
+    ...running,
+  }
+}
+
+const serial = "emulator-5554"
+/** serve-emu's WebRTC signaling, the only Android routes besides input. */
+const signalingRoutes = [
+  `/vendor/serve-emu/webrtc/offer?device=${serial}`,
+  `/vendor/serve-emu/webrtc/close?device=${serial}`,
+]
+
+function posting(headers: Record<string, string>, body = "{}") {
+  return {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body,
+  }
+}
+
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
@@ -46,7 +73,10 @@ async function fixture(
     label: "Fake host",
     devices: { list },
     checkHealth: async () => ({ status: "ready", devices: await list() }),
-    launchBuild: async () => {},
+    launchBuild: async (_build, device) => device,
+    readAndroidBuild: async () => {
+      throw new Error("no .apk read here")
+    },
     captureScreen: async () => {
       throw new Error("not captured here")
     },
@@ -75,6 +105,18 @@ describe("device hub proxy: the auth and allowlist matrix", () => {
       const { app, hub } = await fixture()
 
       const response = await app.request(`${proxy}${route}`)
+
+      expect(response.status).toBe(401)
+      expect(hub.requests).toEqual([])
+    }
+  )
+
+  test.each(signalingRoutes)(
+    "without auth, POST %s answers 401 and nothing reaches the hub",
+    async (route) => {
+      const { app, hub } = await fixture()
+
+      const response = await app.request(`${proxy}${route}`, posting({}))
 
       expect(response.status).toBe(401)
       expect(hub.requests).toEqual([])
@@ -140,7 +182,27 @@ describe("device hub proxy: the auth and allowlist matrix", () => {
     `/vendor/serve-sim/helper/${udid}/%2e%2e/%2e%2e/exec`,
     "/vendor/serve-sim/helper/ws",
     "/vendor/serve-emu/ws",
+    `/vendor/serve-emu/ws?device=${serial}`,
     "/vendor/serve-emu/api/devices",
+    `/vendor/serve-emu/api/screenshot?device=${serial}`,
+    `/vendor/serve-emu/api/apps/install?device=${serial}`,
+    `/vendor/serve-emu/api/apps/launch?device=${serial}`,
+    `/vendor/serve-emu/api/files/import?device=${serial}`,
+    `/vendor/serve-emu/api/tap?device=${serial}`,
+    `/vendor/serve-emu/api/text?device=${serial}`,
+    `/vendor/serve-emu/api/location?device=${serial}`,
+    `/vendor/serve-emu/api/stream-settings?device=${serial}`,
+    `/vendor/serve-emu/api/stream-mode?device=${serial}`,
+    "/vendor/serve-emu/api/avds/start",
+    "/vendor/serve-emu/api/avds/stop",
+    `/vendor/serve-emu/api/logcat?device=${serial}`,
+    `/vendor/serve-emu/api?device=${serial}`,
+    `/vendor/serve-emu/health?device=${serial}`,
+    `/vendor/serve-emu/webrtc/stats?device=${serial}`,
+    "/vendor/serve-emu/webrtc/offer",
+    "/vendor/serve-emu/webrtc/offer?device=nitpick-proof",
+    `/vendor/serve-emu/webrtc/offer?device=${serial}x`,
+    `/vendor/serve-emu/webrtc/../api/apps/install?device=${serial}`,
     "/api/devices",
     "/api/devices/boot",
     "/",
@@ -189,6 +251,45 @@ describe("device hub proxy: the auth and allowlist matrix", () => {
     }
   )
 
+  test.each(
+    signalingRoutes.flatMap((route) =>
+      ["GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"].map((method) => [
+        method,
+        route,
+      ])
+    )
+  )(
+    "%s on the signaling route %s answers 405 with or without auth",
+    async (method, route) => {
+      const { app, hub, signedIn } = await fixture()
+
+      for (const headers of [{}, signedIn]) {
+        const response = await app.request(`${proxy}${route}`, {
+          method,
+          headers,
+        })
+        expect(response.status).toBe(405)
+        expect(response.headers.get("allow")).toBe("POST")
+      }
+      expect(hub.requests).toEqual([])
+    }
+  )
+
+  test.each(signalingRoutes)(
+    "POST %s from another origin of the same site answers 403",
+    async (route) => {
+      const { app, hub, signedIn } = await fixture()
+
+      const response = await app.request(
+        `${proxy}${route}`,
+        posting({ ...signedIn, origin: "http://nitpick.test:5999" })
+      )
+
+      expect(response.status).toBe(403)
+      expect(hub.requests).toEqual([])
+    }
+  )
+
   test("a hub that isn't running answers 503 to a signed-in request", async () => {
     const { app, hub, signedIn } = await fixture()
     hub.running = false
@@ -222,6 +323,129 @@ describe("device hub proxy: forwarding", () => {
     const forwarded = hub.requests[0]!.headers
     expect(forwarded.authorization).toBe(`Bearer ${hub.token}`)
     expect(forwarded.cookie).toBeUndefined()
+  })
+
+  test("signed in, a WebRTC offer reaches serve-emu as JSON with the hub's token, and only its answer comes back", async () => {
+    const { app, hub, signedIn } = await fixture()
+    const offer = JSON.stringify({ type: "offer", sdp: "v=0 offer" })
+
+    const response = await app.request(
+      `${proxy}/vendor/serve-emu/webrtc/offer?device=${serial}&token=guess`,
+      posting(
+        {
+          cookie: `${signedIn.cookie}; other=1`,
+          host: "nitpick.test",
+          origin: "http://nitpick.test",
+        },
+        offer
+      )
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ type: "answer", sdp: "v=0 answer" })
+    expect(response.headers.get("set-cookie")).toBeNull()
+    expect(
+      hub.requests.map(({ method, url, body }) => ({ method, url, body }))
+    ).toEqual([
+      {
+        method: "POST",
+        url: `/vendor/serve-emu/webrtc/offer?device=${serial}`,
+        body: offer,
+      },
+    ])
+    const forwarded = hub.requests[0]!.headers
+    expect(forwarded.authorization).toBe(`Bearer ${hub.token}`)
+    expect(forwarded["content-type"]).toBe("application/json")
+    expect(forwarded.cookie).toBeUndefined()
+    expect(forwarded.origin).toBeUndefined()
+  })
+
+  describe("a WebRTC session, whose media flows outside the proxy", () => {
+    const sessionId = "6f0c3a52-58f1-4b7e-9d43-2a0e8c1f7b10"
+    const sameOrigin = { host: "nitpick.test", origin: "http://nitpick.test" }
+    const signal = (
+      app: Awaited<ReturnType<typeof fixture>>["app"],
+      cookie: string,
+      path: "offer" | "close"
+    ) =>
+      app.request(
+        `${proxy}/vendor/serve-emu/webrtc/${path}?device=${serial}`,
+        posting(
+          { cookie, ...sameOrigin },
+          JSON.stringify({ type: "offer", sdp: "v=0 offer", sessionId })
+        )
+      )
+    const closes = (hub: FakeDeviceHub) =>
+      hub.requests.filter((request) => request.url.includes("/webrtc/close"))
+
+    test("closes on serve-emu when the sign-in that opened it ends", async () => {
+      const { app, hub, signedIn } = await fixture()
+
+      expect((await signal(app, signedIn.cookie, "offer")).status).toBe(200)
+      await app.request("/api/sign-out", { method: "POST", headers: signedIn })
+
+      await eventually(() => expect(closes(hub)).toHaveLength(1))
+      const [close] = closes(hub)
+      expect(close!.url).toBe(`/vendor/serve-emu/webrtc/close?device=${serial}`)
+      expect(JSON.parse(close!.body ?? "")).toEqual({ sessionId })
+      expect(close!.headers.authorization).toBe(`Bearer ${hub.token}`)
+    })
+
+    test("the viewer's own close ends following it", async () => {
+      const { app, hub, signedIn } = await fixture()
+
+      await signal(app, signedIn.cookie, "offer")
+      await signal(app, signedIn.cookie, "close")
+      await app.request("/api/sign-out", { method: "POST", headers: signedIn })
+      await new Promise((resolve) => setTimeout(resolve, 100))
+
+      expect(closes(hub)).toHaveLength(1)
+    })
+
+    test.each([
+      ["serve-emu refuses", serial, " ".repeat(4096)],
+      ["names another emulator", "emulator-5556", ""],
+    ])(
+      "a viewer's close that %s still leaves it followed",
+      async (_, device, padding) => {
+        const { app, hub, signedIn } = await fixture()
+
+        await signal(app, signedIn.cookie, "offer")
+        await app.request(
+          `${proxy}/vendor/serve-emu/webrtc/close?device=${device}`,
+          posting(
+            { cookie: signedIn.cookie, ...sameOrigin },
+            `{"sessionId":"${sessionId}"}${padding}`
+          )
+        )
+        await app.request("/api/sign-out", {
+          method: "POST",
+          headers: signedIn,
+        })
+
+        await eventually(() =>
+          expect(closes(hub).map((request) => request.url)).toEqual([
+            `/vendor/serve-emu/webrtc/close?device=${device}`,
+            `/vendor/serve-emu/webrtc/close?device=${serial}`,
+          ])
+        )
+      }
+    )
+
+    test("a signaling body past serve-emu's own 256 KiB cap is refused before the hub", async () => {
+      const { app, hub, signedIn } = await fixture()
+
+      const response = await app.request(
+        `${proxy}/vendor/serve-emu/webrtc/offer?device=${serial}`,
+        posting(
+          { cookie: signedIn.cookie, ...sameOrigin },
+          "x".repeat(256 * 1024 + 1)
+        )
+      )
+
+      expect(response.status).toBe(413)
+      expect(hub.requests).toEqual([])
+    })
   })
 
   test("an MJPEG stream re-sends its last frame once the screen goes still", async () => {
@@ -369,8 +593,43 @@ describe("device hub proxy: the input socket", () => {
     expect(opened.frames).toEqual([[0x83]])
   })
 
+  test("an emulator's socket carries input only: the proxy asks serve-emu for no video", async () => {
+    const { hub, origin, signedIn } = await proxied()
+
+    const opened = await open(
+      `ws://${origin}/api/device-hub/vendor/serve-emu/ws?device=${serial}&video=1&frame-meta=1`,
+      { ...signedIn, origin: `http://${origin}` }
+    )
+
+    expect("socket" in opened).toBe(true)
+    expect(hub.socketRequests.map((request) => request.url)).toEqual([
+      `/vendor/serve-emu/ws?device=${serial}&video=0`,
+    ])
+    expect(hub.socketRequests[0]!.headers.authorization).toBe(
+      `Bearer ${hub.token}`
+    )
+  })
+
   test.each([
     ["without a sign-in", {}, socketPath, 401],
+    [
+      "to an emulator without a sign-in",
+      {},
+      `/api/device-hub/vendor/serve-emu/ws?device=${serial}`,
+      401,
+    ],
+    [
+      "to an emulator from another origin",
+      "foreign",
+      `/api/device-hub/vendor/serve-emu/ws?device=${serial}`,
+      403,
+    ],
+    [
+      "to serve-emu without an emulator serial",
+      "cookie",
+      "/api/device-hub/vendor/serve-emu/ws?device=nitpick-proof",
+      404,
+    ],
     ["from another origin of the same site", "foreign", socketPath, 403],
     [
       "to serve-sim's exec socket",
@@ -460,8 +719,26 @@ describe("the stream route", () => {
     expect(await refused.json()).toMatchObject({ code: "signIn" })
     expect(hub.attached).toEqual([])
 
-    expect((await start(signedIn)).status).toBe(204)
+    const started = await start(signedIn)
+    expect(started.status).toBe(200)
+    expect(await started.json()).toEqual({ hubDevice: udid })
     expect(hub.attached).toEqual([udid])
+  })
+
+  test("an emulator streams by its serial, which serve-emu attaches itself", async () => {
+    const { app, hub, signedIn } = await fixture({
+      devices: [emulator({ serial: "emulator-5554" })],
+    })
+
+    const response = await app.request("/api/device-stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...signedIn },
+      body: JSON.stringify({ deviceUDID: "nitpick-proof" }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ hubDevice: "emulator-5554" })
+    expect(hub.attached).toEqual([])
   })
 
   test("a device that stopped can't be streamed", async () => {

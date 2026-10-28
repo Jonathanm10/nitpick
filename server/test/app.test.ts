@@ -23,7 +23,10 @@ function hostListing(list: DeviceHost["devices"]["list"]): DeviceHost {
       status: "ready",
       devices: [...(await list())],
     }),
-    launchBuild: async () => {},
+    launchBuild: async (_build, device) => device,
+    readAndroidBuild: async () => {
+      throw new Error("no .apk read here")
+    },
     captureScreen: async () => {
       throw new Error("not captured here")
     },

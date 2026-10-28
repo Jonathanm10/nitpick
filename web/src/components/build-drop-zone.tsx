@@ -14,7 +14,7 @@ interface BuildDropZoneProps {
 
 /**
  * Home's entry point, after ContentView's drop zone: empty, it asks for a
- * zipped simulator Build by drop or by the picker; loaded, it names the Build
+ * zipped simulator Build or an Android .apk by drop or by the picker; loaded, it names the Build
  * under review.
  */
 export function BuildDropZone({
@@ -37,7 +37,7 @@ export function BuildDropZone({
         <>
           <FileArchiveIcon className="size-10 text-muted-foreground/60" />
           <p className="text-lg text-muted-foreground">
-            Drop a simulator Build (.zip), or choose one.
+            Drop a simulator Build (.zip) or an Android .apk, or choose one.
           </p>
         </>
       ) : (
@@ -59,7 +59,7 @@ export function BuildDropZone({
       <input
         ref={input}
         type="file"
-        accept=".zip,application/zip"
+        accept=".zip,application/zip,.apk,application/vnd.android.package-archive"
         hidden
         onChange={(event) => {
           const file = event.target.files?.[0]
