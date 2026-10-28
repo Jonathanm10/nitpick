@@ -3,6 +3,7 @@ import {
   annotationColors,
   buildPlatform,
   designSnapshotContentType,
+  historyFiledBy,
   DesignSnapshotError,
   sendFeedback,
   ShellBusy,
@@ -33,6 +34,7 @@ import type {
   HostResponse,
   ProjectsResponse,
   SignedInResponse,
+  SignInMethodResponse,
   ReadyHost,
   ReviewStateResponse,
   SessionSummary,
@@ -81,19 +83,23 @@ import {
 import type { HistoryStore } from "./historyStore.ts"
 import { FindingNotFound, ReviewRefused } from "./reviewer.ts"
 import {
-  rejectedTokenMessage,
+  hubCallbackPath,
+  hubSignInCookie,
+  hubSignInOf,
+  rejectedMessage,
   SignInFailed,
   signInCookie,
   signedOutCookie,
   type Reviewers,
   type SignedIn,
 } from "./reviewers.ts"
+import { HubRefused } from "./youTrackHub.ts"
 
 export interface AppOptions {
   readonly deviceHost: DeviceHost
   /** Who is signed in; each request acts for the Reviewer its cookie names. */
   readonly reviewers: Reviewers
-  /** The shared History every Reviewer reads. */
+  /** Every Reviewer's History, of which each reads their own. */
   readonly history: HistoryStore
   /** This server's version, for a Feedback's Environment. */
   readonly serverVersion: string
@@ -177,6 +183,58 @@ export function createApp({
     return c.body(null, 204)
   })
 
+  // How the page signs a Reviewer in: through YouTrack's login when nitpick
+  // is registered with YouTrack's Hub, otherwise with a permanent token.
+  app.get("/api/sign-in", (c) =>
+    c.json({
+      method: reviewers.signInThroughHub ? "youTrack" : "token",
+    } satisfies SignInMethodResponse)
+  )
+
+  // Off to YouTrack's login. The state and PKCE verifier stay in a cookie
+  // only the way back reads, so a code sent back to another browser, or to
+  // this one after it started another sign-in, signs no one in.
+  app.get("/api/sign-in/youtrack", (c) => {
+    const start = reviewers.startHubSignIn(hubCallbackURL(c))
+    c.header("Set-Cookie", hubSignInCookie(start, isSecure(c)))
+    return c.redirect(start.url, 302)
+  })
+
+  // Back from YouTrack. What went wrong reaches the page as a code, so no
+  // other site can put words on nitpick's sign-in.
+  app.get(hubCallbackPath, async (c) => {
+    const started = hubSignInOf(c.req.header("cookie"))
+    c.header("Set-Cookie", hubSignInCookie(undefined, isSecure(c)))
+    const code = c.req.query("code")
+    if (started === undefined || c.req.query("state") !== started.state) {
+      return c.redirect("/?sign-in=expired", 302)
+    }
+    if (c.req.query("error") === "access_denied") {
+      return c.redirect("/?sign-in=denied", 302)
+    }
+    if (code === undefined) return c.redirect("/?sign-in=failed", 302)
+    try {
+      const { id } = await reviewers.finishHubSignIn(
+        code,
+        hubCallbackURL(c),
+        started.verifier
+      )
+      // A sign-in this browser still held is replaced, not left behind.
+      const previous = reviewers.authenticate(c.req.header("cookie"))
+      if (previous.status === "signedIn") {
+        await reviewers.signOut(previous.signedIn)
+      }
+      c.header("Set-Cookie", signInCookie(id, isSecure(c)), { append: true })
+      return c.redirect("/", 302)
+    } catch (error) {
+      // Mostly nitpick's registration with Hub, for the host's operator.
+      console.error(
+        `Signing in through YouTrack failed: ${error instanceof Error ? error.message : "unknown error"}`
+      )
+      return c.redirect("/?sign-in=failed", 302)
+    }
+  })
+
   // Every other route acts for a signed-in Reviewer, or answers 401.
   app.use("/api/*", async (c, next) => {
     const authentication = reviewers.authenticate(c.req.header("cookie"))
@@ -246,12 +304,13 @@ export function createApp({
     return c.body(null, 204)
   })
 
-  app.get("/api/history", async (c) =>
-    c.json({
-      entries: await history.entries(),
-      reviewer: signedInTo(c).user,
+  app.get("/api/history", async (c) => {
+    const reviewer = signedInTo(c).user
+    return c.json({
+      entries: historyFiledBy(await history.entries(), reviewer),
+      reviewer,
     } satisfies HistoryResponse)
-  )
+  })
 
   // The Swift app's History files, or a zip of its history folder. A
   // designer's whole History is a few megabytes at most.
@@ -501,7 +560,7 @@ export function createApp({
       error.failure.kind === "tokenRejected"
     ) {
       await reviewers.endRejected(signedIn.signIn)
-      return signInNeeded(c, rejectedTokenMessage)
+      return signInNeeded(c, rejectedMessage(signedIn.signIn))
     }
     const status = errorStatus(error)
     if (status === 500) console.error(error)
@@ -555,7 +614,7 @@ function errorStatus(error: unknown): ContentfulStatusCode {
     return 409
   }
   if (error instanceof EmulatorBootTimedOut) return 504
-  if (error instanceof YouTrackError) return 502
+  if (error instanceof YouTrackError || error instanceof HubRefused) return 502
   if (error instanceof DeviceStreamUnavailable) return 503
   return 500
 }
@@ -574,7 +633,7 @@ function signInNeeded(c: Context, reason: string | undefined): Response {
   c.header("Set-Cookie", signedOutCookie(isSecure(c)))
   return c.json(
     {
-      error: reason ?? "Sign in with your YouTrack token to continue.",
+      error: reason ?? "Sign in to continue.",
       code: "signIn",
     } satisfies ErrorResponse,
     401
@@ -583,6 +642,11 @@ function signInNeeded(c: Context, reason: string | undefined): Response {
 
 function isSecure(c: Context): boolean {
   return new URL(c.req.url).protocol === "https:"
+}
+
+/** Where Hub sends the browser back: this server, as the browser reached it. */
+function hubCallbackURL(c: Context): string {
+  return `${new URL(c.req.url).origin}${hubCallbackPath}`
 }
 
 function malformedRequest(): HTTPException {

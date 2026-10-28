@@ -69,6 +69,25 @@ describe("Server config", () => {
     ).toThrow(/is not secure/)
   })
 
+  test("nitpick's service in YouTrack's Hub: a client ID, with a secret for a confidential client, or none for token sign-in", () => {
+    const hub = (environment: Record<string, string>) =>
+      loadConfig(environment, noFile).hubClient
+
+    expect(hub({})).toBeUndefined()
+    expect(hub({ NITPICK_YOUTRACK_CLIENT_ID: "nitpick-id" })).toEqual({
+      clientID: "nitpick-id",
+    })
+    expect(
+      hub({
+        NITPICK_YOUTRACK_CLIENT_ID: "nitpick-id",
+        NITPICK_YOUTRACK_CLIENT_SECRET: "fictional-secret",
+      })
+    ).toEqual({ clientID: "nitpick-id", clientSecret: "fictional-secret" })
+    expect(() =>
+      hub({ NITPICK_YOUTRACK_CLIENT_SECRET: "fictional-secret" })
+    ).toThrow(/NITPICK_YOUTRACK_CLIENT_SECRET needs NITPICK_YOUTRACK_CLIENT_ID/)
+  })
+
   test("the cap on booted devices is a whole number from 1, and no cap when unset", () => {
     expect(
       loadConfig({ NITPICK_MAX_BOOTED_DEVICES: "1" }, noFile).maxBootedDevices

@@ -394,14 +394,15 @@ describe("The filing result", () => {
         findings: [{ summary: "Vera's Finding" }],
       },
     })
-    // History's newest entry is Noor's, which Vera's result must not take.
+    // The store's newest entry is Noor's, which Vera's result must not take,
+    // and Vera's History shows only hers.
+    expect(
+      (await vera.history.entries()).map((entry) => entry.filedBy?.login)
+    ).toEqual(["noor", "vera"])
     const { entries } = (await (
       await vera.app.request("/api/history")
     ).json()) as HistoryResponse
-    expect(entries.map((entry) => entry.filedBy?.login)).toEqual([
-      "noor",
-      "vera",
-    ])
+    expect(entries.map((entry) => entry.filedBy?.login)).toEqual(["vera"])
   })
 })
 

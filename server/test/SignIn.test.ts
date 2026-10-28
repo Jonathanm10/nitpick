@@ -65,7 +65,7 @@ function server(
 ) {
   const data = options.data ?? temporaryDirectory()
   const fake = options.fake ?? new FakeYouTrack()
-  const signIns = new SignInStore(data, fake.instanceURL, options.now)
+  const signIns = new SignInStore(data, fake.instanceURL, { now: options.now })
   const history = new HistoryStore(join(data, "history"))
   const deviceHost = new FakeDeviceHost([iPhone])
   const reviewers = new Reviewers({
@@ -194,6 +194,9 @@ const udid = "C0FFEE00-0000-4000-8000-000000000010"
 const registeredRoutes = [
   "POST /api/sign-in",
   "POST /api/sign-out",
+  "GET /api/sign-in",
+  "GET /api/sign-in/youtrack",
+  "GET /api/sign-in/youtrack/callback",
   "ALL /api/device-hub/*",
   "GET /api/me",
   "GET /api/devices",
@@ -223,6 +226,11 @@ const registeredRoutes = [
   "GET /api/label-sprite",
   "POST /api/device-stream",
 ]
+
+/** The routes that sign in and out, which need no sign-in themselves. */
+const signInRoutes = new Set(
+  registeredRoutes.filter((route) => /^\w+ \/api\/sign-(in|out)\b/.test(route))
+)
 
 /** A request a route answers: its parameters filled in, a real stream path. */
 function sampleRequest(route: string): { method: string; path: string } {
@@ -262,9 +270,7 @@ describe("the auth matrix", () => {
     expect(registered).toEqual(new Set(registeredRoutes))
 
     for (const route of registeredRoutes) {
-      if (route === "POST /api/sign-in" || route === "POST /api/sign-out") {
-        continue
-      }
+      if (signInRoutes.has(route)) continue
       const { method, path } = sampleRequest(route)
       for (const [name, headers] of Object.entries(credentials)) {
         const response = await h.app.request(path, { method, headers })
@@ -593,7 +599,7 @@ describe("signing out", () => {
     )
     expect(signInFiles(h)).toEqual([])
     expect(await (await get(h, "/api/review", cookie)).json()).toEqual({
-      error: "Sign in with your YouTrack token to continue.",
+      error: "Sign in to continue.",
       code: "signIn",
     })
     const again = await signedIn(h, "perm:vera")
@@ -604,7 +610,7 @@ describe("signing out", () => {
 })
 
 describe("two Reviewers signed in at once", () => {
-  test("each sees their own open session, files as themselves, and both see the shared History", async () => {
+  test("each sees their own open session, files as themselves, and sees only their own History", async () => {
     const h = server()
     await stage(h, "vera", ["Vera's button color"])
     await stage(h, "noor", ["Noor's truncated label", "Noor's misaligned icon"])
@@ -651,9 +657,9 @@ describe("two Reviewers signed in at once", () => {
         await get(h, "/api/history", cookie)
       ).json()) as HistoryResponse
       expect(history.reviewer).toEqual(reviewer)
-      expect(
-        history.entries.map((entry) => entry.filedBy?.login).sort()
-      ).toEqual(["noor", "vera"])
+      expect(history.entries.map((entry) => entry.filedBy?.login)).toEqual([
+        reviewer.login,
+      ])
     }
   })
 

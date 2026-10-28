@@ -204,7 +204,7 @@ describe("Send feedback", () => {
 })
 
 describe("The History page's data", () => {
-  test("an entry the Swift app wrote decodes from the golden, filer unknown", async () => {
+  test("an entry the Swift app wrote decodes from the golden, filer unknown, and is no Reviewer's History", async () => {
     const h = harness()
     mkdirSync(h.history.directory, { recursive: true })
     copyFileSync(
@@ -219,19 +219,20 @@ describe("The History page's data", () => {
       await h.app.request("/api/history")
     ).json()) as HistoryResponse
 
+    expect(await h.history.entries()).toEqual([
+      historyEntryFrom(
+        goldenInput<{ historyEntry: DescribedHistoryEntry }>(
+          "stored-history-entry/history-entry.input.json"
+        ).historyEntry
+      ),
+    ])
     expect(body).toEqual({
-      entries: [
-        historyEntryFrom(
-          goldenInput<{ historyEntry: DescribedHistoryEntry }>(
-            "stored-history-entry/history-entry.input.json"
-          ).historyEntry
-        ),
-      ],
+      entries: [],
       reviewer: { login: "vera", fullName: "Vera Baumann" },
     })
   })
 
-  test("lists newest session first, and stays readable without YouTrack, naming who asks", async () => {
+  test("lists the asking Reviewer's own sessions, newest first, and stays readable without YouTrack, naming who asks", async () => {
     const h = harness()
     h.fake.intercept = () => ({ status: 503 })
     const entry = historyEntryFrom(
@@ -239,9 +240,11 @@ describe("The History page's data", () => {
         "stored-history-entry/history-entry.input.json"
       ).historyEntry
     )
-    await h.history.record({ ...entry, startedAt: 100 })
-    await h.history.record({ ...entry, startedAt: 300 })
-    await h.history.record({ ...entry, startedAt: 200 })
+    const noor = { login: "noor", fullName: "Noor Haddad" }
+    await h.history.record({ ...entry, startedAt: 100, filedBy: vera })
+    await h.history.record({ ...entry, startedAt: 300, filedBy: vera })
+    await h.history.record({ ...entry, startedAt: 400, filedBy: noor })
+    await h.history.record({ ...entry, startedAt: 200, filedBy: vera })
 
     const body = (await (
       await h.app.request("/api/history")

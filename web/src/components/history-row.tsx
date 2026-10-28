@@ -37,11 +37,6 @@ export function HistoryRow({ entry }: { readonly entry: HistoryEntry }) {
         >
           {formatSessionStart(entry.startedAt)}
         </time>
-        {entry.filedBy !== undefined && (
-          <span className="text-muted-foreground">
-            · filed by {entry.filedBy.fullName}
-          </span>
-        )}
       </header>
       <ul className="flex flex-col gap-0.5">
         {entry.findings.map((finding) => {

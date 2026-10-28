@@ -8,8 +8,8 @@ import type { useReview } from "@/lib/use-review"
 type Review = ReturnType<typeof useReview>
 
 /**
- * The shared History, after Sources/Nitpick/HistoryWindow.swift: every
- * Reviewer's filed Review Sessions, newest first, each entry fading in a
+ * The Reviewer's History, after Sources/Nitpick/HistoryWindow.swift: the
+ * Review Sessions they filed, newest first, each entry fading in a
  * beat after the one above. A page now, not a window, linked from the
  * header: ⌘Y opens the browser's own History. Import History brings in what
  * the Swift app filed.

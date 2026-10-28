@@ -71,8 +71,8 @@ export interface HistoryTrace {
 }
 
 /**
- * The entries `reviewer` filed, still newest first: the shared History's
- * slice the home trace reads.
+ * The entries `reviewer` filed, still newest first: their own History, the
+ * only one they read.
  */
 export function historyFiledBy(
   history: ReadonlyArray<HistoryEntry>,

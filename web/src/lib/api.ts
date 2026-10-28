@@ -17,6 +17,7 @@ import type {
   ReviewStateResponse,
   SessionPatch,
   SignedInResponse,
+  SignInMethodResponse,
   StartReviewRequest,
   StartReviewResponse,
   SwitchDeviceResponse,
@@ -85,6 +86,7 @@ function json(method: string, body: unknown): RequestInit {
 
 export const api = {
   me: () => call<SignedInResponse>("/api/me"),
+  signInMethod: () => call<SignInMethodResponse>("/api/sign-in"),
   // A POST body, so the token never sits in a URL or the browser's history.
   signIn: (token: string) =>
     call<SignedInResponse>("/api/sign-in", json("POST", { token })),

@@ -232,8 +232,8 @@ export class Reviewer {
   }
 
   /**
-   * Imports the Swift app's History files into the shared History, as filed
-   * by `importer`. Not a run: the review goes on beside it.
+   * Imports the Swift app's History files into `importer`'s History, as
+   * filed by them. Not a run: the review goes on beside it.
    */
   importHistory(
     uploads: ReadonlyArray<HistoryUpload>,
@@ -461,7 +461,7 @@ export class Reviewer {
   }
 
   /**
-   * Records the filed session in the shared History, then clears the open
+   * Records the filed session in its filer's History, then clears the open
    * slot with its captures. The entry exists before the slot clears, so a
    * crash between the two resumes into a fully filed session, which records
    * again over the same file. The Build stays loaded for the next review.

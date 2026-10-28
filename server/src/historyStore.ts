@@ -1,6 +1,6 @@
-// The shared History: every Reviewer's filed Review Sessions, one schema v1
+// Every Reviewer's History: the Review Sessions each filed, one schema v1
 // file each (Sources/NitpickCore/SessionPersistence.swift's history log),
-// readable by every Reviewer (PRD answer 2).
+// named by its filer. A Reviewer reads only their own (ADR-0014).
 //
 //   <data>/history/<session start>_<filer's login>.json
 import { link, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
@@ -52,7 +52,7 @@ export class HistoryStore {
   /**
    * Writes a filed session's entry. Recording the same session again, as a
    * resumed File all may, replaces it: the file is named by the session's
-   * start and its filer, a Review Session's identity in a shared History.
+   * start and its filer, a Review Session's identity across Reviewers.
    */
   async record(entry: HistoryEntry): Promise<void> {
     await writeAtomically(
@@ -63,9 +63,9 @@ export class HistoryStore {
 
   /**
    * Adds entries brought from elsewhere, the Swift app's own History, in
-   * order. An entry with the same session start and the same Issue IDs as
-   * one History holds, or one added earlier in the same import, is skipped,
-   * so importing a set again adds nothing.
+   * order. An entry with the same filer, session start and Issue IDs as one
+   * History holds, or one added earlier in the same import, is skipped, so
+   * importing a set again adds nothing.
    */
   import(
     entries: ReadonlyArray<HistoryEntry>
@@ -94,12 +94,12 @@ export class HistoryStore {
 }
 
 /**
- * A filed session as import tells it apart: when it started, to Swift's
- * exact double, and which Issues it filed, in any order.
+ * A filed session as import tells it apart: whose History it's in, when it
+ * started, to Swift's exact double, and which Issues it filed, in any order.
  */
 function sessionIdentity(entry: HistoryEntry): string {
   const issues = entry.findings.map((finding) => finding.issue.idReadable)
-  return JSON.stringify([entry.startedAt, issues.sort()])
+  return JSON.stringify([entry.filedBy?.login, entry.startedAt, issues.sort()])
 }
 
 /**

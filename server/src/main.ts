@@ -15,6 +15,7 @@ import { Reviewers } from "./reviewers.ts"
 import { SignInStore } from "./signInStore.ts"
 import { nodeProcessStarter, nodeSubprocessRunner } from "./subprocess.ts"
 import { readServerVersion } from "./version.ts"
+import { YouTrackHub } from "./youTrackHub.ts"
 
 const config = loadConfig(process.env)
 if (config.youTrackURL === undefined) {
@@ -29,7 +30,17 @@ if (!hasWebBuild) {
   console.log("No web/dist yet, so only /api is served; `pnpm build` makes it.")
 }
 
-const signIns = new SignInStore(config.dataDirectory, config.youTrackURL)
+const hub =
+  config.hubClient === undefined
+    ? undefined
+    : new YouTrackHub({
+        instanceURL: config.youTrackURL,
+        client: config.hubClient,
+        transport: fetchTransport,
+      })
+const signIns = new SignInStore(config.dataDirectory, config.youTrackURL, {
+  hub,
+})
 await signIns.load()
 
 // The hub and the server find the same Android SDK and ffmpeg.
@@ -59,6 +70,7 @@ const reviewers = new Reviewers({
   instanceURL: config.youTrackURL,
   transport: fetchTransport,
   signIns,
+  hub,
   dependencies: {
     deviceHost,
     runner: nodeSubprocessRunner,
