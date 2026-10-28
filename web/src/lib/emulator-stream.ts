@@ -33,6 +33,8 @@ const firstFrameTimeout = 15_000
  * the gathering complete, so the offer goes after this at the latest.
  */
 const gatheringTimeout = 1_500
+/** How often the viewer looks for the browser's keyframe requests. */
+const keyframeWatchInterval = 500
 
 export function createEmulatorStreamClient(
   serial: string,
@@ -48,6 +50,7 @@ export function createEmulatorStreamClient(
   let socket: WebSocket | null = null
   let firstFrame = false
   let firstFrameTimer: ReturnType<typeof setTimeout> | undefined
+  let keyframeWatch: ReturnType<typeof setInterval> | undefined
   const retryTimers = new Set<ReturnType<typeof setTimeout>>()
 
   const status = (next: DeviceStreamStatus) => {
@@ -157,6 +160,39 @@ export function createEmulatorStreamClient(
     }
   }
 
+  /**
+   * A screen change sends a burst of packets, and one lost from a frame
+   * leaves the picture frozen: the browser asks for a keyframe with a PLI,
+   * which serve-emu's publisher ignores, and a still screen sends no new
+   * frame. Each new PLI goes to serve-emu as the keyframe request its input
+   * socket takes instead.
+   */
+  const watchKeyframeRequests = () => {
+    let requested = 0
+    clearInterval(keyframeWatch)
+    keyframeWatch = setInterval(() => {
+      const connection = peer?.connection
+      if (connection === undefined) return
+      void connection.getStats().then((report) => {
+        let count = 0
+        report.forEach(
+          (entry: {
+            type: string
+            kind?: string
+            pliCount?: number
+            firCount?: number
+          }) => {
+            if (entry.type === "inbound-rtp" && entry.kind === "video") {
+              count = (entry.pliCount ?? 0) + (entry.firCount ?? 0)
+            }
+          }
+        )
+        if (count > requested) send({ type: "reset-video" })
+        requested = count
+      })
+    }, keyframeWatchInterval)
+  }
+
   const connectInput = () => {
     const session = generation
     const opened = new WebSocket(socketURL)
@@ -188,6 +224,7 @@ export function createEmulatorStreamClient(
     status({ kind: "connecting" })
     connectInput()
     void connectVideo()
+    watchKeyframeRequests()
   }
 
   function stop() {
@@ -195,6 +232,7 @@ export function createEmulatorStreamClient(
     stopped = true
     generation++
     clearTimeout(firstFrameTimer)
+    clearInterval(keyframeWatch)
     for (const timer of retryTimers) clearTimeout(timer)
     retryTimers.clear()
     closePeer()
