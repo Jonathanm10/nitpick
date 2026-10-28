@@ -1,0 +1,92 @@
+{
+  "checks": [
+    {
+      "name": "before: History holds only Noor's natively filed session",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "first import: 4 sessions imported",
+      "ok": true,
+      "detail": "6 files chosen, 37 ms from choosing to the result"
+    },
+    {
+      "name": "the truncated file is reported by name with today's message",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the newer-schema file is reported by name with today's message",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "after: History holds 5 sessions",
+      "ok": true,
+      "detail": "5 rows"
+    },
+    {
+      "name": "the imported golden names its importer",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the native entry names its filer",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the imported golden renders like the natively filed entry (same elements and classes)",
+      "ok": true,
+      "detail": "625 chars of markup"
+    },
+    {
+      "name": "the golden's Issue links survive exactly",
+      "ok": true,
+      "detail": "RM-421 https://youtrack.example.com/yt/issue/RM-421, RM-422 https://youtrack.example.com/yt/issue/RM-422"
+    },
+    {
+      "name": "second import of the same files adds nothing",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "second import: the server's History files are unchanged",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the zip of the data folder adds nothing either",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the open session is not imported and says to file or end it in the Swift app first",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "__MACOSX metadata is skipped",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "after both re-imports: still 5 sessions",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "after both re-imports: the server's History files are unchanged",
+      "ok": true,
+      "detail": "2026-07-04T09-15-32.472Z_vera.json, 2026-08-19T14-02-10.250Z_vera.json, 2026-09-02T10-40-05.500Z_vera.json, 2026-10-01T16-20-45.125Z_vera.json, 2026-10-27T15-12-00.000Z_noor.json"
+    }
+  ],
+  "firstImportMs": 37,
+  "stored": {
+    "2026-07-04T09-15-32.472Z_vera.json": "0ae8ceedc777809e",
+    "2026-08-19T14-02-10.250Z_vera.json": "fc5260eb0416c6d2",
+    "2026-09-02T10-40-05.500Z_vera.json": "051ebd89727afb91",
+    "2026-10-01T16-20-45.125Z_vera.json": "b516b14fe08807c1",
+    "2026-10-27T15-12-00.000Z_noor.json": "f24268013c7621ca"
+  }
+}
