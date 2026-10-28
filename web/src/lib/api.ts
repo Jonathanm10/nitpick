@@ -4,7 +4,12 @@ import type {
   CaptureResponse,
   DesignSnapshotResponse,
   ErrorResponse,
+  FeedbackEnvironmentResponse,
+  FeedbackRequest,
+  FeedbackResponse,
+  FilingResponse,
   FindingPatch,
+  HistoryResponse,
   HostResponse,
   ProjectsResponse,
   ReviewStateResponse,
@@ -105,6 +110,22 @@ export const api = {
     call<void>(snapshotPath(itemID, snapshotID), { method: "DELETE" }),
   designSnapshotURL: (itemID: string, dataVersion: string) =>
     `${findingPath(itemID)}/design-snapshot-data/${encodeURIComponent(dataVersion)}`,
+  fileAll: () =>
+    call<FilingResponse>("/api/session/filing", { method: "POST" }),
+  dismissFilingResult: () =>
+    call<void>("/api/filing-result", { method: "DELETE" }),
+  history: () => call<HistoryResponse>("/api/history"),
+  feedbackEnvironment: () =>
+    call<FeedbackEnvironmentResponse>("/api/feedback/environment"),
+  sendFeedback: (feedback: FeedbackRequest, image: Blob | undefined) => {
+    const form = new FormData()
+    form.set("feedback", JSON.stringify(feedback))
+    if (image !== undefined) form.set("image", image, "image")
+    return call<FeedbackResponse>("/api/feedback", {
+      method: "POST",
+      body: form,
+    })
+  },
 }
 
 function findingPath(itemID: string): string {

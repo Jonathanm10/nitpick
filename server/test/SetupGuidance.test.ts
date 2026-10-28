@@ -2,11 +2,19 @@
 // health check. Reviewers can't fix the host, so a problem carries a reason
 // and no install steps: those move to the ops runbook (issue 12). The
 // xcodeVersion cases feed Feedback's Environment, which is issue 08's.
-import { readFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { Build } from "@nitpick/core"
+import { build as plistXML } from "plist"
 import { beforeEach, describe, expect, test } from "vitest"
 import type { HostHealth } from "../src/device/DeviceHost.ts"
-import { checkHostHealth, hostProblemReason } from "../src/device/hostHealth.ts"
+import {
+  checkHostHealth,
+  hostProblemReason,
+  macOSVersion,
+  xcodeVersion,
+} from "../src/device/hostHealth.ts"
 import { launchBuild, RuntimeUnavailable } from "../src/device/simctl.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 
@@ -182,5 +190,64 @@ describe("Setup guidance", () => {
       new RuntimeUnavailable(device)
     )
     expect(runner.executedCommands).toEqual([])
+  })
+})
+
+describe("The Device Host's versions", () => {
+  let runner: FakeSubprocessRunner
+
+  beforeEach(() => {
+    runner = new FakeSubprocessRunner()
+  })
+
+  /** An Xcode.app layout whose version.plist sits beside Contents/Developer. */
+  function writeXcode(plist?: string): string {
+    const developer = join(
+      mkdtempSync(join(tmpdir(), "nitpick-xcode-")),
+      "Xcode.app",
+      "Contents",
+      "Developer"
+    )
+    mkdirSync(developer, { recursive: true })
+    if (plist !== undefined) {
+      writeFileSync(join(developer, "..", "version.plist"), plist)
+    }
+    return developer
+  }
+
+  test("xcodeVersion reads version.plist beside the active developer directory", async () => {
+    const developer = writeXcode(
+      plistXML({
+        CFBundleShortVersionString: "26.1",
+        CFBundleVersion: "24000.1.2",
+        ProductBuildVersion: "17B55",
+      })
+    )
+    runner.enqueue({ exitCode: 0, standardOutput: `${developer}\n` })
+
+    expect(await xcodeVersion(runner)).toBe("26.1 (17B55)")
+    expect(runner.executedCommands).toEqual([xcodeSelect])
+  })
+
+  test("xcodeVersion is nil without a readable version.plist or an active developer directory", async () => {
+    runner.enqueue({ exitCode: 0, standardOutput: `${writeXcode()}\n` })
+    expect(await xcodeVersion(runner)).toBeUndefined()
+
+    runner.enqueue({ exitCode: 2, standardError: "xcode-select: error" })
+    expect(await xcodeVersion(runner)).toBeUndefined()
+  })
+
+  // Not a port: Swift read ProcessInfo's string in-process.
+  test("macOSVersion words sw_vers as ProcessInfo did, and is absent when it fails", async () => {
+    runner.enqueue({ exitCode: 0, standardOutput: "26.1\n" })
+    runner.enqueue({ exitCode: 0, standardOutput: "25B78\n" })
+    expect(await macOSVersion(runner)).toBe("Version 26.1 (Build 25B78)")
+    expect(runner.executedCommands).toEqual([
+      { executablePath: "/usr/bin/sw_vers", arguments: ["-productVersion"] },
+      { executablePath: "/usr/bin/sw_vers", arguments: ["-buildVersion"] },
+    ])
+
+    runner.enqueue({ exitCode: 1, standardError: "sw_vers: failed" })
+    expect(await macOSVersion(runner)).toBeUndefined()
   })
 })

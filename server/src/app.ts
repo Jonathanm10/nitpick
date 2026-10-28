@@ -3,6 +3,7 @@ import {
   annotationColors,
   designSnapshotContentType,
   DesignSnapshotError,
+  sendFeedback,
   ShellBusy,
   verifyYouTrack,
   YouTrackError,
@@ -23,6 +24,10 @@ import type {
   DesignSnapshotResponse,
   DevicesResponse,
   ErrorResponse,
+  FeedbackEnvironmentResponse,
+  FeedbackResponse,
+  FilingResponse,
+  HistoryResponse,
   HostResponse,
   ProjectsResponse,
   ReadyHost,
@@ -31,16 +36,25 @@ import type {
   StartReviewResponse,
   SwitchDeviceResponse,
 } from "./api.ts"
-import { labelSpritePNG } from "./annotationFlattening.ts"
+import {
+  annotatedScreenshotPNG,
+  labelSpritePNG,
+} from "./annotationFlattening.ts"
 import { BuildIngestError, buildName } from "./buildIngestion.ts"
 import type { DeviceHost, SimulatorDevice } from "./device/DeviceHost.ts"
 import { hostProblemReason } from "./device/hostHealth.ts"
 import { DeviceNotRunning, RuntimeUnavailable } from "./device/simctl.ts"
 import {
+  feedbackImagePNG,
+  MalformedFeedback,
+  parseFeedbackRequest,
+} from "./feedbackRequest.ts"
+import {
   MalformedEdit,
   parseFindingPatch,
   parseSessionPatch,
 } from "./findingPatch.ts"
+import type { HistoryStore } from "./historyStore.ts"
 import { FindingNotFound, ReviewRefused, type Reviewer } from "./reviewer.ts"
 
 export interface AppOptions {
@@ -49,6 +63,10 @@ export interface AppOptions {
   readonly reviewer: Reviewer
   /** Undefined when the server has no YouTrack connection configured. */
   readonly youTrack: YouTrackClient | undefined
+  /** The shared History every Reviewer reads. */
+  readonly history: HistoryStore
+  /** This server's version, for a Feedback's Environment. */
+  readonly serverVersion: string
   /** The built web app. Omitted in development, where Vite serves it. */
   readonly webRoot?: string
 }
@@ -57,6 +75,8 @@ export function createApp({
   deviceHost,
   reviewer,
   youTrack,
+  history,
+  serverVersion,
   webRoot,
 }: AppOptions): Hono {
   const app = new Hono()
@@ -80,25 +100,52 @@ export function createApp({
 
   app.get("/api/projects", async (c) => {
     if (youTrack === undefined) {
-      return c.json(
-        {
-          error:
-            "The nitpick server has no YouTrack connection configured, so it can't list projects.",
-        } satisfies ErrorResponse,
-        503
-      )
+      return notConnected(c, "list projects")
     }
     const { projects } = await verifyYouTrack(youTrack)
     return c.json({ projects } satisfies ProjectsResponse)
   })
 
   app.get("/api/review", async (c) => {
-    const { build, session } = await reviewer.state()
+    const { build, session, filing } = await reviewer.state()
     return c.json({
       build: build && buildSummary(build),
       session: session && sessionSummary(session),
+      filing,
     } satisfies ReviewStateResponse)
   })
+
+  // File all runs on the server: the answer comes at once, and the page
+  // follows the run through /api/review.
+  app.post("/api/session/filing", (c) => {
+    void reviewer.fileAll()
+    return c.json(
+      { filing: reviewer.filingStatus() } satisfies FilingResponse,
+      202
+    )
+  })
+
+  app.delete("/api/filing-result", (c) => {
+    reviewer.dismissFilingResult()
+    return c.body(null, 204)
+  })
+
+  app.get("/api/history", async (c) => {
+    const [entries, filer] = await Promise.all([
+      history.entries(),
+      // History reads only the server's files; not knowing who asks only
+      // hides the home trace.
+      reviewer.identity().catch(() => undefined),
+    ])
+    return c.json({ entries, reviewer: filer } satisfies HistoryResponse)
+  })
+
+  app.get("/api/feedback/environment", async (c) =>
+    c.json({
+      server: serverVersion,
+      deviceHost: await deviceHost.versions(),
+    } satisfies FeedbackEnvironmentResponse)
+  )
 
   app.post("/api/build", async (c) => {
     const build = await reviewer.ingest(
@@ -188,6 +235,24 @@ export function createApp({
         message: "That image is larger than 50 MB.",
       })
     },
+  })
+
+  // Not a run: sending Feedback never freezes the review behind the dialog.
+  app.post("/api/feedback", imageBody, async (c) => {
+    if (youTrack === undefined) {
+      return notConnected(c, "send Feedback")
+    }
+    const form = await c.req.parseBody()
+    const request = parseFeedbackRequest(form.feedback)
+    const image =
+      form.image instanceof File
+        ? await feedbackImagePNG(new Uint8Array(await form.image.arrayBuffer()))
+        : undefined
+    const sent = await sendFeedback(
+      { ...request, imagePNG: image },
+      { youTrack, flatten: annotatedScreenshotPNG }
+    )
+    return c.json({ sent } satisfies FeedbackResponse)
   })
 
   app.post(`${finding}/design-snapshots`, imageBody, async (c) => {
@@ -294,7 +359,8 @@ function errorStatus(error: unknown): ContentfulStatusCode {
   if (
     error instanceof BuildIngestError ||
     error instanceof DesignSnapshotError ||
-    error instanceof MalformedEdit
+    error instanceof MalformedEdit ||
+    error instanceof MalformedFeedback
   ) {
     return 400
   }
@@ -309,6 +375,15 @@ function errorStatus(error: unknown): ContentfulStatusCode {
   }
   if (error instanceof YouTrackError) return 502
   return 500
+}
+
+function notConnected(c: Context, action: string): Response {
+  return c.json(
+    {
+      error: `The nitpick server has no YouTrack connection configured, so it can't ${action}.`,
+    } satisfies ErrorResponse,
+    503
+  )
 }
 
 function malformedRequest(): HTTPException {

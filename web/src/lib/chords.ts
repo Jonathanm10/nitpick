@@ -55,6 +55,13 @@ export const chords = {
     { apple: "⌘⏎", other: "Ctrl+Enter" },
     { command: true }
   ),
+  // The menu bar's Review ▸ File All, which had no chord of its own. ⇧ keeps
+  // it a step away from ⌘⏎, the chord that goes to the Build.
+  fileAll: chord(
+    "Enter",
+    { apple: "⇧⌘⏎", other: "Ctrl+Shift+Enter" },
+    { command: true, shift: true }
+  ),
   // Ctrl+Alt+arrows rotate the screen on Windows machines with Intel's
   // graphics hotkeys, so Windows and Linux use Alt with the arrows.
   previousFinding: isApplePlatform
@@ -88,6 +95,7 @@ export const shortcutGroups: ReadonlyArray<{
       { action: "Capture", keys: chords.capture.label },
       { action: "Previous Finding", keys: chords.previousFinding.label },
       { action: "Next Finding", keys: chords.nextFinding.label },
+      { action: "File all", keys: chords.fileAll.label },
     ],
   },
   {

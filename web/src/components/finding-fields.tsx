@@ -134,9 +134,18 @@ export function FindingFields({
           disabled={disabled}
           onChange={(event) => edit({ summary: event.target.value }, true)}
           // Return goes back to the Build once the page shows the device
-          // stream; until then it does nothing.
+          // stream; until then it does nothing. A chord with Return, such
+          // as File all's, still reaches the page.
           onKeyDown={(event) => {
-            if (event.key === "Enter") event.preventDefault()
+            if (
+              event.key === "Enter" &&
+              !event.metaKey &&
+              !event.ctrlKey &&
+              !event.altKey &&
+              !event.shiftKey
+            ) {
+              event.preventDefault()
+            }
           }}
         />
       </Field>

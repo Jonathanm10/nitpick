@@ -42,7 +42,7 @@ export function useEditor({
   onAnnotations,
   onDiscard,
 }: {
-  readonly session: SessionSummary | undefined
+  readonly session: Pick<SessionSummary, "tray"> | undefined
   readonly isBusy: boolean
   /** Saves a Finding's Annotations, the same array the history holds. */
   readonly onAnnotations: (

@@ -4,17 +4,22 @@ import type {
   Annotation,
   BuildIdentity,
   DesignSnapshot,
+  FeedbackEnvironment,
+  FeedbackKind,
   FindingAssignee,
   FindingPriority,
   FindingType,
+  HistoryEntry,
   ProjectSchema,
   ReferenceDate,
+  SentFeedback,
   TrayItem,
   YouTrackProject,
+  YouTrackUser,
 } from "@nitpick/core"
-import type { SimulatorDevice } from "./device/DeviceHost.ts"
+import type { HostVersions, SimulatorDevice } from "./device/DeviceHost.ts"
 
-export type { SimulatorDevice }
+export type { HostVersions, SimulatorDevice }
 
 /** `GET /api/devices` */
 export interface DevicesResponse {
@@ -54,6 +59,78 @@ export interface SessionSummary {
 export interface ReviewStateResponse {
   readonly build?: BuildSummary
   readonly session?: SessionSummary
+  readonly filing: FilingStatus
+}
+
+/**
+ * Where the Reviewer's File all stands. It runs on the server, so the page
+ * follows it through `GET /api/review`, across a reload too.
+ *
+ * - `running`: the ladder is climbing; the session on disk gains each mark.
+ * - `failed`: the run stopped. The error stays for the partly filed rows
+ *   until the next run, or until the session ends.
+ * - `filed`: the session just filed, as the History entry it recorded,
+ *   held until Done or the next Build (ADR-0007). Picked by identity, never
+ *   as History's newest entry, which may be another Reviewer's.
+ *
+ * Both endings carry the triage fields the run had to drop, if any.
+ */
+export type FilingStatus =
+  | { readonly status: "idle" }
+  | { readonly status: "running" }
+  | {
+      readonly status: "failed"
+      readonly error: string
+      readonly droppedFieldNotice?: string
+    }
+  | {
+      readonly status: "filed"
+      readonly result: HistoryEntry
+      readonly droppedFieldNotice?: string
+    }
+
+/**
+ * `POST /api/session/filing` starts File all and answers 202 at once; a run
+ * already going answers 409.
+ */
+export interface FilingResponse {
+  readonly filing: FilingStatus
+}
+
+// `DELETE /api/filing-result` is Done on the filing result: 204.
+
+/** `GET /api/history`: the shared History, newest session first. */
+export interface HistoryResponse {
+  readonly entries: ReadonlyArray<HistoryEntry>
+  /**
+   * The Reviewer asking, whose own last session the home trace shows.
+   * Absent when the server can't tell who files.
+   */
+  readonly reviewer?: YouTrackUser
+}
+
+/** `GET /api/feedback/environment`: the Environment lines only the server knows. */
+export interface FeedbackEnvironmentResponse {
+  readonly server: string
+  readonly deviceHost: HostVersions
+}
+
+/**
+ * `POST /api/feedback`, as multipart/form-data: a `feedback` part holding
+ * this JSON, and an optional `image` part, a PNG or JPEG.
+ */
+export interface FeedbackRequest {
+  readonly kind: FeedbackKind
+  readonly title: string
+  readonly description: string
+  /** The lines the dialog showed, sent as they were shown. */
+  readonly environment: FeedbackEnvironment
+  /** Drawn into the image when it is sent; ignored without one. */
+  readonly imageAnnotations?: ReadonlyArray<Annotation>
+}
+
+export interface FeedbackResponse {
+  readonly sent: SentFeedback
 }
 
 /** The devices the host can run, with the Reviewer's Recent devices. */

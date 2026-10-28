@@ -53,8 +53,7 @@ export function parseFindingPatch(body: Record<string, unknown>): FindingPatch {
         patch.designReference = value === null ? null : expectString(value, key)
         break
       case "annotations":
-        if (!Array.isArray(value)) fail(`${key} is not an array`)
-        patch.annotations = value.map(annotation)
+        patch.annotations = parseAnnotations(value, key)
         break
       default:
         fail(`${key} is not an editable field`)
@@ -100,8 +99,13 @@ export function designReference(text: string | null): string | undefined {
   return trimmed === "" ? undefined : trimmed
 }
 
-function annotation(value: unknown, index: number): Annotation {
-  const path = `annotations[${index}]`
+/** Annotations from untrusted JSON, each checked as the Editor makes them. */
+export function parseAnnotations(value: unknown, key: string): Annotation[] {
+  if (!Array.isArray(value)) fail(`${key} is not an array`)
+  return value.map((element, index) => annotation(element, `${key}[${index}]`))
+}
+
+function annotation(value: unknown, path: string): Annotation {
   const color = field(value, "color", path)
   if (!annotationColors.includes(color as never)) {
     fail(`${path}.color is unknown`)

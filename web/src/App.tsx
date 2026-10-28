@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState, type DragEvent } from "react"
 import { unfiledFindingCount } from "@nitpick/core"
+import { HistoryIcon } from "lucide-react"
 import { BuildDropZone } from "@/components/build-drop-zone"
 import { DevicePicker } from "@/components/device-picker"
+import { FeedbackButton } from "@/components/feedback-dialog"
+import { FilingResult } from "@/components/filing-result"
+import { HistoryPage } from "@/components/history-page"
+import { HistoryTraceLine } from "@/components/history-trace-line"
 import { HostNotReady } from "@/components/host-not-ready"
 import { ProjectPicker } from "@/components/project-picker"
 import { SessionScreen } from "@/components/session-screen"
@@ -17,15 +22,44 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
+import { Toaster } from "@/components/ui/sonner"
 import { Spinner } from "@/components/ui/spinner"
 import { chords } from "@/lib/chords"
 import { useReview } from "@/lib/use-review"
+
+/** The History page's address; a hash, so the server serves one page. */
+const historyRoute = "#/history"
+
+/** Which page shows: the review, or History. Back and Forward work. */
+function useRoute() {
+  const [route, setRoute] = useState(() => window.location.hash)
+  useEffect(() => {
+    const changed = () => setRoute(window.location.hash)
+    window.addEventListener("popstate", changed)
+    return () => window.removeEventListener("popstate", changed)
+  }, [])
+  function navigate(next: string) {
+    window.history.pushState(null, "", next || window.location.pathname)
+    setRoute(next)
+  }
+  return [route, navigate] as const
+}
 
 export function App() {
   const model = useReview()
   const { review, host, projects, isBusy, errorMessage } = model
   const state = review.status === "loaded" ? review : undefined
   const session = state?.session
+  const [route, navigate] = useRoute()
+  const showsHistory = route === historyRoute
+  const filingResult =
+    model.filing.status === "filed" ? model.filing.result : undefined
+
+  function openHistory() {
+    navigate(historyRoute)
+    void model.refreshHistory()
+  }
   const [isDragging, setIsDragging] = useState(false)
   // A Build dropped while the open session holds unfiled Findings waits for
   // the Reviewer to confirm what the upload would discard.
@@ -50,7 +84,7 @@ export function App() {
    * the ingest error and leaves the session alone.
    */
   function takeBuild(file: File) {
-    if (state === undefined) return
+    if (state === undefined || showsHistory) return
     if (model.busy.current) {
       model.reportBusyDrop()
     } else if (unfiled > 0) {
@@ -119,22 +153,53 @@ export function App() {
         )}
         <span className="flex-1" />
         {isBusy && <Spinner aria-label="Working" />}
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-current={showsHistory ? "page" : undefined}
+          onClick={openHistory}
+        >
+          <HistoryIcon />
+          History
+        </Button>
+        <FeedbackButton
+          review={
+            state?.build && session
+              ? {
+                  build: state.build.identity,
+                  hostName: "Simulator",
+                  device: model.run?.device,
+                }
+              : undefined
+          }
+        />
         <ShortcutsDialog />
       </header>
       <main
         className={
-          state?.build && session
+          state?.build && session && !showsHistory
             ? "flex h-[calc(100svh-3rem)] min-h-[40rem] flex-col gap-4 p-4"
             : "mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 p-6"
         }
       >
         {review.status === "failed" && <ErrorLine message={review.error} />}
-        {state?.build && session ? (
+        {showsHistory ? (
+          <HistoryPage history={model.history} onBack={() => navigate("")} />
+        ) : state?.build && session ? (
           <SessionScreen
             session={session}
             model={model}
             onEndReview={requestEndReview}
           />
+        ) : filingResult !== undefined ? (
+          <>
+            <FilingResult
+              entry={filingResult}
+              disabled={isBusy}
+              onDone={() => void model.dismissFilingResult()}
+            />
+            {errorMessage !== undefined && <ErrorLine message={errorMessage} />}
+          </>
         ) : (
           <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-4">
             <BuildDropZone
@@ -178,7 +243,14 @@ export function App() {
             {errorMessage !== undefined && <ErrorLine message={errorMessage} />}
           </div>
         )}
+        {!showsHistory &&
+          !session &&
+          filingResult === undefined &&
+          model.trace !== undefined && (
+            <HistoryTraceLine trace={model.trace} onOpenHistory={openHistory} />
+          )}
       </main>
+      <Toaster position="bottom-center" />
 
       <AlertDialog
         open={pendingBuild !== undefined}

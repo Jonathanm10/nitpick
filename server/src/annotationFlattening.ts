@@ -36,7 +36,10 @@ export async function annotatedScreenshotPNG(
 
   let capture: Image
   try {
-    capture = await loadImage(png)
+    // Skia reads a Buffer; a bare Uint8Array, as a form upload gives, fails.
+    capture = await loadImage(
+      Buffer.from(png.buffer, png.byteOffset, png.byteLength)
+    )
   } catch {
     throw new UnreadableScreenshot()
   }

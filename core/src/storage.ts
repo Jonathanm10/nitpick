@@ -24,7 +24,7 @@ import type {
 import { encodeSwiftJSON, type SwiftJSONValue } from "./swiftJSON.ts"
 import { findingTypes } from "./triage.ts"
 import { parseUUID } from "./uuid.ts"
-import type { FiledIssue, YouTrackProject } from "./youtrack.ts"
+import type { FiledIssue, YouTrackProject, YouTrackUser } from "./youtrack.ts"
 
 /**
  * Bumped on any incompatible change to the stored shapes. A reader seeing a
@@ -281,17 +281,22 @@ export function encodeStoredHistoryEntry(entry: HistoryEntry): string {
     project: storedProject(entry.project),
     startedAt: entry.startedAt,
     findings: entry.findings.map(storedFiledFinding),
+    // The server's own addition: optional and ignored by a schema v1 reader,
+    // so the Swift app's files and the server's stay one schema.
+    filedBy: entry.filedBy && storedUser(entry.filedBy),
   })
 }
 
 export function decodeStoredHistoryEntry(json: string): HistoryEntry {
   const stored = readStoredFile(json)
-  return {
+  const filedBy = stored.optionalObject("filedBy")
+  const entry: HistoryEntry = {
     build: buildIdentity(stored.object("build")),
     project: project(stored.object("project")),
     startedAt: stored.number("startedAt"),
     findings: stored.objects("findings", filedFinding),
   }
+  return filedBy === undefined ? entry : { ...entry, filedBy: user(filedBy) }
 }
 
 function storedFiledFinding(finding: FiledFinding): SwiftJSONValue {
@@ -356,6 +361,14 @@ function project(stored: StoredObject): YouTrackProject {
     shortName: stored.string("shortName"),
     name: stored.string("name"),
   }
+}
+
+function storedUser(user: YouTrackUser): SwiftJSONValue {
+  return { login: user.login, fullName: user.fullName }
+}
+
+function user(stored: StoredObject): YouTrackUser {
+  return { login: stored.string("login"), fullName: stored.string("fullName") }
 }
 
 function storedDeviceContext(context: DeviceContext): SwiftJSONValue {

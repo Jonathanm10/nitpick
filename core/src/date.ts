@@ -13,6 +13,11 @@ export function referenceDate(date: Date): ReferenceDate {
   return date.getTime() / 1000 - referenceDateEpoch
 }
 
+/** The moment as a JS `Date`, to the millisecond: for display, never storage. */
+export function dateFromReference(date: ReferenceDate): Date {
+  return new Date((date + referenceDateEpoch) * 1000)
+}
+
 /**
  * ISO 8601 in UTC, truncated to whole seconds, as Swift's
  * `Date.formatted(.iso8601)` writes it: "2026-07-04T09:15:32Z".

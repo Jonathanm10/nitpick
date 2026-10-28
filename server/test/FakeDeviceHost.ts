@@ -2,6 +2,7 @@ import { defaultDeviceSettings, type Build } from "@nitpick/core"
 import type {
   DeviceHost,
   HostHealth,
+  HostVersions,
   ScreenCapture,
   SimulatorDevice,
 } from "../src/device/DeviceHost.ts"
@@ -21,6 +22,11 @@ export class FakeDeviceHost implements DeviceHost {
   }
   /** Stands in for the capture's simctl calls, which may take a while. */
   captureDelay: Promise<void> = Promise.resolve()
+
+  hostVersions: HostVersions = {
+    macOS: "Version 26.1 (Build 25B78)",
+    xcode: "26.1 (17B55)",
+  }
 
   constructor(devices: SimulatorDevice[]) {
     this.health = { status: "ready", devices }
@@ -48,4 +54,6 @@ export class FakeDeviceHost implements DeviceHost {
     await this.captureDelay
     return { device, ...this.nextCapture }
   }
+
+  versions = async () => this.hostVersions
 }
