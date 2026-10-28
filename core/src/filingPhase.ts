@@ -18,7 +18,7 @@ export type FilingPhase =
  * the label should say "remaining" after a failure, so those come in.
  */
 export function filingPhase(
-  session: ReviewSession,
+  session: Pick<ReviewSession, "tray">,
   run: { readonly isRunning: boolean; readonly stoppedByFailure: boolean }
 ): FilingPhase {
   const total = session.tray.length

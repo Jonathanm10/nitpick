@@ -2,7 +2,7 @@ import type { BuildIdentity } from "./build.ts"
 import type { ReferenceDate } from "./date.ts"
 import type { DeviceContext } from "./deviceContext.ts"
 import { filedIssueOf, type ReviewSession } from "./reviewSession.ts"
-import type { FiledIssue, YouTrackProject } from "./youtrack.ts"
+import type { FiledIssue, YouTrackProject, YouTrackUser } from "./youtrack.ts"
 
 /**
  * A filed Finding's read-only record. Its screenshots stay on the filed
@@ -20,7 +20,8 @@ export interface FiledFinding {
 /**
  * A filed Review Session: what was reviewed and what its Findings became.
  * A log entry, never a mirror of YouTrack. Its identity is `startedAt`, the
- * moment the metadata block's session line carries.
+ * moment the metadata block's session line carries, and in the shared
+ * History who filed it.
  */
 export interface HistoryEntry {
   readonly build: BuildIdentity
@@ -28,6 +29,11 @@ export interface HistoryEntry {
   readonly startedAt: ReferenceDate
   /** Every filed Finding, in Tray order. */
   readonly findings: ReadonlyArray<FiledFinding>
+  /**
+   * The Reviewer whose token filed the Issues. Absent in the Swift app's
+   * own History files, which had one Reviewer.
+   */
+  readonly filedBy?: YouTrackUser
 }
 
 /**
@@ -62,6 +68,17 @@ export interface HistoryTrace {
   readonly latestEntry: HistoryEntry
   readonly visibleIssues: ReadonlyArray<FiledIssue>
   readonly overflowCount: number
+}
+
+/**
+ * The entries `reviewer` filed, still newest first: the shared History's
+ * slice the home trace reads.
+ */
+export function historyFiledBy(
+  history: ReadonlyArray<HistoryEntry>,
+  reviewer: Pick<YouTrackUser, "login">
+): HistoryEntry[] {
+  return history.filter((entry) => entry.filedBy?.login === reviewer.login)
 }
 
 /** History is newest first; an empty History has no trace. */

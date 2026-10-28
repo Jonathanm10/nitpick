@@ -57,6 +57,30 @@ export function droppedTriageFieldLabel(
   return field === "priority" ? "Priority" : "Assignee"
 }
 
+/**
+ * The toast naming each triage field a run had to drop, with the value meant,
+ * so the Reviewer can set it by hand: AppModel.presentDroppedFieldNotice's
+ * text. Undefined when nothing was dropped.
+ */
+export function droppedFieldNotice(
+  droppedFields: FileAllOutcome["droppedFields"]
+): string | undefined {
+  const all = Object.values(droppedFields).flat()
+  if (all.length === 0) return undefined
+  const phrases = [
+    ...new Set(
+      all.map(
+        ({ field, intendedValue }) =>
+          `${droppedTriageFieldLabel(field)} “${intendedValue}”`
+      )
+    ),
+  ].sort()
+  const list = phrases.join(", ")
+  return all.length === 1
+    ? `Couldn’t set ${list} — set it in YouTrack by hand.`
+    : `Couldn’t set some triage fields (${list}) — set them in YouTrack by hand.`
+}
+
 /** Where filing reads a Finding's images and records its progress. */
 export interface FilingStore {
   /**

@@ -31,11 +31,25 @@ export const feedbackProjectShortName = "NIT"
 
 const feedbackImageFileName = "nitpick-window.png"
 
-/** The versions in play, sent as the Issue's Environment section. */
+/**
+ * The versions in play, sent as the Issue's Environment section. The Swift
+ * app sent its own version and the Mac it ran on; the web app sends its own
+ * build, the server's, the Reviewer's browser and the Device Host's macOS
+ * and Xcode. A line is left out when its field is.
+ */
 export interface FeedbackEnvironment {
-  readonly nitpick: string
-  readonly macOS: string
-  readonly xcode: string
+  /** The Swift app's version and build. */
+  readonly nitpick?: string
+  /** The page's build: a tab left open across a deploy runs an older one. */
+  readonly webApp?: string
+  readonly server?: string
+  /** The Reviewer's browser and OS, e.g. "Chrome 131 on Windows". */
+  readonly browser?: string
+  /** The Swift app's Mac, which ran the simulator too. */
+  readonly macOS?: string
+  readonly xcode?: string
+  readonly deviceHostMacOS?: string
+  readonly deviceHostXcode?: string
   /** The open Review Session's Build. */
   readonly build?: string
   /** Where the open Review Session captures from. */
@@ -66,20 +80,46 @@ export function feedbackEnvironment(read: {
 }): FeedbackEnvironment {
   const version = known(read.nitpickVersion)
   const build = known(read.nitpickBuild)
-  const environment = {
+  return {
     nitpick:
       version === undefined || build === undefined
         ? unknown
         : `${version} (${build})`,
     macOS: known(read.macOS) ?? unknown,
     xcode: known(read.xcode) ?? unknown,
+    ...reviewLines(read.review),
   }
-  const { review } = read
-  if (review === undefined) return environment
-  const { bundleID, version: appVersion, buildNumber } = review.build
+}
+
+/**
+ * The web app's Environment, by the same rules: what wasn't read is
+ * "unknown", and Build and Capture Source need a Review Session.
+ */
+export function webFeedbackEnvironment(read: {
+  readonly webApp?: string
+  readonly server?: string
+  readonly browser?: string
+  readonly deviceHostMacOS?: string
+  readonly deviceHostXcode?: string
+  readonly review?: FeedbackReviewContext
+}): FeedbackEnvironment {
   return {
-    ...environment,
-    build: `${bundleID} ${appVersion} (${buildNumber})`,
+    webApp: known(read.webApp) ?? unknown,
+    server: known(read.server) ?? unknown,
+    browser: known(read.browser) ?? unknown,
+    deviceHostMacOS: known(read.deviceHostMacOS) ?? unknown,
+    deviceHostXcode: known(read.deviceHostXcode) ?? unknown,
+    ...reviewLines(read.review),
+  }
+}
+
+function reviewLines(
+  review: FeedbackReviewContext | undefined
+): Pick<FeedbackEnvironment, "build" | "captureSource"> {
+  if (review === undefined) return {}
+  const { bundleID, version, buildNumber } = review.build
+  return {
+    build: `${bundleID} ${version} (${buildNumber})`,
     captureSource:
       review.device === undefined
         ? "Simulator (not running)"
@@ -89,6 +129,39 @@ export function feedbackEnvironment(read: {
 
 function known(value: string | undefined): string | undefined {
   return value === undefined || isBlank(value) ? undefined : value
+}
+
+/**
+ * A browser's name, major version and OS from its user agent, such as
+ * "Edge 131 on Windows"; undefined when the browser isn't recognised.
+ * Order matters: Edge and Opera also claim Chrome, and Chrome also claims
+ * Safari.
+ */
+export function browserDescription(userAgent: string): string | undefined {
+  const browsers: ReadonlyArray<readonly [string, RegExp]> = [
+    ["Edge", /\bEdg(?:e|A|iOS)?\/(\d+)/],
+    ["Opera", /\bOPR\/(\d+)/],
+    ["Firefox", /\b(?:Firefox|FxiOS)\/(\d+)/],
+    ["Chrome", /\b(?:HeadlessChrome|Chrome|CriOS)\/(\d+)/],
+    ["Safari", /\bVersion\/(\d+(?:\.\d+)?).*\bSafari\//],
+  ]
+  const systems: ReadonlyArray<readonly [string, RegExp]> = [
+    ["Windows", /\bWindows\b/],
+    ["iOS", /\b(?:iPhone|iPad|iPod)\b/],
+    ["Android", /\bAndroid\b/],
+    ["ChromeOS", /\bCrOS\b/],
+    ["macOS", /\bMac OS X\b/],
+    ["Linux", /\bLinux\b/],
+  ]
+  for (const [name, pattern] of browsers) {
+    const version = pattern.exec(userAgent)?.[1]
+    if (version === undefined) continue
+    const system = systems.find(([, test]) => test.test(userAgent))?.[0]
+    return system === undefined
+      ? `${name} ${version}`
+      : `${name} ${version} on ${system}`
+  }
+  return undefined
 }
 
 export interface EnvironmentLine {
@@ -102,8 +175,13 @@ export function environmentLines(
 ): EnvironmentLine[] {
   const lines: [string, string | undefined][] = [
     ["Nitpick", environment.nitpick],
+    ["Web app", environment.webApp],
+    ["Server", environment.server],
+    ["Browser", environment.browser],
     ["macOS", environment.macOS],
     ["Xcode", environment.xcode],
+    ["Device Host macOS", environment.deviceHostMacOS],
+    ["Device Host Xcode", environment.deviceHostXcode],
     ["Build", environment.build],
     ["Capture Source", environment.captureSource],
   ]

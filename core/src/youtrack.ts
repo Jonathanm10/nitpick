@@ -268,16 +268,7 @@ const byName = new Intl.Collator(undefined, { sensitivity: "accent" })
 export async function verifyYouTrack(
   youTrack: YouTrackClient
 ): Promise<YouTrackConnection> {
-  const user = await youTrack.request({
-    path: "api/users/me",
-    query: "fields=login,fullName",
-    decode: (json) => {
-      const me = payloadObject(json)
-      const login = requiredString(me, "login")
-      // Nullable on the server; display falls back to the login.
-      return { login, fullName: optionalString(me, "fullName") ?? login }
-    },
-  })
+  const user = await youTrackUser(youTrack)
   const projects: YouTrackProject[] = []
   for (;;) {
     const page = await youTrack.request({
@@ -294,6 +285,20 @@ export async function verifyYouTrack(
     user,
     projects: projects.sort((a, b) => byName.compare(a.name, b.name)),
   }
+}
+
+/** The user the credentials' token belongs to: who Issues are filed as. */
+export function youTrackUser(youTrack: YouTrackClient): Promise<YouTrackUser> {
+  return youTrack.request({
+    path: "api/users/me",
+    query: "fields=login,fullName",
+    decode: (json) => {
+      const me = payloadObject(json)
+      const login = requiredString(me, "login")
+      // Nullable on the server; display falls back to the login.
+      return { login, fullName: optionalString(me, "fullName") ?? login }
+    },
+  })
 }
 
 function project(json: unknown): YouTrackProject {
