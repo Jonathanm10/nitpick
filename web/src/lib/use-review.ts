@@ -1,15 +1,21 @@
 // The page's state and actions, after Sources/Nitpick/AppModel.swift's
-// ingest, startReview, switchDevice, endReview, captureScreen and the
-// Editor's edits. The server keeps the Build, the open session and Recent;
-// the page keeps which device the Build runs on, so a reload shows the
-// session paused until Resume review. The page edits its copy of the session
-// at once and the saver sends the edits.
+// ingest, startReview, switchDevice, endReview, captureScreen, the Editor's
+// edits and fileAllFindings. The server keeps the Build, the open session,
+// Recent and the File all run; the page keeps which device the Build runs
+// on, so a reload shows the session paused until Resume review. The page
+// edits its copy of the session at once and the saver sends the edits.
 import { useCallback, useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import {
   discardFinding,
+  filingPhase,
+  findingsNeedingSummary,
+  historyFiledBy,
+  historyTrace,
   RecentDevices,
   reviewStart,
   ShellBusy,
+  unfiledFindingCount,
   updateFinding,
   type DesignSnapshot,
   type Finding,
@@ -18,7 +24,9 @@ import {
   type YouTrackProject,
 } from "@nitpick/core"
 import type {
+  FilingStatus,
   FindingPatch,
+  HistoryResponse,
   HostResponse,
   ReviewStateResponse,
   SessionSummary,
@@ -42,6 +50,11 @@ const emptySchema: ProjectSchema = { priorities: [], assignees: [] }
 /** How often a running review checks that its device is still up. */
 const devicePollInterval = 10_000
 
+/** How often the page reads a File all run's progress from the server. */
+const filingPollInterval = 400
+
+const idle: FilingStatus = { status: "idle" }
+
 export function useReview() {
   const [review, setReview] = useState<Loadable<ReviewStateResponse>>({
     status: "loading",
@@ -60,15 +73,30 @@ export function useReview() {
    * kept while the session is open, as AppModel's sessionSchema.
    */
   const [schema, setSchema] = useState(emptySchema)
-  const [isBusy, setIsBusy] = useState(false)
+  const [history, setHistory] = useState<Loadable<HistoryResponse>>({
+    status: "loading",
+  })
+  const [isPerforming, setIsPerforming] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>()
   const [saveError, setSaveError] = useState<string>()
-  // Reads the latest busy state inside callbacks created before it changed.
-  const busy = useRef(false)
+  // Read inside callbacks created before they changed: an action of the
+  // page's own, and a File all run on the server.
+  const performing = useRef(false)
+  const filingRuns = useRef(false)
+  const [busy] = useState(() => ({
+    get current() {
+      return performing.current || filingRuns.current
+    },
+  }))
   const [saver] = useState(() => new SessionSaver(setSaveError))
 
   const state = review.status === "loaded" ? review : undefined
   const session = state?.session
+  const filing = state?.filing ?? idle
+  const isFiling = filing.status === "running"
+  filingRuns.current = isFiling
+  /** Busy while the page acts or File all runs, as ShellActivity has it. */
+  const isBusy = isPerforming || isFiling
 
   /** The page's copy of the open session, for the saver too. */
   const setSession = useCallback(
@@ -94,23 +122,38 @@ export function useReview() {
   )
 
   /** One action at a time, as ShellActivity has it; a refusal says why. */
-  const perform = useCallback(async (action: () => Promise<void>) => {
-    if (busy.current) {
-      setErrorMessage(new ShellBusy().message)
-      return
-    }
-    busy.current = true
-    setIsBusy(true)
-    setErrorMessage(undefined)
-    try {
-      await action()
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error))
-    } finally {
-      busy.current = false
-      setIsBusy(false)
-    }
-  }, [])
+  const perform = useCallback(
+    async (action: () => Promise<void>) => {
+      if (busy.current) {
+        setErrorMessage(new ShellBusy().message)
+        return
+      }
+      performing.current = true
+      setIsPerforming(true)
+      setErrorMessage(undefined)
+      try {
+        await action()
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : String(error))
+      } finally {
+        performing.current = false
+        setIsPerforming(false)
+      }
+    },
+    [busy]
+  )
+
+  /** The shared History, re-read after each filing and on its page. */
+  const refreshHistory = useCallback(
+    () =>
+      api
+        .history()
+        .then((loaded) => setHistory({ status: "loaded", ...loaded }))
+        .catch((error: Error) =>
+          setHistory({ status: "failed", error: error.message })
+        ),
+    []
+  )
 
   /**
    * Publishes the host check. A selection whose device vanished or lost its
@@ -159,7 +202,50 @@ export function useReview() {
       .catch((error: Error) =>
         setProjects({ status: "failed", error: error.message })
       )
-  }, [applyHost, saver])
+    void refreshHistory()
+  }, [applyHost, saver, refreshHistory])
+
+  // File all runs on the server, so the page reads its progress, a reload
+  // included: each mark lands in the Tray, and the run's end shows the
+  // filing result, or the error with the rows that didn't file.
+  useEffect(() => {
+    if (!isFiling) return
+    let cancelled = false
+    const timer = setInterval(() => {
+      api
+        .review()
+        .then((loaded) => {
+          if (cancelled) return
+          const ended = loaded.filing.status !== "running"
+          if (ended) cancelled = true
+          if (loaded.filing.status === "filed") {
+            // The Review Session is over: the device run goes with it.
+            setRun(undefined)
+            saver.cancel()
+            setSchema(emptySchema)
+          }
+          saver.track(loaded.session)
+          setReview({ status: "loaded", ...loaded })
+          if (!ended) return
+          if (loaded.filing.status === "failed") {
+            setErrorMessage(loaded.filing.error)
+          }
+          if (
+            loaded.filing.status !== "idle" &&
+            "droppedFieldNotice" in loaded.filing &&
+            loaded.filing.droppedFieldNotice !== undefined
+          ) {
+            toast.warning(loaded.filing.droppedFieldNotice, { duration: 8000 })
+          }
+          void refreshHistory()
+        })
+        .catch(() => {})
+    }, filingPollInterval)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [isFiling, saver, refreshHistory])
 
   // A device that stops on the host (a crash, a host reboot) pauses the
   // review: the session stays, and Resume review relaunches the Build.
@@ -191,13 +277,12 @@ export function useReview() {
       clearInterval(timer)
       document.removeEventListener("visibilitychange", check)
     }
-  }, [run, applyHost])
+  }, [run, applyHost, busy])
 
   const start = reviewStart({
     build: state?.build,
     isReviewing: run !== undefined,
-    // The filing result arrives with File all (issue 08).
-    holdsFilingResult: false,
+    holdsFilingResult: filing.status === "filed",
     device: selectedDevice,
     session,
     selectedProject,
@@ -271,7 +356,8 @@ export function useReview() {
       const { build } = await api.uploadBuild(file)
       setRun(undefined)
       setSession(undefined)
-      setReview({ status: "loaded", build })
+      // The next Build dismisses a held filing result too (ADR-0007).
+      setReview({ status: "loaded", build, filing: idle })
       await refreshHost()
     })
   }
@@ -281,6 +367,46 @@ export function useReview() {
       await api.endReview()
       setRun(undefined)
       setSession(undefined)
+      setFiling(idle)
+    })
+  }
+
+  function setFiling(next: FilingStatus) {
+    setReview((current) =>
+      current.status === "loaded" ? { ...current, filing: next } : current
+    )
+  }
+
+  const unfiled = session === undefined ? 0 : unfiledFindingCount(session)
+  const needingSummary =
+    session === undefined ? [] : findingsNeedingSummary(session)
+
+  /**
+   * Files every unfiled Finding, once each has a summary. Typed text is
+   * saved first: the server files what it has stored, and a failed save
+   * stops File all before any Issue exists. The run then goes on on the
+   * server, and the page follows it.
+   */
+  async function fileAll() {
+    if (session === undefined || unfiled === 0 || needingSummary.length > 0) {
+      return
+    }
+    await perform(async () => {
+      await saver.flush()
+      if (!saver.isSaved) {
+        throw new Error(
+          "Your edits aren't saved yet, so File all didn't start. Try again once they are."
+        )
+      }
+      setFiling((await api.fileAll()).filing)
+    })
+  }
+
+  /** Done on the filing result: home, with the Build still loaded. */
+  async function dismissFilingResult() {
+    await perform(async () => {
+      await api.dismissFilingResult()
+      setFiling(idle)
     })
   }
 
@@ -397,10 +523,30 @@ export function useReview() {
     return () => document.removeEventListener("visibilitychange", flush)
   }, [saver])
 
+  const reviewer = history.status === "loaded" ? history.reviewer : undefined
+  const historyEntries = history.status === "loaded" ? history.entries : []
+
   return {
     review,
     host,
     projects,
+    history,
+    refreshHistory,
+    /** The signed-in Reviewer's last session, for the home trace line. */
+    trace:
+      reviewer === undefined
+        ? undefined
+        : historyTrace(historyFiledBy(historyEntries, reviewer)),
+    filing,
+    filingPhase:
+      session &&
+      filingPhase(session, {
+        isRunning: isFiling,
+        stoppedByFailure: filing.status === "failed",
+      }),
+    needingSummary,
+    fileAll,
+    dismissFilingResult,
     devices,
     recentDeviceUDIDs: host.status === "ready" ? host.recentDeviceUDIDs : [],
     selectedDevice,

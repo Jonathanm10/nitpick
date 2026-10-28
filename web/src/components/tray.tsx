@@ -7,7 +7,7 @@ import {
   unfiledFindingCount,
   type TrayItem,
 } from "@nitpick/core"
-import type { SessionSummary } from "@nitpick/server/api"
+import type { FilingStatus, SessionSummary } from "@nitpick/server/api"
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -43,10 +43,13 @@ import type { Editor } from "@/lib/use-editor"
  */
 export function Tray({
   session,
+  filing,
   editor,
   onDiscard,
 }: {
   readonly session: SessionSummary
+  /** What a partly filed row says: filing now, the error, or retry. */
+  readonly filing: FilingStatus
   readonly editor: Editor
   readonly onDiscard: (itemID: string) => void
 }) {
@@ -115,6 +118,7 @@ export function Tray({
               </button>
               <RowStatus
                 item={item}
+                filing={filing}
                 needsSummary={needingSummary.has(item.id)}
                 showsDiscard={isSelected}
                 canDiscard={editor.canDiscard}
@@ -186,12 +190,14 @@ function RowTitle({
 
 function RowStatus({
   item,
+  filing,
   needsSummary,
   showsDiscard,
   canDiscard,
   onDiscard,
 }: {
   readonly item: TrayItem
+  readonly filing: FilingStatus
   readonly needsSummary: boolean
   readonly showsDiscard: boolean
   readonly canDiscard: boolean
@@ -215,7 +221,23 @@ function RowStatus({
   }
   if (!isEditable(item)) {
     // Mid-ladder: its Issue exists but is incomplete, and a File all retry
-    // finishes it without re-creating anything (issue 08 files).
+    // finishes it without re-creating anything. After a failed run this
+    // row is where the failure lives, so it carries the error itself.
+    if (filing.status === "running") {
+      return <span className="shrink-0 text-sm text-amber-600">Filing…</span>
+    }
+    if (filing.status === "failed") {
+      // The one status allowed to truncate: it splits the row with the
+      // title, so neither is erased. The tooltip keeps the whole message.
+      return (
+        <span
+          title={filing.error}
+          className="min-w-0 flex-1 truncate text-sm text-destructive"
+        >
+          {filing.error}
+        </span>
+      )
+    }
     return (
       <span className="shrink-0 text-sm text-amber-600">
         Filing interrupted — retry

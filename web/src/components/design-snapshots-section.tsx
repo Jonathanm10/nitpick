@@ -180,6 +180,15 @@ export function DesignSnapshotsSection({
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
       if (isTextEntry(document.activeElement)) return
+      // A dialog over the session, such as Send feedback, takes its own.
+      const focused = document.activeElement
+      if (
+        focused !== null &&
+        focused !== document.body &&
+        !document.getElementById("root")?.contains(focused)
+      ) {
+        return
+      }
       const images = [...(event.clipboardData?.files ?? [])].filter((file) =>
         ["image/png", "image/jpeg"].includes(file.type)
       )

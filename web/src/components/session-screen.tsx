@@ -5,6 +5,7 @@ import {
   captureRefusalMessage,
   isEditable,
   trimWhitespaceAndNewlines,
+  unfiledFindingCount,
   type TrayItem,
 } from "@nitpick/core"
 import type { SessionSummary } from "@nitpick/server/api"
@@ -15,6 +16,7 @@ import {
   AnnotationToolbar,
 } from "@/components/annotation-toolbar"
 import { DevicePicker } from "@/components/device-picker"
+import { FileAll } from "@/components/file-all"
 import { FindingFields } from "@/components/finding-fields"
 import { HostNotReady } from "@/components/host-not-ready"
 import { StartReviewButton } from "@/components/start-review-button"
@@ -39,8 +41,8 @@ type Review = ReturnType<typeof useReview>
  * The open Review Session: the top bar with the Device Context, the status
  * and Resume review while paused, then three columns. The device on the
  * left with Capture under it, where the live stream goes; the Editor in the
- * middle; the session's Design Reference, the Tray, the Finding's fields
- * and End Review on the right. Below 1024 px the page scrolls sideways
+ * middle; the session's Design Reference, the Tray with File all, the
+ * Finding's fields and End Review on the right. Below 1024 px the page scrolls sideways
  * rather than squeeze the Editor; the side columns narrow below 1280 px.
  */
 export function SessionScreen({
@@ -79,7 +81,25 @@ export function SessionScreen({
     if (id !== undefined) editor.open(id)
   }
 
-  useSessionChords({ editor, onCapture: () => void capture() })
+  /**
+   * Something left to file, every editable Finding with its summary, and
+   * no open text label, whose commit would land after its Finding filed.
+   */
+  const canFileAll =
+    !isBusy &&
+    !editor.editor.hasPendingLabelDraft &&
+    unfiledFindingCount(session) > 0 &&
+    model.needingSummary.length === 0
+
+  function fileAll() {
+    if (canFileAll) void model.fileAll()
+  }
+
+  useSessionChords({
+    editor,
+    onCapture: () => void capture(),
+    onFileAll: fileAll,
+  })
 
   return (
     <div className="flex min-h-0 min-w-224 flex-1 flex-col gap-3">
@@ -162,7 +182,23 @@ export function SessionScreen({
             onChange={model.editSessionDesignReference}
           />
           {session.tray.length > 0 && (
-            <Tray session={session} editor={editor} onDiscard={model.discard} />
+            <>
+              <Tray
+                session={session}
+                filing={model.filing}
+                editor={editor}
+                onDiscard={model.discard}
+              />
+              {model.filingPhase !== undefined && (
+                <FileAll
+                  phase={model.filingPhase}
+                  needingSummary={model.needingSummary}
+                  canFileAll={canFileAll}
+                  onFileAll={fileAll}
+                  onSelect={editor.select}
+                />
+              )}
+            </>
           )}
           {item !== undefined && isEditable(item) && (
             <FindingFields
@@ -328,19 +364,21 @@ function SessionDesignReference({
 function useSessionChords({
   editor,
   onCapture,
+  onFileAll,
 }: {
   readonly editor: Editor
   readonly onCapture: () => void
+  readonly onFileAll: () => void
 }) {
-  const latest = useRef({ editor, onCapture })
+  const latest = useRef({ editor, onCapture, onFileAll })
   useEffect(() => {
-    latest.current = { editor, onCapture }
+    latest.current = { editor, onCapture, onFileAll }
   })
 
   useEffect(() => {
     function keyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) return
-      const { editor, onCapture } = latest.current
+      const { editor, onCapture, onFileAll } = latest.current
       const inField = isTextEntry(event.target)
       // Dialogs and popups render outside the page's root.
       const inPopup =
@@ -354,6 +392,11 @@ function useSessionChords({
         return
       }
       if (inPopup) return
+      if (chords.fileAll.matches(event)) {
+        event.preventDefault()
+        onFileAll()
+        return
+      }
       if (chords.undo.matches(event) || chords.redo.matches(event)) {
         if (inField) return
         event.preventDefault()

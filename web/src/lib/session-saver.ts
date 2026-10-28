@@ -78,6 +78,11 @@ export class SessionSaver {
     return this.#saving
   }
 
+  /** Whether every edit has reached the server: nothing pending or in flight. */
+  get isSaved(): boolean {
+    return this.#dirty.size === 0 && this.#saving === undefined
+  }
+
   /** A Finding the server discarded takes its pending edits with it. */
   forget(itemID: string): void {
     this.#dirty.delete(itemID)
