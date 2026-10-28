@@ -249,15 +249,11 @@ export class Reviewer {
       const device = deviceNamed(request.deviceUDID, health.devices)
       const project =
         open?.project ?? (await this.#project(request.projectID, youTrack))
-      const rollback = await this.#dependencies.deviceClaims.claim(
-        user,
-        device,
-        health.devices
-      )
+      const rollback = await this.#dependencies.deviceClaims.claim(user, device)
       await this.#dependencies.deviceHost
         .launchBuild(build, device)
-        .catch((error: unknown) => {
-          rollback()
+        .catch(async (error: unknown) => {
+          await rollback()
           throw error
         })
       const recentDevices = await this.#recordRecentDevice(device)
@@ -298,17 +294,12 @@ export class Reviewer {
         throw new ReviewRefused("There is no open review to switch devices in.")
       }
       const deviceHost = this.#dependencies.deviceHost
-      const devices = await deviceHost.devices.list()
-      const device = deviceNamed(deviceUDID, devices)
-      const rollback = await this.#dependencies.deviceClaims.claim(
-        user,
-        device,
-        devices
-      )
+      const device = deviceNamed(deviceUDID, await deviceHost.devices.list())
+      const rollback = await this.#dependencies.deviceClaims.claim(user, device)
       await deviceHost
         .launchBuild(open.build, device)
-        .catch((error: unknown) => {
-          rollback()
+        .catch(async (error: unknown) => {
+          await rollback()
           throw error
         })
       return { device, recentDevices: await this.#recordRecentDevice(device) }

@@ -44,6 +44,7 @@ const deviceHost = makeLocalDeviceHost(
 const history = new HistoryStore(join(config.dataDirectory, "history"))
 const deviceClaims = new DeviceClaims({
   limit: config.maxBootedDevices,
+  list: deviceHost.devices.list,
   shutDown: deviceHost.shutDown,
 })
 const reviewers = new Reviewers({

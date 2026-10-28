@@ -55,7 +55,11 @@ export function signedInApp(options: {
   const history = options.history ?? new HistoryStore(join(data, "history"))
   const deviceClaims =
     options.deviceClaims ??
-    new DeviceClaims({ limit: undefined, shutDown: deviceHost.shutDown })
+    new DeviceClaims({
+      limit: undefined,
+      list: deviceHost.devices.list,
+      shutDown: deviceHost.shutDown,
+    })
   const reviewers = new Reviewers({
     directory: join(data, "reviewers"),
     instanceURL,

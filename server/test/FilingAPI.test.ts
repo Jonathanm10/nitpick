@@ -192,35 +192,33 @@ describe("File all", () => {
 
   test("a filed session gives its device up to the next Reviewer", async () => {
     const fake = new FakeYouTrack()
-    const shutdowns: string[] = []
-    const deviceClaims = new DeviceClaims({
-      limit: 1,
-      shutDown: async (udid) => {
-        shutdowns.push(udid)
-      },
-    })
-    const h = reviewerOn(temporaryDirectory(), fake, { deviceClaims })
-    await stage(h, [{}])
     const iPhone = {
       udid: "AAAA-1111",
       name: "iPhone 17 Pro",
       osName: "iOS 26.5",
-      isBooted: false,
+      isBooted: true,
       isRuntimeAvailable: true,
     }
     const iPad = { ...iPhone, udid: "DDDD-4444", name: "iPad (A16)" }
-    await deviceClaims.claim(fake.users["perm:vera"], iPhone, [iPhone])
+    const host = new FakeDeviceHost([iPhone, { ...iPad, isBooted: false }])
+    const deviceClaims = new DeviceClaims({
+      limit: 1,
+      list: host.devices.list,
+      shutDown: host.shutDown,
+    })
+    const h = reviewerOn(temporaryDirectory(), fake, { deviceClaims })
+    await stage(h, [{}])
+    await deviceClaims.claim(fake.users["perm:vera"], iPhone)
     const noor = { login: "noor", fullName: "Noor Haddad" }
-    const booted = [{ ...iPhone, isBooted: true }, iPad]
-    await expect(deviceClaims.claim(noor, iPad, booted)).rejects.toThrow(
+    await expect(deviceClaims.claim(noor, iPad)).rejects.toThrow(
       "Vera Baumann is using its only device"
     )
 
     await fileAll(h)
     expect((await settled(h)).status).toBe("filed")
 
-    await deviceClaims.claim(noor, iPad, booted)
-    expect(shutdowns).toEqual([iPhone.udid])
+    await deviceClaims.claim(noor, iPad)
+    expect(host.shutdowns).toEqual([iPhone.udid])
   })
 
   test("a failure keeps the error for the rows, and File n remaining resumes without a second Issue", async () => {

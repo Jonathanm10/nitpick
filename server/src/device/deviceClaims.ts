@@ -57,19 +57,26 @@ interface Claim {
 export class DeviceClaims {
   /** At most this many booted devices; undefined for no cap. */
   readonly limit: number | undefined
+  readonly #list: () => Promise<ReadonlyArray<SimulatorDevice>>
   readonly #shutDown: (deviceUDID: string) => Promise<void>
   readonly #now: () => number
   /** By login: one device per Reviewer. */
   readonly #claims = new Map<string, Claim>()
-  /** Claims decide one at a time, so two starts can't both take the last room. */
+  /**
+   * Claims and rollbacks decide one at a time, each on the host's list as
+   * it is then, so two starts can't both take the last room.
+   */
   #turn: Promise<unknown> = Promise.resolve()
 
   constructor(options: {
     readonly limit: number | undefined
+    /** The host's devices as they are now. */
+    readonly list: () => Promise<ReadonlyArray<SimulatorDevice>>
     readonly shutDown: (deviceUDID: string) => Promise<void>
     readonly now?: () => number
   }) {
     this.limit = options.limit
+    this.#list = options.list
     this.#shutDown = options.shutDown
     this.#now = options.now ?? Date.now
   }
@@ -83,21 +90,16 @@ export class DeviceClaims {
   /**
    * Makes `device` the claimant's, before its Build launches: refuses a
    * device another Reviewer is using, and makes room under the cap by
-   * shutting down unused booted devices. `devices` is the host's list as
-   * the start read it. The claimant's previous device becomes unused.
-   * Answers the rollback for a launch that fails: the claimant keeps their
-   * previous device, if it still runs, and the new one is free again.
+   * shutting down unused booted devices. The claimant's previous device
+   * becomes unused. Answers the rollback for a launch that fails: the new
+   * device is free again, and the claimant keeps their previous one if it
+   * still runs and nobody took it meanwhile.
    */
   claim(
     claimant: Claimant,
-    device: SimulatorDevice,
-    devices: ReadonlyArray<SimulatorDevice>
-  ): Promise<() => void> {
-    const decided = this.#turn.then(() =>
-      this.#claim(claimant, device, devices)
-    )
-    this.#turn = decided.catch(() => {})
-    return decided
+    device: SimulatorDevice
+  ): Promise<() => Promise<void>> {
+    return this.#inTurn(() => this.#claim(claimant, device))
   }
 
   /** The Reviewer's review ended: their device is free for others. */
@@ -105,11 +107,16 @@ export class DeviceClaims {
     this.#claims.delete(login)
   }
 
+  #inTurn<T>(decide: () => Promise<T>): Promise<T> {
+    const decided = this.#turn.then(decide)
+    this.#turn = decided.catch(() => {})
+    return decided
+  }
+
   async #claim(
     claimant: Claimant,
-    device: SimulatorDevice,
-    devices: ReadonlyArray<SimulatorDevice>
-  ): Promise<() => void> {
+    device: SimulatorDevice
+  ): Promise<() => Promise<void>> {
     const now = this.#now()
     const others = [...this.#claims.values()].filter(
       (claim) =>
@@ -121,14 +128,11 @@ export class DeviceClaims {
 
     if (this.limit !== undefined) {
       const held = new Set(others.map((claim) => claim.udid))
+      const booted = (await this.#list())
+        .filter((each) => each.isBooted)
+        .map((each) => each.udid)
       // Others' devices count while they boot too, before the list shows it.
-      // The device itself counts whatever the list says: an earlier claim
-      // may have shut it down since the list was read.
-      const occupied = new Set([
-        ...held,
-        ...devices.filter((each) => each.isBooted).map((each) => each.udid),
-        device.udid,
-      ])
+      const occupied = new Set([...held, ...booted, device.udid])
       const previous = this.#claims.get(claimant.login)?.udid
       const unused = [...occupied]
         .filter((udid) => !held.has(udid) && udid !== device.udid)
@@ -147,18 +151,25 @@ export class DeviceClaims {
         )
       }
     }
-    // Still there unless its device was shut down for room just now.
     const kept = this.#claims.get(claimant.login)
     // A device changes hands only once its holder went idle; their claim
     // goes with it, or their next request would revive it.
     this.#dropClaimsOn(device.udid)
     const claim = { udid: device.udid, claimant, lastSeen: now }
     this.#claims.set(claimant.login, claim)
-    return () => {
-      if (this.#claims.get(claimant.login) !== claim) return
-      if (kept === undefined) this.#claims.delete(claimant.login)
-      else this.#claims.set(claimant.login, kept)
-    }
+    return () =>
+      this.#inTurn(async () => {
+        if (this.#claims.get(claimant.login) !== claim) return
+        this.#claims.delete(claimant.login)
+        if (kept === undefined) return
+        const taken = [...this.#claims.values()].some(
+          (other) => other.udid === kept.udid
+        )
+        const running = (await this.#list()).some(
+          (each) => each.udid === kept.udid && each.isBooted
+        )
+        if (running && !taken) this.#claims.set(claimant.login, kept)
+      })
   }
 
   /** A device shut down for room, or taken over, is nobody else's. */

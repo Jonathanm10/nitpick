@@ -39,7 +39,9 @@ export class FakeDeviceHost implements DeviceHost {
 
   checkHealth = async () => this.health
 
+  /** Boots the device, as simctl would, even when the launch then fails. */
   launchBuild = async (build: Build, device: SimulatorDevice) => {
+    this.#setBooted(device.udid, true)
     if (this.launchFailure !== undefined) throw this.launchFailure
     this.launches.push({ build, device })
   }
@@ -49,11 +51,15 @@ export class FakeDeviceHost implements DeviceHost {
   /** Records the shutdown and shows the device shut down from then on. */
   shutDown = async (deviceUDID: string) => {
     this.shutdowns.push(deviceUDID)
+    this.#setBooted(deviceUDID, false)
+  }
+
+  #setBooted(deviceUDID: string, isBooted: boolean) {
     if (this.health.status !== "ready") return
     this.health = {
       status: "ready",
       devices: this.health.devices.map((device) =>
-        device.udid === deviceUDID ? { ...device, isBooted: false } : device
+        device.udid === deviceUDID ? { ...device, isBooted } : device
       ),
     }
   }

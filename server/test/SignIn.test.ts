@@ -79,6 +79,7 @@ function server(
       history,
       deviceClaims: new DeviceClaims({
         limit: undefined,
+        list: deviceHost.devices.list,
         shutDown: deviceHost.shutDown,
       }),
     },

@@ -77,6 +77,7 @@ function harness(
   )
   const deviceClaims = new DeviceClaims({
     limit: options.maxBootedDevices,
+    list: deviceHost.devices.list,
     shutDown: deviceHost.shutDown,
     now: options.now,
   })
@@ -459,7 +460,7 @@ describe("The host's cap on booted devices", () => {
 
   test("with the host full, Start review names who reviews there, and nothing shuts down, launches or saves", async () => {
     const h = await cappedHarness()
-    await h.deviceClaims.claim(noor, bootedIPad, [bootedIPad])
+    await h.deviceClaims.claim(noor, bootedIPad)
     enqueueProjectsAndSchema(h)
 
     const response = await startReview(h)
@@ -479,13 +480,12 @@ describe("The host's cap on booted devices", () => {
     const h = await cappedHarness(() => now)
     enqueueProjectsAndSchema(h)
     await startReview(h)
-    const booted = [iPad, { ...iPhone, isBooted: true }]
 
     now += claimIdleAfter - 1
     await review(h)
     now += claimIdleAfter - 1
 
-    await expect(h.deviceClaims.claim(noor, iPad, booted)).rejects.toThrow(
+    await expect(h.deviceClaims.claim(noor, iPad)).rejects.toThrow(
       "Vera Baumann is using its only device"
     )
   })
@@ -497,7 +497,9 @@ describe("The host's cap on booted devices", () => {
 
     expect((await startReview(h)).status).toBe(500)
 
-    await h.deviceClaims.claim(noor, iPad, [iPad, iPhone])
+    // The failed launch left iPhone booted; it counts, as nobody's.
+    await h.deviceClaims.claim(noor, iPad)
+    expect(h.deviceHost.shutdowns).toEqual([iPad.udid, iPhone.udid])
   })
 
   test.each([
@@ -516,14 +518,13 @@ describe("The host's cap on booted devices", () => {
     const h = await cappedHarness()
     enqueueProjectsAndSchema(h)
     await startReview(h)
-    const bootedIPhone = { ...iPhone, isBooted: true }
-    await expect(
-      h.deviceClaims.claim(noor, iPad, [iPad, bootedIPhone])
-    ).rejects.toThrow("Vera Baumann is using its only device")
+    await expect(h.deviceClaims.claim(noor, iPad)).rejects.toThrow(
+      "Vera Baumann is using its only device"
+    )
 
     expect((await endSession(h)).ok).toBe(true)
 
-    await h.deviceClaims.claim(noor, iPad, [iPad, bootedIPhone])
+    await h.deviceClaims.claim(noor, iPad)
     expect(h.deviceHost.shutdowns).toEqual([iPad.udid, iPhone.udid])
   })
 })
@@ -562,7 +563,7 @@ describe("In the session", () => {
 
   test("a device another Reviewer is reviewing on is refused, and nothing relaunches", async () => {
     const noor = { login: "noor", fullName: "Noor Haddad" }
-    await h.deviceClaims.claim(noor, iPad, [iPad])
+    await h.deviceClaims.claim(noor, iPad)
 
     const response = await switchTo(iPad.udid)
 
