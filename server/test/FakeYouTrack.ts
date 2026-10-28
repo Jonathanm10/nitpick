@@ -1,8 +1,10 @@
 // An in-memory YouTrack that answers the routes nitpick calls by route,
 // rather than in a scripted order, and records every request and what it
-// changed. The filing and Feedback tests, the crash-and-resume test and the
-// live proof file against it; nothing here reaches a real instance. All
-// data is fictional.
+// changed, with the Hub built into it for sign-in through YouTrack's login.
+// The filing and Feedback tests, the crash-and-resume test and the live
+// proof file against it; nothing here reaches a real instance. All data is
+// fictional.
+import { createHash } from "node:crypto"
 import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import type { HTTPRequest, HTTPResponse, HTTPTransport } from "@nitpick/core"
@@ -66,6 +68,21 @@ export class FakeYouTrack {
   /** Runs before each request is answered. */
   intercept: (request: RecordedRequest) => Interception = () => undefined
   #nextIssue = 101
+  /** nitpick's registration in the Hub; no secret for a public client. */
+  hubClient: { clientID: string; clientSecret?: string } = {
+    clientID: "nitpick-test-client",
+    clientSecret: "fictional-hub-secret",
+  }
+  /** How long an access token lasts, in seconds, as Hub says it. */
+  accessTokenLifetime = 3600
+  /** The refresh tokens Hub still takes, and whose each is. */
+  readonly refreshTokens = new Map<string, string>()
+  /** The codes Hub's login handed out, until a token request spends one. */
+  readonly #codes = new Map<
+    string,
+    { login: string; redirectURI: string; challenge: string }
+  >()
+  #nextToken = 1
 
   /** What the credentials name; requests are read below it. */
   instanceURL: string
@@ -76,6 +93,36 @@ export class FakeYouTrack {
 
   readonly transport: HTTPTransport = {
     send: (request) => this.#send(request),
+  }
+
+  /**
+   * Hub's login, where a Reviewer signs in as `login` and allows nitpick
+   * access, or declines with no login: where it sends the browser next.
+   */
+  authorize(authorizationURL: string, login: string | undefined): string {
+    const query = new URL(authorizationURL).searchParams
+    const redirectURI = query.get("redirect_uri")!
+    const back = new URL(redirectURI)
+    back.searchParams.set("state", query.get("state") ?? "")
+    if (login === undefined) {
+      back.searchParams.set("error", "access_denied")
+      return back.toString()
+    }
+    const code = `hub-code-${this.#nextToken++}`
+    this.#codes.set(code, {
+      login,
+      redirectURI,
+      challenge: query.get("code_challenge") ?? "",
+    })
+    back.searchParams.set("code", code)
+    return back.toString()
+  }
+
+  /** An hour passes: YouTrack stops taking every access token Hub issued. */
+  expireAccessTokens(): void {
+    for (const token of Object.keys(this.users)) {
+      if (token.startsWith("hub-access-")) delete this.users[token]
+    }
   }
 
   /** Answered requests to `method path`, the ones that changed something. */
@@ -100,6 +147,17 @@ export class FakeYouTrack {
       const chunks: Buffer[] = []
       incoming.on("data", (chunk: Buffer) => chunks.push(chunk))
       incoming.on("end", () => {
+        // Hub's login, for a browser: pick a user, then allow or decline.
+        const login = this.#hubLoginPage(
+          incoming.method ?? "",
+          incoming.url ?? "",
+          Buffer.concat(chunks)
+        )
+        if (login !== undefined) {
+          outgoing.writeHead(login.status, login.headers)
+          outgoing.end(login.body)
+          return
+        }
         const headers: Record<string, string> = {}
         for (const [name, value] of Object.entries(incoming.headers)) {
           if (typeof value === "string") headers[name] = value
@@ -162,7 +220,106 @@ export class FakeYouTrack {
     return response
   }
 
+  #hubLoginPage(
+    method: string,
+    path: string,
+    body: Buffer
+  ):
+    | { status: number; headers: Record<string, string>; body: string }
+    | undefined {
+    if (method === "GET" && path.startsWith("/yt/hub/api/rest/oauth2/auth?")) {
+      const users = Object.values(this.users).filter(
+        (user, index, all) =>
+          all.findIndex((other) => other.login === user.login) === index
+      )
+      const escape = (text: string) =>
+        text.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)
+      return {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+        body: `<!doctype html><title>Fake YouTrack Hub</title>
+<form method="post" action="/yt/hub/login" style="font-family:sans-serif;max-width:22rem;margin:4rem auto;display:flex;flex-direction:column;gap:.75rem">
+<h1 style="font-size:1.2rem">Fake YouTrack: allow nitpick access?</h1>
+<input type="hidden" name="authorization" value="${escape(`http://fake${path}`)}">
+<label>Sign in as <select name="login">${users.map((user) => `<option value="${escape(user.login)}">${escape(user.fullName)}</option>`).join("")}</select></label>
+<button name="decision" value="allow">Allow</button>
+<button name="decision" value="deny">Decline</button>
+</form>`,
+      }
+    }
+    if (method === "POST" && path === "/yt/hub/login") {
+      const form = new URLSearchParams(body.toString("utf8"))
+      return {
+        status: 302,
+        headers: {
+          Location: this.authorize(
+            form.get("authorization") ?? "",
+            form.get("decision") === "allow"
+              ? (form.get("login") ?? undefined)
+              : undefined
+          ),
+        },
+        body: "",
+      }
+    }
+    return undefined
+  }
+
+  /** Hub's token endpoint: a code or a refresh token, for fresh tokens. */
+  #hubToken(request: RecordedRequest, authorization: string): HTTPResponse {
+    const form = new URLSearchParams(request.body.toString("utf8"))
+    const { clientID, clientSecret } = this.hubClient
+    const basic = authorization.startsWith("Basic ")
+      ? Buffer.from(authorization.slice(6), "base64").toString("utf8")
+      : undefined
+    const clientKnown =
+      clientSecret === undefined
+        ? basic === undefined && form.get("client_id") === clientID
+        : basic === `${clientID}:${clientSecret}`
+    if (!clientKnown) return json({ error: "invalid_client" }, 401)
+    let login: string | undefined
+    if (form.get("grant_type") === "authorization_code") {
+      const code = form.get("code") ?? ""
+      const issued = this.#codes.get(code)
+      this.#codes.delete(code)
+      const challenge = createHash("sha256")
+        .update(form.get("code_verifier") ?? "")
+        .digest("base64url")
+      if (
+        issued?.redirectURI === form.get("redirect_uri") &&
+        issued.challenge === challenge
+      ) {
+        login = issued.login
+      }
+    } else if (form.get("grant_type") === "refresh_token") {
+      const refreshToken = form.get("refresh_token") ?? ""
+      login = this.refreshTokens.get(refreshToken)
+      // Hub replaces the refresh token, and revokes the old one.
+      this.refreshTokens.delete(refreshToken)
+    }
+    const user = Object.values(this.users).find((u) => u.login === login)
+    if (user === undefined) return json({ error: "invalid_grant" }, 400)
+    const n = this.#nextToken++
+    const accessToken = `hub-access-${n}`
+    const refreshToken = `hub-refresh-${n}`
+    this.users[accessToken] = user
+    this.refreshTokens.set(refreshToken, user.login)
+    return json({
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: this.accessTokenLifetime,
+      refresh_token: refreshToken,
+      scope: "YouTrack",
+    })
+  }
+
   #answer(request: RecordedRequest, authorization: string): HTTPResponse {
+    if (
+      request.method === "POST" &&
+      request.path === "hub/api/rest/oauth2/token"
+    ) {
+      return this.#hubToken(request, authorization)
+    }
     const user = this.users[authorization.replace(/^Bearer /, "")]
     if (user === undefined) return json({ error: "Unauthorized" }, 401)
     const { method, path } = request

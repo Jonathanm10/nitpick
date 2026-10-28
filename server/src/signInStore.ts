@@ -1,9 +1,11 @@
 // Who is signed in, and the YouTrack token each sign-in files with (PRD
-// answer 1). A sign-in's ID is a random secret that only the browser's
-// cookie holds. The server keeps the ID's SHA-256, so neither its files nor a
-// backup of them can sign anyone in, and keeps the token encrypted with
-// AES-256-GCM under a key file in the data directory, so filing can resume
-// after a restart or the scheduled reboot. Signing out deletes both.
+// answer 1): a permanent token, or the tokens YouTrack's Hub issued for a
+// sign-in through YouTrack's login, renewed here as they expire. A sign-in's
+// ID is a random secret that only the browser's cookie holds. The server
+// keeps the ID's SHA-256, so neither its files nor a backup of them can sign
+// anyone in, and keeps the token encrypted with AES-256-GCM under a key file
+// in the data directory, so filing can resume after a restart or the
+// scheduled reboot. Signing out deletes both.
 //
 //   <data>/sign-in-key                        32 random bytes, mode 0600
 //   <data>/sign-ins/<SHA-256 of the ID>.json  one per sign-in, mode 0600
@@ -23,8 +25,14 @@ import {
   writeFile,
 } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import { newUUID, YouTrackCredentials, type YouTrackUser } from "@nitpick/core"
+import {
+  newUUID,
+  YouTrackCredentials,
+  YouTrackError,
+  type YouTrackUser,
+} from "@nitpick/core"
 import { writeAtomically } from "./reviewerStore.ts"
+import type { HubTokens, YouTrackHub } from "./youTrackHub.ts"
 
 /** A month without a request ends a sign-in (PRD answer 1). */
 export const signInLifetime = 30 * 24 * 60 * 60 * 1000
@@ -38,12 +46,17 @@ const rememberedEndings = 1000
 /** 32 random bytes, base64url. */
 const idPattern = /^[A-Za-z0-9_-]{43}$/
 
+/** An access token this close to its end is renewed before it's used. */
+const renewalMargin = 60 * 1000
+
 export interface SignIn {
   /** The SHA-256 of the ID, in hex: all the server keeps of the ID. */
   readonly key: string
   readonly user: YouTrackUser
   /** The token sits in the credentials' private field. */
   readonly credentials: YouTrackCredentials
+  /** Signed in through YouTrack's login, not with a permanent token. */
+  readonly throughHub: boolean
   /** Milliseconds since 1970. */
   readonly expiresAt: number
 }
@@ -53,8 +66,12 @@ interface StoredSignIn {
   readonly instanceURL: string
   readonly login: string
   readonly fullName: string
-  /** The token, sealed: base64url of the IV, the ciphertext and the tag. */
+  /**
+   * The token, sealed: base64url of the IV, the ciphertext and the tag.
+   * Through Hub, the sealed text is the JSON of its HubTokens.
+   */
   readonly token: string
+  readonly throughHub?: true
   readonly expiresAt: number
 }
 
@@ -63,6 +80,8 @@ export class SignInStore {
   readonly #keyPath: string
   readonly #instanceURL: string
   readonly #now: () => number
+  /** What renews a Hub sign-in's access token. */
+  readonly #hub: YouTrackHub | undefined
   #key: Promise<Buffer> | undefined
   readonly #signIns = new Map<
     string,
@@ -81,12 +100,13 @@ export class SignInStore {
     dataDirectory: string,
     /** The deployment's one instance; a sign-in for another one is dropped. */
     instanceURL: string,
-    now: () => number = Date.now
+    options: { readonly now?: () => number; readonly hub?: YouTrackHub } = {}
   ) {
     this.#directory = join(dataDirectory, "sign-ins")
     this.#keyPath = join(dataDirectory, "sign-in-key")
     this.#instanceURL = instanceURL
-    this.#now = now
+    this.#now = options.now ?? Date.now
+    this.#hub = options.hub
   }
 
   /**
@@ -108,25 +128,35 @@ export class SignInStore {
     }
   }
 
-  /** Starts a sign-in for a verified user; the ID goes in their cookie. */
+  /**
+   * Starts a sign-in for a verified user, with their permanent token or the
+   * tokens Hub issued; the ID goes in their cookie.
+   */
   async create(
     user: YouTrackUser,
-    token: string
+    token: string | HubTokens
   ): Promise<{ readonly id: string; readonly signIn: SignIn }> {
     const id = randomBytes(32).toString("base64url")
     const key = keyOf(id)
+    const throughHub = typeof token !== "string"
     const stored: StoredSignIn = {
       instanceURL: this.#instanceURL,
       login: user.login,
       fullName: user.fullName,
-      token: seal(await this.#cipherKey(), token, additionalData(key, user)),
+      token: seal(
+        await this.#cipherKey(),
+        throughHub ? JSON.stringify(token) : token,
+        additionalData(key, user)
+      ),
+      ...(throughHub && { throughHub }),
       expiresAt: this.#now() + signInLifetime,
     }
     await this.#queued(() => this.#write(key, stored))
     const signIn: SignIn = {
       key,
       user,
-      credentials: new YouTrackCredentials(this.#instanceURL, token),
+      credentials: this.#credentials(key, user, token),
+      throughHub,
       expiresAt: stored.expiresAt,
     }
     this.#signIns.set(key, { signIn, stored })
@@ -240,15 +270,81 @@ export class SignInStore {
     }
     const user = { login: stored.login, fullName: stored.fullName }
     const token = unseal(cipherKey, stored.token, additionalData(key, user))
+    const throughHub = stored.throughHub === true
     return {
       signIn: {
         key,
         user,
-        credentials: new YouTrackCredentials(this.#instanceURL, token),
+        credentials: this.#credentials(
+          key,
+          user,
+          throughHub ? hubTokens(token) : token
+        ),
+        throughHub,
         expiresAt: stored.expiresAt,
       },
       stored,
     }
+  }
+
+  /**
+   * A permanent token as it is; Hub's access token renewed with the refresh
+   * token once it nears its end, one renewal at a time.
+   */
+  #credentials(
+    key: string,
+    user: YouTrackUser,
+    token: string | HubTokens
+  ): YouTrackCredentials {
+    if (typeof token === "string") {
+      return new YouTrackCredentials(this.#instanceURL, token)
+    }
+    let tokens = token
+    let renewal: Promise<HubTokens> | undefined
+    return new YouTrackCredentials(this.#instanceURL, async () => {
+      if (tokens.expiresAt - this.#now() > renewalMargin) {
+        return tokens.accessToken
+      }
+      renewal ??= this.#renewed(key, user, tokens).finally(() => {
+        renewal = undefined
+      })
+      tokens = await renewal
+      return tokens.accessToken
+    })
+  }
+
+  /**
+   * Hub's fresh tokens, sealed into the sign-in's file before they're used,
+   * so a restart files with them. Hub may replace the refresh token and
+   * revoke the old one. tokenRejected when there is none, or Hub refuses it.
+   */
+  async #renewed(
+    key: string,
+    user: YouTrackUser,
+    tokens: HubTokens
+  ): Promise<HubTokens> {
+    if (this.#hub === undefined || tokens.refreshToken === undefined) {
+      throw new YouTrackError({ kind: "tokenRejected" })
+    }
+    const fresh = await this.#hub.refresh(tokens.refreshToken)
+    const renewed: HubTokens = {
+      ...fresh,
+      refreshToken: fresh.refreshToken ?? tokens.refreshToken,
+    }
+    const sealed = seal(
+      await this.#cipherKey(),
+      JSON.stringify(renewed),
+      additionalData(key, user)
+    )
+    const entry = this.#signIns.get(key)
+    if (entry !== undefined) {
+      entry.stored = { ...entry.stored, token: sealed }
+      await this.#queued(async () => {
+        const current = this.#signIns.get(key)
+        if (current !== undefined) await this.#write(key, current.stored)
+      })
+    }
+    return renewed
   }
 
   async #write(key: string, stored: StoredSignIn): Promise<void> {
@@ -270,6 +366,19 @@ export class SignInStore {
     this.#key ??= cipherKey(this.#keyPath)
     return this.#key
   }
+}
+
+/** Hub's tokens as a sign-in's file sealed them; throws on anything else. */
+function hubTokens(json: string): HubTokens {
+  const tokens = JSON.parse(json) as Partial<HubTokens> | null
+  if (
+    typeof tokens?.accessToken !== "string" ||
+    typeof tokens.expiresAt !== "number" ||
+    !["string", "undefined"].includes(typeof tokens.refreshToken)
+  ) {
+    throw new Error("A sealed Hub sign-in doesn't hold Hub's tokens.")
+  }
+  return tokens as HubTokens
 }
 
 function keyOf(id: string): string {

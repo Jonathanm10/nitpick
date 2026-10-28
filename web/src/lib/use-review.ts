@@ -11,7 +11,6 @@ import {
   discardFinding,
   filingPhase,
   findingsNeedingSummary,
-  historyFiledBy,
   historyTrace,
   RecentDevices,
   reviewStart,
@@ -156,7 +155,7 @@ export function useReview() {
     [busy]
   )
 
-  /** The shared History, re-read after each filing and on its page. */
+  /** The Reviewer's History, re-read after each filing and on its page. */
   const refreshHistory = useCallback(
     () =>
       api
@@ -535,7 +534,6 @@ export function useReview() {
     return () => document.removeEventListener("visibilitychange", flush)
   }, [saver])
 
-  const reviewer = history.status === "loaded" ? history.reviewer : undefined
   const historyEntries = history.status === "loaded" ? history.entries : []
 
   return {
@@ -545,10 +543,7 @@ export function useReview() {
     history,
     refreshHistory,
     /** The signed-in Reviewer's last session, for the home trace line. */
-    trace:
-      reviewer === undefined
-        ? undefined
-        : historyTrace(historyFiledBy(historyEntries, reviewer)),
+    trace: historyTrace(historyEntries),
     filing,
     filingPhase:
       session &&

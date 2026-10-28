@@ -55,6 +55,14 @@ export interface SignedInResponse {
   readonly reviewer: YouTrackUser
 }
 
+/**
+ * `GET /api/sign-in`: `youTrack` signs in through YouTrack's own login, at
+ * `/api/sign-in/youtrack`; `token` with a permanent token.
+ */
+export interface SignInMethodResponse {
+  readonly method: "youTrack" | "token"
+}
+
 /** A Build as the page shows it: name plus identity, never a server path. */
 export interface BuildSummary {
   /** The .app's name without `.app`, or the .apk's without `.apk`. */
@@ -120,7 +128,7 @@ export interface FilingResponse {
 
 // `DELETE /api/filing-result` is Done on the filing result: 204.
 
-/** `GET /api/history`: the shared History, newest session first. */
+/** `GET /api/history`: the signed-in Reviewer's History, newest session first. */
 export interface HistoryResponse {
   readonly entries: ReadonlyArray<HistoryEntry>
   /** The Reviewer asking, whose own last session the home trace shows. */
@@ -130,9 +138,9 @@ export interface HistoryResponse {
 /**
  * What became of one History file in `POST /api/history/import`:
  *
- * - `imported`: added to the shared History, as filed by the importer.
- * - `duplicate`: History already holds the session: the same start and the
- *   same Issue IDs.
+ * - `imported`: added to the importer's History, as filed by them.
+ * - `duplicate`: their History already holds the session: the same start
+ *   and the same Issue IDs.
  * - `openSession`: an open Review Session, never imported: it's filed or
  *   ended in the Swift app first.
  * - `refused`: not a schema v1 History file; `error` says why.

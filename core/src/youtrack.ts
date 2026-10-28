@@ -111,27 +111,36 @@ function message(failure: YouTrackFailure): string {
 }
 
 /**
- * An instance URL and the permanent token that authenticates against it. The
- * token sits in a private field, so logging the credentials, or anything that
- * holds them, never prints it.
+ * Where the token of a sign-in that renews it comes from: an access token
+ * from YouTrack's Hub, which lasts an hour.
+ */
+export type YouTrackTokenSource = () => Promise<string>
+
+/**
+ * An instance URL and the token that authenticates against it: a permanent
+ * token, or the source of a renewing one. The token sits in a private field,
+ * so logging the credentials, or anything that holds them, never prints it.
  */
 export class YouTrackCredentials {
   readonly instanceURL: string
-  readonly #token: string
+  readonly #token: string | YouTrackTokenSource
 
   /**
    * Cleans up what was entered: whitespace trimmed, https assumed, query,
    * fragment and trailing slashes dropped. Throws invalidInstanceURL or
    * insecureInstanceURL before anything reaches the network.
    */
-  constructor(instanceURL: string, token: string) {
+  constructor(instanceURL: string, token: string | YouTrackTokenSource) {
     this.instanceURL = normalizedInstanceURL(instanceURL)
-    this.#token = trimWhitespaceAndNewlines(token)
+    this.#token =
+      typeof token === "string" ? trimWhitespaceAndNewlines(token) : token
   }
 
   /** The `Authorization` header's value. */
-  authorization(): string {
-    return `Bearer ${this.#token}`
+  async authorization(): Promise<string> {
+    const token =
+      typeof this.#token === "string" ? this.#token : await this.#token()
+    return `Bearer ${token}`
   }
 }
 
@@ -216,7 +225,7 @@ export class YouTrackClient {
    */
   async request<Payload>(call: YouTrackCall<Payload>): Promise<Payload> {
     const headers: Record<string, string> = {
-      Authorization: this.credentials.authorization(),
+      Authorization: await this.credentials.authorization(),
       Accept: "application/json",
     }
     if (call.body !== undefined) headers["Content-Type"] = call.body.contentType

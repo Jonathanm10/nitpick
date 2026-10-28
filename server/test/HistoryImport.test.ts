@@ -313,12 +313,12 @@ describe("Importing History files", () => {
 })
 
 describe("Duplicates", () => {
-  test("the same session start with the same Issue IDs, in any order and whoever filed it, is a duplicate", async () => {
+  test("the same session start with the same Issue IDs, in any order, in the importer's History is a duplicate", async () => {
     const h = harness()
     const session = filedSession(804900000, ["RM-440", "RM-441"])
     await h.history.record({
       ...filedSession(804900000, ["RM-441", "RM-440"]),
-      filedBy: noor,
+      filedBy: vera,
     })
 
     const { results } = await importFiles(h, [
@@ -327,7 +327,24 @@ describe("Duplicates", () => {
 
     expect(results).toEqual([{ file: "a.json", outcome: "duplicate" }])
     expect(Object.keys(storedFiles(h))).toEqual([
+      "2026-07-04T23-20-00.000Z_vera.json",
+    ])
+  })
+
+  test("the same session in another Reviewer's History is imported into the importer's own", async () => {
+    const h = harness()
+    const session = filedSession(804900000, ["RM-440", "RM-441"])
+    await h.history.record({ ...session, filedBy: noor })
+
+    const { results } = await importFiles(h, [
+      { name: "a.json", contents: swiftFile(session) },
+    ])
+
+    expect(results).toEqual([{ file: "a.json", outcome: "imported" }])
+    expect(await historyOf(h)).toEqual([{ ...session, filedBy: vera }])
+    expect(Object.keys(storedFiles(h))).toEqual([
       "2026-07-04T23-20-00.000Z_noor.json",
+      "2026-07-04T23-20-00.000Z_vera.json",
     ])
   })
 
@@ -346,7 +363,8 @@ describe("Duplicates", () => {
     ])
 
     expect(results).toEqual([{ file: "a.json", outcome: "imported" }])
-    expect(await historyOf(h)).toHaveLength(2)
+    expect(await historyOf(h)).toHaveLength(1)
+    expect(Object.keys(storedFiles(h))).toHaveLength(2)
   })
 
   test("a file chosen twice in one import is added once", async () => {
@@ -411,13 +429,14 @@ describe("Duplicates", () => {
     expect(Object.keys(storedFiles(h))).toHaveLength(2)
   })
 
-  test("every Reviewer sees an imported entry, as filed by its importer", async () => {
+  test("only the importer sees an imported entry, as filed by them", async () => {
     const h = harness()
     await importFiles(h, [{ name: goldenName, contents: goldenFile }])
 
     const other = harness({ data: h.data, user: noor })
 
-    expect(await historyOf(other)).toEqual([{ ...goldenEntry, filedBy: vera }])
+    expect(await historyOf(h)).toEqual([{ ...goldenEntry, filedBy: vera }])
+    expect(await historyOf(other)).toEqual([])
   })
 })
 

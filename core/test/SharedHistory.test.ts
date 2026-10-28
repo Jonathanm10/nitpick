@@ -1,7 +1,7 @@
-// Not a port: the Swift app's History had one Reviewer. These pin what the
-// shared History adds (PRD answers 2 and 3): who filed an entry is stored
-// beside the schema v1 shape, a Swift file without it still round-trips
-// byte for byte, and the home trace reads only the Reviewer's own entries.
+// Not a port: the Swift app's History had one Reviewer. These pin what a
+// server holding every Reviewer's History adds (PRD answer 3, ADR-0014): who
+// filed an entry is stored beside the schema v1 shape, a Swift file without
+// it still round-trips byte for byte, and a Reviewer reads only their own.
 import { describe, expect, test } from "vitest"
 import {
   historyFiledBy,

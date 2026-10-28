@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { parseEnv } from "node:util"
 import { normalizedInstanceURL } from "@nitpick/core"
+import type { HubClient } from "./youTrackHub.ts"
 
 export interface ServerConfig {
   /** The address to listen on. Loopback by default: the host opts in to the LAN. */
@@ -16,6 +17,11 @@ export interface ServerConfig {
    * Undefined when unset; the server then refuses to start.
    */
   readonly youTrackURL: string | undefined
+  /**
+   * nitpick as a service registered in that instance's Hub, so Reviewers
+   * sign in through YouTrack's login; undefined for permanent tokens.
+   */
+  readonly hubClient: HubClient | undefined
   /**
    * At most this many devices booted at once (PRD answer 4), so the host's
    * memory holds; undefined for no cap.
@@ -51,6 +57,7 @@ export function loadConfig(
         join(homedir(), "Library", "Application Support", "nitpick-server")
     ),
     youTrackURL: youTrackURL(value),
+    hubClient: hubClient(value),
     maxBootedDevices: parseDeviceCap(value("NITPICK_MAX_BOOTED_DEVICES")),
   }
 }
@@ -71,6 +78,22 @@ function youTrackURL(
   }
   const url = value("NITPICK_YOUTRACK_URL")
   return url === undefined ? undefined : normalizedInstanceURL(url)
+}
+
+function hubClient(
+  value: (key: string) => string | undefined
+): HubClient | undefined {
+  const clientID = value("NITPICK_YOUTRACK_CLIENT_ID")
+  const clientSecret = value("NITPICK_YOUTRACK_CLIENT_SECRET")
+  if (clientID === undefined) {
+    if (clientSecret !== undefined) {
+      throw new Error(
+        "NITPICK_YOUTRACK_CLIENT_SECRET needs NITPICK_YOUTRACK_CLIENT_ID, the client ID of nitpick's service in YouTrack's Hub."
+      )
+    }
+    return undefined
+  }
+  return clientSecret === undefined ? { clientID } : { clientID, clientSecret }
 }
 
 function parsePort(value: string | undefined): number {

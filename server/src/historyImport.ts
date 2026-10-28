@@ -1,6 +1,6 @@
 // History import: the schema v1 files the Swift app wrote under
 // `~/Library/Application Support/Nitpick/history`, or a zip of that folder,
-// brought into the shared History. Each file is read with the v1 codec and
+// brought into the importer's History. Each file is read with the v1 codec and
 // refused alone, with today's message; the others still import. An imported
 // entry belongs to the Reviewer who ran the import (PRD answer 3).
 import type { Dirent } from "node:fs"
