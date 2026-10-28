@@ -1,0 +1,4 @@
+h264
+firstFrameAfterStreamRequestMs {'runs': 5, 'median': 1792, 'min': 1790, 'max': 1792}
+resumeClickToFirstFrameMs {'runs': 5, 'median': 2928, 'min': 2806, 'max': 2951}
+captureClickToResponseMs {'runs': 10, 'median': 656, 'min': 610, 'max': 673}

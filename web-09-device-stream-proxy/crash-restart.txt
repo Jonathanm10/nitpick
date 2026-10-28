@@ -1,0 +1,8 @@
+server pid unchanged: yes
+hub pid changed: yes
+stream attachable again after 1.77 s
+status 200 content-type multipart/x-mixed-replace; boundary=frame cache-control no-store, no-transform headers 426 ms
+part 1 at 428 ms, 1206x2622 "--frame"
+[device hub] Expo Device Hub ready
+[device hub] The device hub exited (SIGKILL); restarting it.
+[device hub] Expo Device Hub ready

@@ -1,0 +1,13 @@
+Total RAM: 64 GB
+Before (no proof device booted, no hub):
+  68% free (memory_pressure), 24.6 GB free+inactive+speculative
+  68% free (memory_pressure), 24.5 GB free+inactive+speculative
+  68% free (memory_pressure), 24.5 GB free+inactive+speculative
+After (proof device booted with SmokeApp running, hub running, one headless viewer streaming on the same Mac):
+  67% free (memory_pressure), 22.0 GB free+inactive+speculative
+  67% free (memory_pressure), 21.8 GB free+inactive+speculative
+  67% free (memory_pressure), 22.0 GB free+inactive+speculative
+Hub and simulator processes (RSS):
+  1.17 GB across 5 processes
+Headless viewer (Chromium, on this Mac only because the proof runs here; on the host it is the Reviewer's browser): 0.94 GB RSS
+Hub: 0.18 GB RSS

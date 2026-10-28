@@ -1,0 +1,6 @@
+Listening sockets (lsof):
+  nitpick server: 127.0.0.1:4891 
+  device hub:     127.0.0.1:<hub port> 
+Connecting to this Mac's LAN address:
+  hub port: refused
+  hub port on loopback: open (server-side only)
