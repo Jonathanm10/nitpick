@@ -228,12 +228,16 @@ export async function proxyHubHTTP(
 const signalingBodyLimit = 256 * 1024
 
 /**
- * The WebRTC sessions serve-emu answered, by session ID, each with what
- * stops following it. Their media flows straight from the hub, outside the
- * proxy, so each is closed on serve-emu when the sign-in that opened it
- * ends, as an HTTP stream is. The viewer's own close forgets it.
+ * The WebRTC sessions serve-emu answered, by session ID: where each closes,
+ * and what stops following it. Their media flows straight from the hub,
+ * outside the proxy, so each is closed on serve-emu when the sign-in that
+ * opened it ends, as an HTTP stream is. The viewer's own close forgets it
+ * once serve-emu has taken that close, for that same device.
  */
-const webRTCSessions = new Map<string, () => void>()
+const webRTCSessions = new Map<
+  string,
+  { readonly close: string; readonly stop: () => void }
+>()
 
 function followWebRTCSession(
   route: Extract<HubRoute, { upstream: string }>,
@@ -249,7 +253,8 @@ function followWebRTCSession(
   if (typeof sessionId !== "string") return
   const url = new URL(route.upstream)
   if (url.pathname.endsWith("/webrtc/close")) {
-    webRTCSessions.get(sessionId)?.()
+    const followed = webRTCSessions.get(sessionId)
+    if (answered && followed?.close === url.href) followed.stop()
     return
   }
   if (!answered || webRTCSessions.has(sessionId)) return
@@ -265,9 +270,12 @@ function followWebRTCSession(
       body: JSON.stringify({ sessionId }),
     }).catch(() => {})
   })
-  webRTCSessions.set(sessionId, () => {
-    webRTCSessions.delete(sessionId)
-    stop()
+  webRTCSessions.set(sessionId, {
+    close: url.href,
+    stop: () => {
+      webRTCSessions.delete(sessionId)
+      stop()
+    },
   })
 }
 

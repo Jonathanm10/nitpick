@@ -402,6 +402,36 @@ describe("device hub proxy: forwarding", () => {
       expect(closes(hub)).toHaveLength(1)
     })
 
+    test.each([
+      ["serve-emu refuses", serial, " ".repeat(4096)],
+      ["names another emulator", "emulator-5556", ""],
+    ])(
+      "a viewer's close that %s still leaves it followed",
+      async (_, device, padding) => {
+        const { app, hub, signedIn } = await fixture()
+
+        await signal(app, signedIn.cookie, "offer")
+        await app.request(
+          `${proxy}/vendor/serve-emu/webrtc/close?device=${device}`,
+          posting(
+            { cookie: signedIn.cookie, ...sameOrigin },
+            `{"sessionId":"${sessionId}"}${padding}`
+          )
+        )
+        await app.request("/api/sign-out", {
+          method: "POST",
+          headers: signedIn,
+        })
+
+        await eventually(() =>
+          expect(closes(hub).map((request) => request.url)).toEqual([
+            `/vendor/serve-emu/webrtc/close?device=${device}`,
+            `/vendor/serve-emu/webrtc/close?device=${serial}`,
+          ])
+        )
+      }
+    )
+
     test("a signaling body past serve-emu's own 256 KiB cap is refused before the hub", async () => {
       const { app, hub, signedIn } = await fixture()
 

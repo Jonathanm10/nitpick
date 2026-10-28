@@ -55,6 +55,11 @@ export class FakeDeviceHub implements DeviceStream {
         request.on("data", (chunk: Buffer) => chunks.push(chunk))
         request.on("end", () => {
           record.body = Buffer.concat(chunks).toString("utf8")
+          // serve-emu caps a close body at 4 KiB.
+          if (request.url?.includes("/close") && record.body.length > 4096) {
+            response.writeHead(413).end()
+            return
+          }
           response.writeHead(200, {
             "Content-Type": "application/json",
             "Set-Cookie": "hub_session=1",
