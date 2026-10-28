@@ -58,6 +58,8 @@ const startupLink = /^\s*Local:\s+http:\/\/\S+?\/\?token=([A-Za-z0-9._~-]+)\s*$/
 export class DeviceHub implements DeviceStream {
   readonly #options: DeviceHubOptions
   #child: ChildProcess | undefined
+  /** Settles once the running child's output has closed after it exited. */
+  #closed: Promise<void> | undefined
   #endpoint: HubEndpoint | undefined
   #stopped = false
   #restartDelay = 0
@@ -124,17 +126,17 @@ export class DeviceHub implements DeviceStream {
   /** Stops the hub for good, waiting for it to exit. */
   async stop(): Promise<void> {
     this.#stopped = true
+    this.#endpoint = undefined
     clearTimeout(this.#restartTimer)
     this.#settle()
     const child = this.#child
-    if (child === undefined || child.exitCode !== null) return
-    const exited = new Promise((resolve) => child.once("exit", resolve))
+    if (child === undefined) return
     child.kill("SIGTERM")
     const timer = setTimeout(
       () => child.kill("SIGKILL"),
       stopTimeoutMilliseconds
     )
-    await exited
+    await this.#closed
     clearTimeout(timer)
   }
 
@@ -160,6 +162,9 @@ export class DeviceHub implements DeviceStream {
       return
     }
     this.#child = child
+    this.#closed = new Promise((resolve) =>
+      child.once("close", () => resolve())
+    )
     let token: string | undefined
     const redact = (line: string) =>
       (token === undefined ? line : line.split(token).join("…")).replace(
