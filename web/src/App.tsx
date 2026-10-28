@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent } from "react"
-import { unfiledFindingCount } from "@nitpick/core"
+import { unfiledFindingCount, type YouTrackUser } from "@nitpick/core"
 import { HistoryIcon } from "lucide-react"
+import { toast } from "sonner"
 import { BuildDropZone } from "@/components/build-drop-zone"
 import { DevicePicker } from "@/components/device-picker"
 import { focusDeviceStream } from "@/components/device-stream"
@@ -12,7 +13,9 @@ import { HostNotReady } from "@/components/host-not-ready"
 import { ProjectPicker } from "@/components/project-picker"
 import { SessionScreen } from "@/components/session-screen"
 import { ShortcutsDialog } from "@/components/shortcuts-dialog"
+import { SignInPage } from "@/components/sign-in-page"
 import { StartReviewButton } from "@/components/start-review-button"
+import { UserMenu } from "@/components/user-menu"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,6 +29,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Toaster } from "@/components/ui/sonner"
 import { Spinner } from "@/components/ui/spinner"
+import { api, APIError, onSignedOut } from "@/lib/api"
 import { chords } from "@/lib/chords"
 import { useReview } from "@/lib/use-review"
 
@@ -47,7 +51,74 @@ function useRoute() {
   return [route, navigate] as const
 }
 
+type SignInState =
+  | { readonly status: "checking" }
+  | { readonly status: "signedOut"; readonly notice?: string }
+  | { readonly status: "signedIn"; readonly reviewer: YouTrackUser }
+
+/**
+ * Sign-in first: every call but sign-in needs it. A 401 from any call while
+ * signed in brings sign-in back with the server's reason, such as a token
+ * YouTrack stopped taking; the open session stays on the server.
+ */
 export function App() {
+  const [signIn, setSignIn] = useState<SignInState>({ status: "checking" })
+
+  useEffect(() => {
+    const unsubscribe = onSignedOut((reason) =>
+      setSignIn((current) =>
+        current.status === "signedIn"
+          ? { status: "signedOut", notice: reason }
+          : current
+      )
+    )
+    api.me().then(
+      ({ reviewer }) => setSignIn({ status: "signedIn", reviewer }),
+      (error: unknown) =>
+        setSignIn({
+          status: "signedOut",
+          notice:
+            error instanceof APIError && error.code !== "signIn"
+              ? error.message
+              : undefined,
+        })
+    )
+    return unsubscribe
+  }, [])
+
+  switch (signIn.status) {
+    case "checking":
+      return (
+        <div className="flex min-h-svh items-center justify-center">
+          <Spinner aria-label="Loading" />
+        </div>
+      )
+    case "signedOut":
+      return (
+        <SignInPage
+          notice={signIn.notice}
+          onSignedIn={(reviewer) => setSignIn({ status: "signedIn", reviewer })}
+        />
+      )
+    case "signedIn":
+      return (
+        // A Reviewer signing in afresh starts from the server's state.
+        <ReviewApp
+          key={signIn.reviewer.login}
+          reviewer={signIn.reviewer}
+          onSignedOut={() => setSignIn({ status: "signedOut" })}
+        />
+      )
+  }
+}
+
+function ReviewApp({
+  reviewer,
+  onSignedOut,
+}: {
+  readonly reviewer: YouTrackUser
+  readonly onSignedOut: () => void
+}) {
   const model = useReview()
   const { review, host, projects, isBusy, errorMessage } = model
   const state = review.status === "loaded" ? review : undefined
@@ -107,6 +178,22 @@ export function App() {
     setIsDragging(false)
     const file = event.dataTransfer.files[0]
     if (file !== undefined) takeBuild(file)
+  }
+
+  /**
+   * Pending edits go to the open session first, which waits for the next
+   * sign-in. Sign-in shows only once the server has ended the sign-in.
+   */
+  function signOut() {
+    void model
+      .saveEdits()
+      .catch(() => false)
+      .then(() => api.signOut())
+      .then(onSignedOut, (error: unknown) =>
+        toast.error(
+          `Signing out failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      )
   }
 
   function requestEndReview() {
@@ -177,6 +264,7 @@ export function App() {
           }
         />
         <ShortcutsDialog />
+        <UserMenu reviewer={reviewer} onSignOut={signOut} />
       </header>
       <main
         className={

@@ -10,7 +10,6 @@ import {
   type Build,
   type RecentDevices,
   type ReviewSession,
-  type YouTrackClient,
 } from "@nitpick/core"
 import { Hono, type Context } from "hono"
 import { bodyLimit } from "hono/body-limit"
@@ -30,6 +29,7 @@ import type {
   HistoryResponse,
   HostResponse,
   ProjectsResponse,
+  SignedInResponse,
   ReadyHost,
   ReviewStateResponse,
   SessionSummary,
@@ -48,6 +48,7 @@ import {
 } from "./device/deviceHub.ts"
 import {
   deviceHubRoutePrefix,
+  isSameOrigin,
   proxyHubHTTP,
   refusal,
   routeHubRequest,
@@ -65,41 +66,126 @@ import {
   parseSessionPatch,
 } from "./findingPatch.ts"
 import type { HistoryStore } from "./historyStore.ts"
-import { FindingNotFound, ReviewRefused, type Reviewer } from "./reviewer.ts"
-import type { StreamAccess } from "./streamAccess.ts"
+import { FindingNotFound, ReviewRefused } from "./reviewer.ts"
+import {
+  rejectedTokenMessage,
+  SignInFailed,
+  signInCookie,
+  signedOutCookie,
+  type Reviewers,
+  type SignedIn,
+} from "./reviewers.ts"
 
 export interface AppOptions {
   readonly deviceHost: DeviceHost
-  /** Until sign-in exists (issue 10), every request acts for this Reviewer. */
-  readonly reviewer: Reviewer
-  /** Undefined when the server has no YouTrack connection configured. */
-  readonly youTrack: YouTrackClient | undefined
+  /** Who is signed in; each request acts for the Reviewer its cookie names. */
+  readonly reviewers: Reviewers
   /** The shared History every Reviewer reads. */
   readonly history: HistoryStore
   /** This server's version, for a Feedback's Environment. */
   readonly serverVersion: string
   /** The built web app. Omitted in development, where Vite serves it. */
   readonly webRoot?: string
-  /**
-   * The shared access token the device stream asks for until sign-in
-   * exists. Omitted when the host set none, which keeps the stream off.
-   */
-  readonly streamAccess?: StreamAccess
   /** The hub that streams the devices; omitted where nothing streams. */
   readonly deviceStream?: DeviceStream
 }
 
+type SignedInEnvironment = {
+  Variables: { signedIn: SignedIn | undefined }
+}
+
 export function createApp({
   deviceHost,
-  reviewer,
-  youTrack,
+  reviewers,
   history,
   serverVersion,
   webRoot,
-  streamAccess,
   deviceStream,
-}: AppOptions): Hono {
-  const app = new Hono()
+}: AppOptions): Hono<SignedInEnvironment> {
+  const app = new Hono<SignedInEnvironment>()
+
+  // The only way to the hub: allowlisted, signed in, GET only. It checks the
+  // sign-in itself, after the allowlist, so any other route is a 404.
+  app.all(`${deviceHubRoutePrefix}/*`, (c) => {
+    const route = routeHubRequest(
+      {
+        method: c.req.method,
+        url: c.req.url,
+        isUpgrade: false,
+        header: (name) => c.req.header(name),
+      },
+      (header) => reviewers.admit(header),
+      deviceStream
+    )
+    return "status" in route
+      ? refusal(route.status)
+      : proxyHubHTTP(c.req.raw, route)
+  })
+
+  // The sign-in cookie is SameSite=Lax, which a page on another origin of
+  // the same site, another port of the host, still gets. So whatever
+  // changes state must come from nitpick's own page.
+  app.use("/api/*", async (c, next) => {
+    const method = c.req.method
+    if (
+      method !== "GET" &&
+      method !== "HEAD" &&
+      !isSameOrigin((name) => c.req.header(name))
+    ) {
+      return c.json(
+        {
+          error: "Only nitpick's own page can do that.",
+        } satisfies ErrorResponse,
+        403
+      )
+    }
+    await next()
+  })
+
+  // The token travels once, in this body; the page only ever gets the cookie.
+  app.post("/api/sign-in", async (c) => {
+    const token = (await jsonBody(c)).token
+    if (typeof token !== "string") throw malformedRequest()
+    const { id, signedIn } = await reviewers.signIn(token)
+    // A sign-in this browser still held is replaced, not left behind.
+    const previous = reviewers.authenticate(c.req.header("cookie"))
+    if (previous.status === "signedIn") {
+      await reviewers.signOut(previous.signedIn)
+    }
+    c.header("Set-Cookie", signInCookie(id, isSecure(c)))
+    return c.json({ reviewer: signedIn.user } satisfies SignedInResponse)
+  })
+
+  app.post("/api/sign-out", async (c) => {
+    const current = reviewers.authenticate(c.req.header("cookie"))
+    if (current.status === "signedIn") {
+      await reviewers.signOut(current.signedIn)
+    }
+    c.header("Set-Cookie", signedOutCookie(isSecure(c)))
+    return c.body(null, 204)
+  })
+
+  // Every other route acts for a signed-in Reviewer, or answers 401.
+  app.use("/api/*", async (c, next) => {
+    const authentication = reviewers.authenticate(c.req.header("cookie"))
+    if (authentication.status === "signedOut") {
+      return signInNeeded(c, authentication.reason)
+    }
+    const { id, signedIn } = authentication
+    if (await reviewers.renew(signedIn)) {
+      c.header("Set-Cookie", signInCookie(id, isSecure(c)))
+    }
+    c.set("signedIn", signedIn)
+    await next()
+  })
+
+  /** The request's Reviewer, whom the gate above let through. */
+  const signedInTo = (c: Context<SignedInEnvironment>) => c.get("signedIn")!
+  const reviewerOf = (c: Context<SignedInEnvironment>) => signedInTo(c).reviewer
+
+  app.get("/api/me", (c) =>
+    c.json({ reviewer: signedInTo(c).user } satisfies SignedInResponse)
+  )
 
   app.get("/api/devices", async (c) => {
     const devices = await deviceHost.devices.list()
@@ -107,7 +193,7 @@ export function createApp({
   })
 
   app.get("/api/host", async (c) => {
-    const status = await reviewer.hostStatus()
+    const status = await reviewerOf(c).hostStatus()
     return c.json(
       (status.status === "ready"
         ? readyHost(status.devices, status.recentDevices)
@@ -119,15 +205,12 @@ export function createApp({
   })
 
   app.get("/api/projects", async (c) => {
-    if (youTrack === undefined) {
-      return notConnected(c, "list projects")
-    }
-    const { projects } = await verifyYouTrack(youTrack)
+    const { projects } = await verifyYouTrack(signedInTo(c).youTrack)
     return c.json({ projects } satisfies ProjectsResponse)
   })
 
   app.get("/api/review", async (c) => {
-    const { build, session, filing } = await reviewer.state()
+    const { build, session, filing } = await reviewerOf(c).state()
     return c.json({
       build: build && buildSummary(build),
       session: session && sessionSummary(session),
@@ -138,27 +221,25 @@ export function createApp({
   // File all runs on the server: the answer comes at once, and the page
   // follows the run through /api/review.
   app.post("/api/session/filing", (c) => {
-    void reviewer.fileAll()
+    const signedIn = signedInTo(c)
+    void reviewers.fileAll(signedIn)
     return c.json(
-      { filing: reviewer.filingStatus() } satisfies FilingResponse,
+      { filing: signedIn.reviewer.filingStatus() } satisfies FilingResponse,
       202
     )
   })
 
   app.delete("/api/filing-result", (c) => {
-    reviewer.dismissFilingResult()
+    reviewerOf(c).dismissFilingResult()
     return c.body(null, 204)
   })
 
-  app.get("/api/history", async (c) => {
-    const [entries, filer] = await Promise.all([
-      history.entries(),
-      // History reads only the server's files; not knowing who asks only
-      // hides the home trace.
-      reviewer.identity().catch(() => undefined),
-    ])
-    return c.json({ entries, reviewer: filer } satisfies HistoryResponse)
-  })
+  app.get("/api/history", async (c) =>
+    c.json({
+      entries: await history.entries(),
+      reviewer: signedInTo(c).user,
+    } satisfies HistoryResponse)
+  )
 
   app.get("/api/feedback/environment", async (c) =>
     c.json({
@@ -168,7 +249,7 @@ export function createApp({
   )
 
   app.post("/api/build", async (c) => {
-    const build = await reviewer.ingest(
+    const build = await reviewerOf(c).ingest(
       c.req.raw.body as ReadableStream<Uint8Array> | null,
       c.req.query("name") ?? ""
     )
@@ -181,10 +262,10 @@ export function createApp({
     if (projectID !== undefined && typeof projectID !== "string") {
       throw malformedRequest()
     }
-    const outcome = await reviewer.start({
-      deviceUDID: deviceUDID(body),
-      projectID,
-    })
+    const outcome = await reviewerOf(c).start(
+      { deviceUDID: deviceUDID(body), projectID },
+      signedInTo(c).youTrack
+    )
     return c.json(
       (outcome.status === "started"
         ? {
@@ -202,7 +283,7 @@ export function createApp({
   })
 
   app.put("/api/session/device", async (c) => {
-    const { device, recentDevices } = await reviewer.switchDevice(
+    const { device, recentDevices } = await reviewerOf(c).switchDevice(
       deviceUDID(await jsonBody(c))
     )
     return c.json({
@@ -212,24 +293,24 @@ export function createApp({
   })
 
   app.delete("/api/session", async (c) => {
-    await reviewer.end()
+    await reviewerOf(c).end()
     return c.body(null, 204)
   })
 
   app.patch("/api/session", async (c) => {
-    await reviewer.editSession(parseSessionPatch(await jsonBody(c)))
+    await reviewerOf(c).editSession(parseSessionPatch(await jsonBody(c)))
     return c.body(null, 204)
   })
 
   app.post("/api/session/captures", async (c) => {
-    const item = await reviewer.capture(deviceUDID(await jsonBody(c)))
+    const item = await reviewerOf(c).capture(deviceUDID(await jsonBody(c)))
     return c.json({ item } satisfies CaptureResponse)
   })
 
   const finding = "/api/session/findings/:itemID"
 
   app.patch(finding, async (c) => {
-    await reviewer.editFinding(
+    await reviewerOf(c).editFinding(
       c.req.param("itemID"),
       parseFindingPatch(await jsonBody(c))
     )
@@ -237,12 +318,12 @@ export function createApp({
   })
 
   app.delete(finding, async (c) => {
-    await reviewer.discard(c.req.param("itemID"))
+    await reviewerOf(c).discard(c.req.param("itemID"))
     return c.body(null, 204)
   })
 
   app.get(`${finding}/capture`, async (c) => {
-    const png = await reviewer.capturePNG(c.req.param("itemID"))
+    const png = await reviewerOf(c).capturePNG(c.req.param("itemID"))
     return imageResponse(png, "image/png")
   })
 
@@ -259,9 +340,6 @@ export function createApp({
 
   // Not a run: sending Feedback never freezes the review behind the dialog.
   app.post("/api/feedback", imageBody, async (c) => {
-    if (youTrack === undefined) {
-      return notConnected(c, "send Feedback")
-    }
     const form = await c.req.parseBody()
     const request = parseFeedbackRequest(form.feedback)
     const image =
@@ -270,13 +348,13 @@ export function createApp({
         : undefined
     const sent = await sendFeedback(
       { ...request, imagePNG: image },
-      { youTrack, flatten: annotatedScreenshotPNG }
+      { youTrack: signedInTo(c).youTrack, flatten: annotatedScreenshotPNG }
     )
     return c.json({ sent } satisfies FeedbackResponse)
   })
 
   app.post(`${finding}/design-snapshots`, imageBody, async (c) => {
-    const snapshot = await reviewer.addDesignSnapshot(
+    const snapshot = await reviewerOf(c).addDesignSnapshot(
       c.req.param("itemID"),
       c.req.query("name") ?? "",
       new Uint8Array(await c.req.arrayBuffer())
@@ -285,7 +363,7 @@ export function createApp({
   })
 
   app.put(`${finding}/design-snapshots/:snapshotID`, imageBody, async (c) => {
-    const snapshot = await reviewer.replaceDesignSnapshot(
+    const snapshot = await reviewerOf(c).replaceDesignSnapshot(
       c.req.param("itemID"),
       c.req.param("snapshotID"),
       c.req.query("name") ?? "",
@@ -297,7 +375,7 @@ export function createApp({
   app.patch(`${finding}/design-snapshots/:snapshotID`, async (c) => {
     const name = (await jsonBody(c)).name
     if (typeof name !== "string") throw malformedRequest()
-    const snapshot = await reviewer.renameDesignSnapshot(
+    const snapshot = await reviewerOf(c).renameDesignSnapshot(
       c.req.param("itemID"),
       c.req.param("snapshotID"),
       name
@@ -306,7 +384,7 @@ export function createApp({
   })
 
   app.delete(`${finding}/design-snapshots/:snapshotID`, async (c) => {
-    await reviewer.removeDesignSnapshot(
+    await reviewerOf(c).removeDesignSnapshot(
       c.req.param("itemID"),
       c.req.param("snapshotID")
     )
@@ -314,7 +392,7 @@ export function createApp({
   })
 
   app.get(`${finding}/design-snapshot-data/:dataVersion`, async (c) => {
-    const { snapshot, data } = await reviewer.designSnapshotData(
+    const { snapshot, data } = await reviewerOf(c).designSnapshotData(
       c.req.param("itemID"),
       c.req.param("dataVersion")
     )
@@ -346,32 +424,11 @@ export function createApp({
     )
   })
 
-  // Trades the shared access token for the cookie the device stream asks
-  // for: an <img> or a WebSocket can carry a cookie but not a header.
-  app.post("/api/stream-access", async (c) => {
-    if (streamAccess === undefined) return streamOff(c)
-    const token = (await jsonBody(c)).token
-    if (typeof token !== "string") throw malformedRequest()
-    if (!streamAccess.accepts(token)) {
-      return streamAccessNeeded(c, "That isn't the Device Host's access token.")
-    }
-    const secure = new URL(c.req.url).protocol === "https:"
-    c.header("Set-Cookie", streamAccess.cookie(secure))
-    return c.body(null, 204)
-  })
-
   // Starts streaming the device the Build runs on. The page then reads the
-  // stream and opens the input socket through the proxy below.
+  // stream and opens the input socket through the proxy above, which an
+  // <img> and a WebSocket reach with the sign-in cookie.
   app.post("/api/device-stream", async (c) => {
-    if (streamAccess === undefined || deviceStream === undefined) {
-      return streamOff(c)
-    }
-    if (!streamAccess.admits((name) => c.req.header(name))) {
-      return streamAccessNeeded(
-        c,
-        "Enter the Device Host's access token to see the device."
-      )
-    }
+    if (deviceStream === undefined) return streamOff(c)
     const udid = deviceUDID(await jsonBody(c))
     const device = (await deviceHost.devices.list()).find(
       (candidate) => candidate.udid === udid
@@ -386,24 +443,18 @@ export function createApp({
     return c.body(null, 204)
   })
 
-  // The only way to the hub: allowlisted, authenticated, GET only.
-  app.all(`${deviceHubRoutePrefix}/*`, (c) => {
-    const route = routeHubRequest(
-      {
-        method: c.req.method,
-        url: c.req.url,
-        isUpgrade: false,
-        header: (name) => c.req.header(name),
-      },
-      streamAccess,
-      deviceStream
-    )
-    return "status" in route
-      ? refusal(route.status)
-      : proxyHubHTTP(c.req.raw, route)
-  })
-
-  app.onError((error, c) => {
+  app.onError(async (error, c) => {
+    // A token YouTrack stopped taking ends its sign-in, and the page signs
+    // in again; the open session stays on the server.
+    const signedIn = c.get("signedIn")
+    if (
+      signedIn !== undefined &&
+      error instanceof YouTrackError &&
+      error.failure.kind === "tokenRejected"
+    ) {
+      await reviewers.endRejected(signedIn.signIn)
+      return signInNeeded(c, rejectedTokenMessage)
+    }
     const status = errorStatus(error)
     if (status === 500) console.error(error)
     const message =
@@ -441,6 +492,7 @@ function errorStatus(error: unknown): ContentfulStatusCode {
   ) {
     return 400
   }
+  if (error instanceof SignInFailed) return error.status
   if (error instanceof FindingNotFound) return 404
   if (
     error instanceof ShellBusy ||
@@ -458,27 +510,26 @@ function errorStatus(error: unknown): ContentfulStatusCode {
 function streamOff(c: Context): Response {
   return c.json(
     {
-      error:
-        "The Device Host has no access token set (NITPICK_ACCESS_TOKEN), so the device stream is off.",
+      error: "The Device Host isn't streaming devices.",
     } satisfies ErrorResponse,
     503
   )
 }
 
-function streamAccessNeeded(c: Context, message: string): Response {
+/** 401: the page shows sign-in, with the reason when the sign-in ended itself. */
+function signInNeeded(c: Context, reason: string | undefined): Response {
+  c.header("Set-Cookie", signedOutCookie(isSecure(c)))
   return c.json(
-    { error: message, code: "streamAccess" } satisfies ErrorResponse,
+    {
+      error: reason ?? "Sign in with your YouTrack token to continue.",
+      code: "signIn",
+    } satisfies ErrorResponse,
     401
   )
 }
 
-function notConnected(c: Context, action: string): Response {
-  return c.json(
-    {
-      error: `The nitpick server has no YouTrack connection configured, so it can't ${action}.`,
-    } satisfies ErrorResponse,
-    503
-  )
+function isSecure(c: Context): boolean {
+  return new URL(c.req.url).protocol === "https:"
 }
 
 function malformedRequest(): HTTPException {

@@ -16,6 +16,8 @@ export interface FakeIssue {
   readonly customFields: unknown
   readonly attachments: { readonly fileName: string; readonly data: Buffer }[]
   readonly tags: string[]
+  /** The login of the token's user, as YouTrack makes it the reporter. */
+  readonly reporter: string
 }
 
 export interface RecordedRequest {
@@ -232,6 +234,7 @@ export class FakeYouTrack {
         customFields: created.customFields,
         attachments: [],
         tags: [],
+        reporter: user.login,
       }
       this.issues.push(issue)
       return json({ id: issue.id, idReadable: issue.idReadable })

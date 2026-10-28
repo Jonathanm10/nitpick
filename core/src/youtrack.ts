@@ -2,7 +2,7 @@
 // cleaning up the instance URL, verifying a token by fetching the current
 // user and the projects, and the one authorized round trip every call makes,
 // with today's error texts. Where a Reviewer's token is kept is the server's
-// (issue 10); core only holds it for the calls it makes.
+// (its sign-ins); core only holds it for the calls it makes.
 import { decodeUTF8 } from "./bytes.ts"
 import type { HTTPTransport } from "./http.ts"
 import { trimWhitespaceAndNewlines } from "./text.ts"
@@ -137,7 +137,11 @@ export class YouTrackCredentials {
 
 const loopbackHosts = new Set(["localhost", "127.0.0.1", "::1"])
 
-function normalizedInstanceURL(entered: string): string {
+/**
+ * The instance URL as the credentials keep it, or invalidInstanceURL or
+ * insecureInstanceURL: the server checks its configured instance with it.
+ */
+export function normalizedInstanceURL(entered: string): string {
   const invalid = () =>
     new YouTrackError({ kind: "invalidInstanceURL", entered })
   const trimmed = trimWhitespaceAndNewlines(entered)

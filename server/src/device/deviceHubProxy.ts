@@ -6,7 +6,6 @@ import type { IncomingMessage } from "node:http"
 import { STATUS_CODES } from "node:http"
 import type { Duplex } from "node:stream"
 import { WebSocket, WebSocketServer, type RawData } from "ws"
-import type { StreamAccess } from "../streamAccess.ts"
 import type { DeviceStream, HubEndpoint } from "./deviceHub.ts"
 import { repeatStillFrame } from "./mjpegStillFrame.ts"
 
@@ -34,18 +33,33 @@ export interface HubRequest {
   readonly header: (name: string) => string | undefined
 }
 
+/** A request's live sign-in, which the stream or socket it opens ends with. */
+export interface Admission {
+  /** Calls `end` once the sign-in ends; answers the function that stops it. */
+  readonly onEnd: (end: () => void) => () => void
+}
+
+/** The live sign-in a request's headers carry, if any. */
+export type Admit = (
+  header: (name: string) => string | undefined
+) => Admission | undefined
+
 export type HubRoute =
   | { readonly status: 401 | 403 | 404 | 405 | 503 }
-  | { readonly upstream: string; readonly hub: HubEndpoint }
+  | {
+      readonly upstream: string
+      readonly hub: HubEndpoint
+      readonly admission: Admission
+    }
 
 /**
  * Where a request goes, checked in T3 Code's order: the allowlist first, so
  * any other route is a 404 with or without auth, then the method, then the
- * access token, then whether the hub runs.
+ * sign-in, then whether the hub runs.
  */
 export function routeHubRequest(
   request: HubRequest,
-  access: StreamAccess | undefined,
+  admit: Admit,
   stream: DeviceStream | undefined
 ): HubRoute {
   let url: URL
@@ -64,9 +78,8 @@ export function routeHubRequest(
   }
   // The viewer only reads: no route it needs takes another method.
   if (request.method !== "GET") return { status: 405 }
-  if (access === undefined || !access.admits(request.header)) {
-    return { status: 401 }
-  }
+  const admission = admit(request.header)
+  if (admission === undefined) return { status: 401 }
   // WebSockets skip CORS, so a page on another origin of the same site,
   // which the SameSite cookie doesn't stop, mustn't open the input socket.
   if (request.isUpgrade && !isSameOrigin(request.header)) {
@@ -80,11 +93,11 @@ export function routeHubRequest(
     if (value !== null) query.set(name, value)
   }
   const search = query.size > 0 ? `?${query.toString()}` : ""
-  return { upstream: `${hub.origin}${hubPath}${search}`, hub }
+  return { upstream: `${hub.origin}${hubPath}${search}`, hub, admission }
 }
 
 /** The `Origin` header, when the client sent one, names this server. */
-function isSameOrigin(header: HubRequest["header"]): boolean {
+export function isSameOrigin(header: HubRequest["header"]): boolean {
   const origin = header("origin")
   if (origin === undefined) return true
   try {
@@ -98,23 +111,29 @@ function isSameOrigin(header: HubRequest["header"]): boolean {
  * Forwards an allowlisted GET. Only the hub's content type comes back: no
  * cookie, and nothing that would let a cache or a compressor hold on to a
  * stream that never ends. An MJPEG stream re-sends its last frame once the
- * screen goes still.
+ * screen goes still. The stream ends when its viewer leaves, or when the
+ * sign-in that opened it ends.
  */
 export async function proxyHubHTTP(
   request: Request,
   route: Extract<HubRoute, { upstream: string }>
 ): Promise<Response> {
+  const signedOut = new AbortController()
+  const stopWatching = route.admission.onEnd(() => signedOut.abort())
+  const signal = AbortSignal.any([request.signal, signedOut.signal])
   let upstream: Response
   try {
     upstream = await fetch(route.upstream, {
       headers: { authorization: `Bearer ${route.hub.token}` },
-      signal: request.signal,
+      signal,
     })
   } catch {
+    stopWatching()
     return refusal(502)
   }
   // The hub refusing its own token means it restarted under the request.
   if (upstream.status === 401 || upstream.status === 403) {
+    stopWatching()
     await upstream.body?.cancel()
     return refusal(503)
   }
@@ -129,19 +148,22 @@ export async function proxyHubHTTP(
     contentType?.startsWith("multipart/x-mixed-replace")
       ? repeatStillFrame(upstream.body)
       : upstream.body
-  return new Response(body && endingWithViewer(body, request.signal), {
+  if (body === null) stopWatching()
+  return new Response(body && endingWithViewer(body, signal, stopWatching), {
     status: upstream.status,
     headers,
   })
 }
 
 /**
- * A viewer leaving aborts the hub's response under the stream; that ends the
- * stream rather than failing it, so the server logs no error for it.
+ * A viewer leaving, or its sign-in ending, aborts the hub's response under
+ * the stream; that ends the stream rather than failing it, so the server
+ * logs no error for it.
  */
 function endingWithViewer(
   body: ReadableStream<Uint8Array>,
-  viewer: AbortSignal
+  viewer: AbortSignal,
+  ended: () => void
 ): ReadableStream<Uint8Array> {
   const reader = body.getReader()
   return new ReadableStream<Uint8Array>(
@@ -149,14 +171,22 @@ function endingWithViewer(
       async pull(controller) {
         try {
           const { done, value } = await reader.read()
-          if (done) controller.close()
-          else controller.enqueue(value)
+          if (done) {
+            ended()
+            controller.close()
+          } else {
+            controller.enqueue(value)
+          }
         } catch (error) {
+          ended()
           if (viewer.aborted) controller.close()
           else controller.error(error)
         }
       },
-      cancel: (reason) => reader.cancel(reason),
+      cancel: (reason) => {
+        ended()
+        return reader.cancel(reason)
+      },
     },
     { highWaterMark: 0 }
   )
@@ -176,10 +206,11 @@ export function refusal(status: number): Response {
 /**
  * The input socket: an upgrade the route allows opens the hub's socket with
  * the hub's token, and only then completes the browser's handshake, so the
- * browser never sees the hub's headers. Frames pass through unchanged.
+ * browser never sees the hub's headers. Frames pass through unchanged, until
+ * either side closes or the sign-in that opened it ends.
  */
 export function hubUpgradeHandler(
-  access: StreamAccess | undefined,
+  admit: Admit,
   stream: DeviceStream | undefined
 ): (request: IncomingMessage, socket: Duplex, head: Buffer) => void {
   const server = new WebSocketServer({ noServer: true })
@@ -194,7 +225,7 @@ export function hubUpgradeHandler(
           return Array.isArray(value) ? value.join(", ") : value
         },
       },
-      access,
+      admit,
       stream
     )
     if ("status" in route) {
@@ -206,6 +237,13 @@ export function hubUpgradeHandler(
       perMessageDeflate: false,
     })
     let piped = false
+    let browser: WebSocket | undefined
+    const stopWatching = route.admission.onEnd(() => {
+      upstream.terminate()
+      if (browser === undefined) refuseUpgrade(socket, 401)
+      else browser.terminate()
+    })
+    upstream.once("close", stopWatching)
     upstream.on("error", () => {
       if (!piped) refuseUpgrade(socket, 502)
       upstream.terminate()
@@ -216,11 +254,13 @@ export function hubUpgradeHandler(
     })
     // A browser gone before the hub answered, or a handshake ws refused.
     socket.once("close", () => {
+      stopWatching()
       if (!piped) upstream.terminate()
     })
     upstream.once("open", () => {
       server.handleUpgrade(request, socket, head, (client) => {
         piped = true
+        browser = client
         pipeSockets(client, upstream)
       })
     })

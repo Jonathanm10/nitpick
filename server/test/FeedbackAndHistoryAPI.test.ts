@@ -5,12 +5,7 @@
 import { copyFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { createCanvas } from "@napi-rs/canvas"
-import {
-  feedbackDescription,
-  webFeedbackEnvironment,
-  YouTrackClient,
-  YouTrackCredentials,
-} from "@nitpick/core"
+import { feedbackDescription, webFeedbackEnvironment } from "@nitpick/core"
 import { describe, expect, test } from "vitest"
 import {
   goldenInput,
@@ -23,37 +18,21 @@ import type {
   FeedbackResponse,
   HistoryResponse,
 } from "../src/api.ts"
-import { createApp } from "../src/app.ts"
-import { HistoryStore } from "../src/historyStore.ts"
-import { Reviewer } from "../src/reviewer.ts"
 import { temporaryDirectory } from "./BuildFixtures.ts"
 import { FakeDeviceHost } from "./FakeDeviceHost.ts"
-import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 import { FakeYouTrack } from "./FakeYouTrack.ts"
+import { signedInApp, vera } from "./SignedIn.ts"
 import { decodeRGBA } from "./ImageFixtures.ts"
 
-function harness({ connected = true } = {}) {
+function harness() {
   const data = temporaryDirectory()
   const fake = new FakeYouTrack()
-  const history = new HistoryStore(join(data, "history"))
-  const youTrack = connected
-    ? new YouTrackClient(
-        fake.transport,
-        new YouTrackCredentials(fake.instanceURL, "perm:vera")
-      )
-    : undefined
   const deviceHost = new FakeDeviceHost([])
-  const reviewer = new Reviewer(join(data, "reviewers", "vera"), {
+  const { app, history } = signedInApp({
+    data,
     deviceHost,
-    runner: new FakeSubprocessRunner(),
-    youTrack,
-    history,
-  })
-  const app = createApp({
-    deviceHost,
-    reviewer,
-    youTrack,
-    history,
+    transport: fake.transport,
+    instanceURL: fake.instanceURL,
     serverVersion: "0.0.0 (3b9ef47)",
   })
   return { app, fake, deviceHost, history, data }
@@ -209,16 +188,6 @@ describe("Send feedback", () => {
     expect(h.fake.requests).toEqual([])
   })
 
-  test("without a YouTrack connection the server says so", async () => {
-    const response = await send(harness({ connected: false }), request)
-
-    expect(response.status).toBe(503)
-    expect(await response.json()).toEqual({
-      error:
-        "The nitpick server has no YouTrack connection configured, so it can't send Feedback.",
-    })
-  })
-
   test("the server's own Environment lines: its version and the Device Host's", async () => {
     const h = harness()
 
@@ -262,7 +231,7 @@ describe("The History page's data", () => {
     })
   })
 
-  test("lists newest session first, and stays readable without YouTrack", async () => {
+  test("lists newest session first, and stays readable without YouTrack, naming who asks", async () => {
     const h = harness()
     h.fake.intercept = () => ({ status: 503 })
     const entry = historyEntryFrom(
@@ -279,7 +248,7 @@ describe("The History page's data", () => {
     ).json()) as HistoryResponse
 
     expect(body.entries.map((e) => e.startedAt)).toEqual([300, 200, 100])
-    expect(body.reviewer).toBeUndefined()
+    expect(body.reviewer).toEqual(vera)
   })
 
   test("an empty History is an empty list", async () => {

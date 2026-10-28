@@ -17,8 +17,6 @@ import {
   encodeStoredSession,
   newFinding,
   newReviewSession,
-  YouTrackClient,
-  YouTrackCredentials,
   type Build,
 } from "@nitpick/core"
 import { beforeEach, describe, expect, test, vi } from "vitest"
@@ -30,11 +28,8 @@ import type {
   ReviewStateResponse,
   StartReviewResponse,
 } from "../src/api.ts"
-import { createApp } from "../src/app.ts"
 import type { SimulatorDevice } from "../src/device/DeviceHost.ts"
 import { RuntimeUnavailable } from "../src/device/simctl.ts"
-import { HistoryStore } from "../src/historyStore.ts"
-import { Reviewer } from "../src/reviewer.ts"
 import {
   simulatorInfoPlist,
   temporaryDirectory,
@@ -42,6 +37,7 @@ import {
 } from "./BuildFixtures.ts"
 import { FakeDeviceHost } from "./FakeDeviceHost.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
+import { signedInApp } from "./SignedIn.ts"
 
 const iPhone: SimulatorDevice = {
   udid: "AAAA-1111",
@@ -67,32 +63,17 @@ const brokenPhone: SimulatorDevice = {
 
 const schemaJSON = `[{"field":{"name":"Priority"},"bundle":{"values":[{"name":"Critical"},{"name":"Normal"}]}}]`
 
-function harness({ withYouTrack = true } = {}) {
-  const reviewerDirectory = join(temporaryDirectory(), "reviewers", "interim")
+function harness() {
   const runner = new FakeSubprocessRunner()
   const deviceHost = new FakeDeviceHost([iPad, iPhone, brokenPhone])
   const transport = new FakeHTTPTransport()
-  const youTrack = withYouTrack
-    ? new YouTrackClient(
-        transport,
-        new YouTrackCredentials("https://youtrack.example.com", "perm:server")
-      )
-    : undefined
-  const history = new HistoryStore(join(temporaryDirectory(), "history"))
-  const reviewer = new Reviewer(reviewerDirectory, {
+  const { app, directory } = signedInApp({
+    data: temporaryDirectory(),
     deviceHost,
     runner,
-    youTrack,
-    history,
+    transport,
   })
-  const app = createApp({
-    deviceHost,
-    reviewer,
-    youTrack,
-    history,
-    serverVersion: "0.0.0",
-  })
-  return { app, runner, deviceHost, transport, reviewerDirectory }
+  return { app, runner, deviceHost, transport, reviewerDirectory: directory }
 }
 
 type Harness = ReturnType<typeof harness>
@@ -557,7 +538,7 @@ describe("Host and projects", () => {
     })
   })
 
-  test("projects come from the server's YouTrack account, sorted by name", async () => {
+  test("projects come from the signed-in Reviewer's YouTrack account, sorted by name", async () => {
     const h = harness()
     h.transport.enqueue(userJSON)
     h.transport.enqueue(projectsJSON)
@@ -568,32 +549,16 @@ describe("Host and projects", () => {
     expect(projects.map((project) => project.shortName)).toEqual(["ATL", "RM"])
   })
 
-  test("without a YouTrack connection, projects say so and a new review can't start", async () => {
-    const h = harness({ withYouTrack: false })
-    enqueueExtraction(h)
-    await upload(h)
-
-    const projects = await h.app.request("/api/projects")
-    const start = await startReview(h)
-
-    expect(projects.status).toBe(503)
-    expect(start.status).toBe(409)
-    expect(await start.json()).toEqual({
-      error:
-        "The nitpick server has no YouTrack connection configured, so a review can't pick a project.",
-    })
-  })
-
   test("a YouTrack failure keeps today's message", async () => {
     const h = harness()
-    h.transport.enqueue("{}", 401)
+    h.transport.enqueue("{}", 503)
 
     const response = await h.app.request("/api/projects")
 
     expect(response.status).toBe(502)
     expect(await response.json()).toEqual({
       error:
-        "YouTrack rejected the token. Check that the permanent token was pasted completely and is still valid.",
+        "YouTrack answered with HTTP 503. Check the instance URL, or try again later.",
     })
   })
 })

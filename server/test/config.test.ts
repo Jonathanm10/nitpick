@@ -1,4 +1,3 @@
-import { inspect } from "node:util"
 import { describe, expect, test } from "vitest"
 import { defaultPort, loadConfig } from "../src/config.ts"
 
@@ -51,68 +50,33 @@ describe("Server config", () => {
     )
   })
 
-  test("the interim YouTrack connection needs both its URL and its token", () => {
+  test("the one YouTrack instance is cleaned up as the Swift app cleaned an entered URL", () => {
     const config = loadConfig(
-      {
-        NITPICK_YOUTRACK_URL: "youtrack.example.com/",
-        NITPICK_YOUTRACK_TOKEN: "perm:server-token",
-      },
+      { NITPICK_YOUTRACK_URL: "youtrack.example.com/" },
       noFile
     )
 
-    expect(config.youTrack?.instanceURL).toBe("https://youtrack.example.com")
-    expect(config.youTrack?.authorization()).toBe("Bearer perm:server-token")
-    expect(() =>
-      loadConfig({ NITPICK_YOUTRACK_URL: "youtrack.example.com" }, noFile)
-    ).toThrow(
-      "NITPICK_YOUTRACK_URL and NITPICK_YOUTRACK_TOKEN must be set together."
-    )
-    expect(loadConfig({}, noFile).youTrack).toBeUndefined()
+    expect(config.youTrackURL).toBe("https://youtrack.example.com")
+    expect(loadConfig({}, noFile).youTrackURL).toBeUndefined()
   })
 
-  test("the YouTrack token never shows when the config is logged", () => {
-    const config = loadConfig(
-      {
-        NITPICK_YOUTRACK_URL: "https://youtrack.example.com",
-        NITPICK_YOUTRACK_TOKEN: "perm:server-token",
-      },
-      noFile
-    )
-
-    expect(inspect(config, { depth: Infinity })).not.toContain("server-token")
-    expect(JSON.stringify(config)).not.toContain("server-token")
-  })
-
-  test("the device stream's access token is off unless set, can't be short, and never shows when the config is logged", () => {
-    expect(loadConfig({}, noFile).streamAccess).toBeUndefined()
-    expect(() =>
-      loadConfig({ NITPICK_ACCESS_TOKEN: "too-short" }, noFile)
-    ).toThrow("NITPICK_ACCESS_TOKEN must be at least 16 characters long.")
-
-    const config = loadConfig(
-      { NITPICK_ACCESS_TOKEN: "shared-access-token-for-tests" },
-      noFile
-    )
-
-    expect(config.streamAccess?.accepts("shared-access-token-for-tests")).toBe(
-      true
-    )
-    expect(config.streamAccess?.accepts("shared-access-token-for-test")).toBe(
-      false
-    )
-    expect(inspect(config, { depth: Infinity })).not.toContain("shared-access")
-    expect(JSON.stringify(config)).not.toContain("shared-access")
-  })
-
-  test("a YouTrack URL that would send the token in cleartext is refused", () => {
+  test("a YouTrack URL that would send tokens in cleartext is refused", () => {
     expect(() =>
       loadConfig(
-        {
-          NITPICK_YOUTRACK_URL: "http://youtrack.example.com",
-          NITPICK_YOUTRACK_TOKEN: "perm:server-token",
-        },
+        { NITPICK_YOUTRACK_URL: "http://youtrack.example.com" },
         noFile
       )
     ).toThrow(/is not secure/)
   })
+
+  test.each(["NITPICK_YOUTRACK_TOKEN", "NITPICK_ACCESS_TOKEN"])(
+    "the retired %s is refused, so no token sits in the config for nothing",
+    (key) => {
+      expect(() =>
+        loadConfig({ [key]: "fictional-token-for-tests" }, noFile)
+      ).toThrow(
+        `${key} is no longer read: Reviewers sign in with their own YouTrack token. Remove it from the config.`
+      )
+    }
+  )
 })

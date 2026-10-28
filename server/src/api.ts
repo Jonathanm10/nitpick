@@ -1,5 +1,6 @@
 // The HTTP contract between server/ and web/. Types only, so web/ can import
-// it without pulling in Node code.
+// it without pulling in Node code. Every route but sign-in and sign-out asks
+// for a live sign-in and answers 401 with `signIn` without one.
 import type {
   Annotation,
   BuildIdentity,
@@ -31,10 +32,26 @@ export interface ErrorResponse {
   readonly error: string
   /**
    * `deviceNotRunning`: the capture found its device stopped on the host, so
-   * the page pauses the review. `streamAccess`: the device stream wants the
-   * Device Host's access token.
+   * the page pauses the review. `signIn` (401): the request has no live
+   * sign-in, so the page shows sign-in with the error, which says why when
+   * the sign-in ended by itself.
    */
-  readonly code?: "deviceNotRunning" | "streamAccess"
+  readonly code?: "deviceNotRunning" | "signIn"
+}
+
+/** `POST /api/sign-in` takes the Reviewer's YouTrack permanent token. */
+export interface SignInRequest {
+  readonly token: string
+}
+
+/**
+ * `POST /api/sign-in` and `GET /api/me`: who is signed in. Sign-in sets the
+ * HttpOnly cookie every other route asks for; a refused token answers 401
+ * or 400 without a code, and YouTrack out of reach 502.
+ * `POST /api/sign-out` ends the sign-in and answers 204.
+ */
+export interface SignedInResponse {
+  readonly reviewer: YouTrackUser
 }
 
 /** A Build as the page shows it: name plus identity, never a server path. */
@@ -103,11 +120,8 @@ export interface FilingResponse {
 /** `GET /api/history`: the shared History, newest session first. */
 export interface HistoryResponse {
   readonly entries: ReadonlyArray<HistoryEntry>
-  /**
-   * The Reviewer asking, whose own last session the home trace shows.
-   * Absent when the server can't tell who files.
-   */
-  readonly reviewer?: YouTrackUser
+  /** The Reviewer asking, whose own last session the home trace shows. */
+  readonly reviewer: YouTrackUser
 }
 
 /** `GET /api/feedback/environment`: the Environment lines only the server knows. */
@@ -152,7 +166,7 @@ export interface HostNotReady {
 /** `GET /api/host`: the Device Host's health check. */
 export type HostResponse = ReadyHost | HostNotReady
 
-/** `GET /api/projects`: the projects the server's YouTrack account sees. */
+/** `GET /api/projects`: the projects the signed-in Reviewer sees. */
 export interface ProjectsResponse {
   readonly projects: ReadonlyArray<YouTrackProject>
 }
@@ -246,19 +260,8 @@ export interface DesignSnapshotRename {
 // bytes a Design Snapshot's dataVersion names.
 
 /**
- * `POST /api/stream-access`: trades the Device Host's shared access token
- * (until sign-in exists) for the HttpOnly cookie the device stream asks for.
- * 204 with the cookie, 401 with `streamAccess` for a wrong token, 503 when
- * the host set none.
- */
-export interface StreamAccessRequest {
-  readonly token: string
-}
-
-/**
  * `POST /api/device-stream`: starts streaming the booted device the Build
- * runs on: 204. Without the cookie it answers 401 with `streamAccess`; a
- * stopped device answers 409 with `deviceNotRunning`.
+ * runs on: 204. A stopped device answers 409 with `deviceNotRunning`.
  */
 export interface DeviceStreamRequest {
   readonly deviceUDID: string
@@ -268,4 +271,4 @@ export interface DeviceStreamRequest {
 // `…/stream.mjpeg`, and the input WebSocket at
 // `/api/device-hub/vendor/serve-sim/helper/ws?device=:udid`, go to the hub
 // through the proxy. Anything else under /api/device-hub is a 404, any method
-// but GET a 405, and a request without the cookie a 401.
+// but GET a 405, and a request without a live sign-in a 401.

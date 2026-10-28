@@ -1,7 +1,9 @@
 // Not a port. Issue 08's acceptance criterion as it reads: the real server
 // process is killed mid-ladder and started again, and filing resumes without
 // duplicating any Issue, attachment or tag. The server runs as `pnpm start`
-// runs it, against a fake YouTrack on loopback.
+// runs it, against a fake YouTrack on loopback. The restarted server files
+// with the token the Reviewer signed in with before the kill, read back from
+// its encrypted sign-in on disk.
 import { spawn, type ChildProcess } from "node:child_process"
 import { readdirSync, readFileSync } from "node:fs"
 import { createServer } from "node:net"
@@ -40,7 +42,10 @@ async function freePort(): Promise<number> {
   return address.port
 }
 
-/** `pnpm start`, with only the config this test gives it. */
+/**
+ * `pnpm start`, with only the config this test gives it, in its own process
+ * group: killing the group kills the device hub it starts as well.
+ */
 function startServer(environment: Record<string, string>): ChildProcess {
   const server = spawn(process.execPath, [mainScript], {
     env: {
@@ -49,9 +54,18 @@ function startServer(environment: Record<string, string>): ChildProcess {
       ...environment,
     },
     stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
   })
-  cleanups.push(() => server.kill("SIGKILL"))
+  cleanups.push(() => kill(server))
   return server
+}
+
+function kill(server: ChildProcess): void {
+  try {
+    process.kill(-server.pid!, "SIGKILL")
+  } catch {
+    // The group is already gone.
+  }
 }
 
 async function until<T>(
@@ -74,9 +88,9 @@ test(
     const youTrack = await fake.listen()
     cleanups.push(() => youTrack.close())
 
-    // The interim Reviewer's open session: two Findings, nothing filed.
+    // Vera's open session: two Findings, nothing filed.
     const data = temporaryDirectory()
-    const store = new ReviewerStore(join(data, "reviewers", "interim"))
+    const store = new ReviewerStore(join(data, "reviewers", "vera"))
     const session: ReviewSession = {
       ...sessionFrom(golden.session),
       tray: ["Button color is off", "Label truncates"].map((summary) => ({
@@ -95,10 +109,15 @@ test(
       NITPICK_HOST: "127.0.0.1",
       NITPICK_PORT: String(port),
       NITPICK_YOUTRACK_URL: youTrack.url,
-      NITPICK_YOUTRACK_TOKEN: "perm:vera",
     }
-    const review = async () =>
-      (await (await fetch(`${base}/api/review`)).json()) as ReviewStateResponse
+    let cookie = ""
+    const review = async () => {
+      const response = await fetch(`${base}/api/review`, {
+        headers: { cookie },
+      })
+      if (!response.ok) throw new Error(`review ${response.status}`)
+      return (await response.json()) as ReviewStateResponse
+    }
 
     // The first server dies the moment the second Issue's design-review tag
     // reaches YouTrack: that request is never answered, so never applied.
@@ -111,12 +130,23 @@ test(
         ++tagRequests !== 3
       )
         return
-      first.kill("SIGKILL")
+      kill(first)
       return new Promise<void>(() => {})
     }
-    await until(review, "the first server")
+    const signIn = await until(
+      () =>
+        fetch(`${base}/api/sign-in`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: "perm:vera" }),
+        }),
+      "the first server"
+    )
+    expect(signIn.status).toBe(200)
+    cookie = signIn.headers.get("set-cookie")!.split(";")[0]!
     const started = await fetch(`${base}/api/session/filing`, {
       method: "POST",
+      headers: { cookie },
     })
     expect(started.status).toBe(202)
     await exited

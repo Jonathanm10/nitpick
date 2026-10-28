@@ -28,13 +28,10 @@ import type {
   DesignSnapshotResponse,
   ReviewStateResponse,
 } from "../src/api.ts"
-import { createApp } from "../src/app.ts"
 import type { SimulatorDevice } from "../src/device/DeviceHost.ts"
-import { HistoryStore } from "../src/historyStore.ts"
-import { Reviewer } from "../src/reviewer.ts"
 import { temporaryDirectory } from "./BuildFixtures.ts"
 import { FakeDeviceHost } from "./FakeDeviceHost.ts"
-import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
+import { signedInApp } from "./SignedIn.ts"
 
 const iPhone: SimulatorDevice = {
   udid: "AAAA-1111",
@@ -55,23 +52,12 @@ const otherPNG = new Uint8Array(createCanvas(30, 30).encodeSync("png"))
 const jpeg = new Uint8Array(createCanvas(24, 18).encodeSync("jpeg"))
 
 function harness() {
-  const reviewerDirectory = join(temporaryDirectory(), "reviewers", "interim")
   const deviceHost = new FakeDeviceHost([iPhone])
-  const history = new HistoryStore(join(temporaryDirectory(), "history"))
-  const reviewer = new Reviewer(reviewerDirectory, {
+  const { app, directory } = signedInApp({
+    data: temporaryDirectory(),
     deviceHost,
-    runner: new FakeSubprocessRunner(),
-    youTrack: undefined,
-    history,
   })
-  const app = createApp({
-    deviceHost,
-    reviewer,
-    youTrack: undefined,
-    history,
-    serverVersion: "0.0.0",
-  })
-  return { app, deviceHost, reviewerDirectory }
+  return { app, deviceHost, reviewerDirectory: directory }
 }
 
 type Harness = ReturnType<typeof harness>

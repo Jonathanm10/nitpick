@@ -2,32 +2,20 @@ import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { parseEnv } from "node:util"
-import { YouTrackCredentials } from "@nitpick/core"
-import { StreamAccess } from "./streamAccess.ts"
+import { normalizedInstanceURL } from "@nitpick/core"
 
 export interface ServerConfig {
-  /**
-   * The address to listen on. Loopback by default: until login exists, the
-   * host has to opt in before anything on the LAN can reach the server.
-   */
+  /** The address to listen on. Loopback by default: the host opts in to the LAN. */
   readonly host: string
   readonly port: number
   /** Where the server keeps its data, from Review Session storage on. */
   readonly dataDirectory: string
   /**
-   * The one YouTrack instance and token the server reads projects and files
-   * with until sign-in exists (issue 10). Undefined when neither key is set.
-   * The token sits in the credentials' private field, so logging the config
-   * never prints it.
+   * The one YouTrack instance every Reviewer signs in to and files into
+   * (PRD answer 1), cleaned up as the Swift app cleaned an entered URL.
+   * Undefined when unset; the server then refuses to start.
    */
-  readonly youTrack: YouTrackCredentials | undefined
-  /**
-   * The one access token the device stream accepts until sign-in exists
-   * (issue 10), shared by every Reviewer. Undefined when unset, which keeps
-   * the stream off: nothing could authenticate to it. Like the YouTrack
-   * token, it sits in a private field.
-   */
-  readonly streamAccess: StreamAccess | undefined
+  readonly youTrackURL: string | undefined
 }
 
 export const defaultPort = 4870
@@ -57,38 +45,26 @@ export function loadConfig(
       value("NITPICK_DATA_DIR") ??
         join(homedir(), "Library", "Application Support", "nitpick-server")
     ),
-    youTrack: youTrackCredentials(
-      value("NITPICK_YOUTRACK_URL"),
-      value("NITPICK_YOUTRACK_TOKEN")
-    ),
-    streamAccess: streamAccess(value("NITPICK_ACCESS_TOKEN")),
+    youTrackURL: youTrackURL(value),
   }
 }
 
-/** Whoever has this token can drive the host's devices, so it can't be short. */
-const minimumAccessTokenLength = 16
+/** The interim tokens issues 06 and 09 read, before Reviewers signed in. */
+const retiredKeys = ["NITPICK_YOUTRACK_TOKEN", "NITPICK_ACCESS_TOKEN"]
 
-function streamAccess(token: string | undefined): StreamAccess | undefined {
-  if (token === undefined) return undefined
-  if (token.length < minimumAccessTokenLength) {
-    throw new Error(
-      `NITPICK_ACCESS_TOKEN must be at least ${minimumAccessTokenLength} characters long.`
-    )
+function youTrackURL(
+  value: (key: string) => string | undefined
+): string | undefined {
+  // A token left in the config would sit on the host for nothing.
+  for (const key of retiredKeys) {
+    if (value(key) !== undefined) {
+      throw new Error(
+        `${key} is no longer read: Reviewers sign in with their own YouTrack token. Remove it from the config.`
+      )
+    }
   }
-  return new StreamAccess(token)
-}
-
-function youTrackCredentials(
-  url: string | undefined,
-  token: string | undefined
-): YouTrackCredentials | undefined {
-  if (url === undefined && token === undefined) return undefined
-  if (url === undefined || token === undefined) {
-    throw new Error(
-      "NITPICK_YOUTRACK_URL and NITPICK_YOUTRACK_TOKEN must be set together."
-    )
-  }
-  return new YouTrackCredentials(url, token)
+  const url = value("NITPICK_YOUTRACK_URL")
+  return url === undefined ? undefined : normalizedInstanceURL(url)
 }
 
 function parsePort(value: string | undefined): number {

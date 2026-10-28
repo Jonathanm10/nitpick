@@ -119,12 +119,15 @@ describe("Token secrecy", () => {
     }
   })
 
-  test("a non-fatal schema read swallows its failures without them reaching anything", async () => {
+  test("a schema read's outcome or rejected-token failure never carries the token", async () => {
     for (const fail of failingResponses) {
       const transport = new FakeHTTPTransport()
       fail(transport)
       expectNoToken(
-        await loadProjectSchema(client(transport), fixtures.session.project)
+        await loadProjectSchema(
+          client(transport),
+          fixtures.session.project
+        ).catch((error: unknown) => error)
       )
     }
   })

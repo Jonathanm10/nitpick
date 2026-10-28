@@ -89,6 +89,12 @@ export function useReview() {
     },
   }))
   const [saver] = useState(() => new SessionSaver(setSaveError))
+  // Signed out or rejected, the page unmounts: a save still pending, or a
+  // retry, would otherwise go out under the next Reviewer's sign-in.
+  useEffect(() => {
+    saver.start()
+    return () => saver.stop()
+  }, [saver])
 
   const state = review.status === "loaded" ? review : undefined
   const session = state?.session
@@ -571,6 +577,8 @@ export function useReview() {
     editSessionDesignReference,
     discard,
     setDesignSnapshots,
+    /** Sends every pending edit; false when one couldn't be saved. */
+    saveEdits: () => saver.saveAll(),
   }
 }
 

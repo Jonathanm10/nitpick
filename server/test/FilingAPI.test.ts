@@ -9,8 +9,6 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import {
   newUUID,
-  YouTrackClient,
-  YouTrackCredentials,
   type Finding,
   type HistoryEntry,
   type ReviewSession,
@@ -27,14 +25,12 @@ import type {
   HistoryResponse,
   ReviewStateResponse,
 } from "../src/api.ts"
-import { createApp } from "../src/app.ts"
 import { HistoryStore } from "../src/historyStore.ts"
-import { Reviewer } from "../src/reviewer.ts"
 import { ReviewerStore } from "../src/reviewerStore.ts"
 import { temporaryDirectory } from "./BuildFixtures.ts"
 import { FakeDeviceHost } from "./FakeDeviceHost.ts"
-import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 import { FakeYouTrack } from "./FakeYouTrack.ts"
+import { signedInApp } from "./SignedIn.ts"
 
 const capture = readFileSync(
   new URL("../../core/test/golden/images/capture.png", import.meta.url)
@@ -49,27 +45,15 @@ function reviewerOn(
   fake: FakeYouTrack,
   { login = "vera" }: { readonly login?: string } = {}
 ) {
-  const directory = join(dataDirectory, "reviewers", login)
-  const history = new HistoryStore(join(dataDirectory, "history"))
-  const youTrack = new YouTrackClient(
-    fake.transport,
-    new YouTrackCredentials(fake.instanceURL, `perm:${login}`)
-  )
-  const deviceHost = new FakeDeviceHost([])
-  const reviewer = new Reviewer(directory, {
-    deviceHost,
-    runner: new FakeSubprocessRunner(),
-    youTrack,
-    history,
-  })
-  const app = createApp({
-    deviceHost,
-    reviewer,
-    youTrack,
-    history,
+  const signedIn = signedInApp({
+    data: dataDirectory,
+    deviceHost: new FakeDeviceHost([]),
+    transport: fake.transport,
+    instanceURL: fake.instanceURL,
+    user: fake.users[`perm:${login}`],
     serverVersion: "0.0.0 (test)",
   })
-  return { app, reviewer, directory, store: new ReviewerStore(directory) }
+  return { ...signedIn, store: new ReviewerStore(signedIn.directory) }
 }
 
 type Harness = ReturnType<typeof reviewerOn>
@@ -313,7 +297,7 @@ describe("File all", () => {
     while (!existsSync(snapshots)) {
       await new Promise((resolve) => setImmediate(resolve))
     }
-    const run = h.reviewer.fileAll()
+    const run = h.reviewer.fileAll(h.account)
     await adding
     await run
 
@@ -393,7 +377,7 @@ describe("A server restart mid-ladder", () => {
       /^api\/issues\/[^/]+\/tags$/.test(request.path) && ++tagRequests === 3
         ? new Promise<void>(() => {})
         : undefined
-    void before.reviewer.fileAll()
+    void before.reviewer.fileAll(before.account)
     await expect.poll(() => tagRequests).toBe(3)
     expect(fake.issues.map((issue) => issue.tags)).toEqual([
       ["design-review", "nitpick-type:bug"],
@@ -402,7 +386,7 @@ describe("A server restart mid-ladder", () => {
 
     fake.intercept = () => undefined
     const after = reviewerOn(data, fake)
-    const resumed = await after.reviewer.resumeInterruptedFiling()
+    const resumed = await after.reviewer.resumeInterruptedFiling(after.account)
     expect(after.reviewer.filingStatus()).toEqual({ status: "running" })
     await resumed?.run
 
@@ -437,8 +421,9 @@ describe("A server restart mid-ladder", () => {
     })
     await h.store.markFiling()
 
+    const restarted = reviewerOn(data, fake)
     await (
-      await reviewerOn(data, fake).reviewer.resumeInterruptedFiling()
+      await restarted.reviewer.resumeInterruptedFiling(restarted.account)
     )?.run
 
     const history = await new HistoryStore(join(data, "history")).entries()
@@ -457,12 +442,14 @@ describe("A server restart mid-ladder", () => {
     fake.intercept = () => ({ status: 503 })
     const h = reviewerOn(data, fake)
     await stage(h, [{}])
-    await h.reviewer.fileAll()
+    await h.reviewer.fileAll(h.account)
     fake.intercept = () => undefined
 
     const after = reviewerOn(data, fake)
 
-    expect(await after.reviewer.resumeInterruptedFiling()).toBeUndefined()
+    expect(
+      await after.reviewer.resumeInterruptedFiling(after.account)
+    ).toBeUndefined()
     expect(after.reviewer.filingStatus()).toEqual({ status: "idle" })
     expect(creates(fake)).toEqual([])
   })
