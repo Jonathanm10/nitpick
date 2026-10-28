@@ -336,7 +336,9 @@ export class Reviewer {
     let recorded: HistoryEntry | undefined
     let failure: unknown
     try {
-      const session = await this.#requireOpenSession()
+      // In turn with the session's writes, so an edit already saving lands
+      // before filing reads, and is never overwritten by an older copy.
+      const session = await this.#serialized(() => this.#requireOpenSession())
       if (session.tray.length === 0) {
         throw new ReviewRefused("Capture a Finding before filing.")
       }

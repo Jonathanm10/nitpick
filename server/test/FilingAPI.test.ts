@@ -297,6 +297,34 @@ describe("File all", () => {
     expect(fake.issues[0].summary).toBe("Button color is off")
   })
 
+  test("an edit already saving when File all starts is filed with it, never overwritten", async () => {
+    const fake = new FakeYouTrack()
+    const h = reviewerOn(temporaryDirectory(), fake)
+    const session = await stage(h, [{}])
+    const itemID = session.tray[0].id
+    const adding = h.reviewer.addDesignSnapshot(
+      itemID,
+      "Design.png",
+      new Uint8Array(capture)
+    )
+    // File all starts the moment the edit is writing its bytes, past the
+    // busy check that refuses later edits.
+    const snapshots = join(h.directory, "open-session", "design-snapshots")
+    while (!existsSync(snapshots)) {
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    const run = h.reviewer.fileAll()
+    await adding
+    await run
+
+    expect(h.reviewer.filingStatus().status).toBe("filed")
+    expect(fake.issues[0].attachments.map((file) => file.fileName)).toEqual([
+      "annotated.png",
+      "original.png",
+      "Design.png",
+    ])
+  })
+
   test("Done drops the result and keeps the Build for the next review", async () => {
     const h = reviewerOn(temporaryDirectory(), new FakeYouTrack())
     await stage(h, [{}])

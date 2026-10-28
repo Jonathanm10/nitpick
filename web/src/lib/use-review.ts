@@ -392,8 +392,7 @@ export function useReview() {
       return
     }
     await perform(async () => {
-      await saver.flush()
-      if (!saver.isSaved) {
+      if (!(await saver.saveAll())) {
         throw new Error(
           "Your edits aren't saved yet, so File all didn't start. Try again once they are."
         )

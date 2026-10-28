@@ -26,6 +26,8 @@ export class SessionSaver {
   #timer: ReturnType<typeof setTimeout> | undefined
   #saving: Promise<void> | undefined
   #saveAgain = false
+  /** Counts failed sends, so a caller can tell one happened while it waited. */
+  #failures = 0
 
   /** `report` gets the failure to show, or undefined once a save succeeds. */
   constructor(report: (error: string | undefined) => void) {
@@ -78,9 +80,18 @@ export class SessionSaver {
     return this.#saving
   }
 
-  /** Whether every edit has reached the server: nothing pending or in flight. */
-  get isSaved(): boolean {
-    return this.#dirty.size === 0 && this.#saving === undefined
+  /**
+   * Sends every pending edit, edits made while a save was in flight
+   * included, and answers whether all reached the server. A failed save
+   * stops it; the usual retry carries on.
+   */
+  async saveAll(): Promise<boolean> {
+    while (this.#dirty.size > 0 || this.#saving !== undefined) {
+      const failures = this.#failures
+      await this.flush()
+      if (this.#failures !== failures) return false
+    }
+    return true
   }
 
   /** A Finding the server discarded takes its pending edits with it. */
@@ -145,6 +156,7 @@ export class SessionSaver {
       this.#report(undefined)
       return
     }
+    this.#failures++
     const { save, due } = this.#typingSave.failed(performance.now())
     this.#typingSave = save
     this.#report(`Your edits aren't saved yet: ${failure} Retrying…`)
