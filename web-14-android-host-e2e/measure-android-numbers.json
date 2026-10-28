@@ -1,0 +1,49 @@
+{
+  "transport": "webrtc",
+  "warmStartToFirstFrameMs": 3325,
+  "firstFrameAfterOfferMs": {
+    "runs": 5,
+    "median": 1783,
+    "min": 1782,
+    "max": 1784,
+    "values": [
+      1782,
+      1784,
+      1783,
+      1782,
+      1783
+    ]
+  },
+  "resumeClickToFirstFrameMs": {
+    "runs": 5,
+    "median": 3082,
+    "min": 2988,
+    "max": 3167,
+    "values": [
+      3167,
+      3071,
+      2988,
+      3082,
+      3160
+    ]
+  },
+  "captureClickToResponseMs": {
+    "runs": 10,
+    "median": 288,
+    "min": 268,
+    "max": 304,
+    "values": [
+      304,
+      288,
+      268,
+      281,
+      291,
+      289,
+      290,
+      271,
+      279,
+      268
+    ]
+  },
+  "memoryStreamingAfterCaptures": "free 48% | available 1.98 GB | swap 313.62M used | simulators booted: 0 | emulators running: 1"
+}

@@ -1,0 +1,48 @@
+{
+  "memoryBeforeBoot": "free 72% | available 5.32 GB | swap 313.62M used | simulators booted: 0 | emulators running: 0",
+  "secureContext": false,
+  "webCodecs": false,
+  "boot": "from its snapshot",
+  "startClickToReviewMs": 7828,
+  "firstFrameAfterOfferMs": 2792,
+  "startClickToFirstFrameMs": 10746,
+  "transport": "webrtc",
+  "memoryBootedStreaming": "free 50% | available 2.06 GB | swap 313.62M used | simulators booted: 0 | emulators running: 1",
+  "captureClickToResponseMs": [
+    484,
+    327
+  ],
+  "captureSize": "1080x2424",
+  "screenSize": "Physical size: 1080x2424",
+  "filed": [
+    {
+      "idReadable": "RM-101",
+      "summary": "Tap counter sits too close to the title",
+      "reporter": "vera",
+      "block": [
+        "App: dev.nitpick.fixture.smokedroid 1.4.0 (42)",
+        "Device: Pixel 10 — Android 17"
+      ],
+      "attachments": [
+        "annotated.png",
+        "original.png"
+      ],
+      "originalSize": "1080x2424"
+    },
+    {
+      "idReadable": "RM-102",
+      "summary": "Dark theme: list dividers vanish",
+      "reporter": "vera",
+      "block": [
+        "App: dev.nitpick.fixture.smokedroid 1.4.0 (42)",
+        "Device: Pixel 10 — Android 17",
+        "Accessibility: Font Size 130%, Dark Mode, High Contrast Text"
+      ],
+      "attachments": [
+        "annotated.png",
+        "original.png"
+      ],
+      "originalSize": "1080x2424"
+    }
+  ]
+}

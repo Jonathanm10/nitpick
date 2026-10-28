@@ -1,0 +1,57 @@
+Allowlisted signaling (POST, emulator serial, same origin):
+webrtc/offer                                   POST    no auth 401   signed in 503
+webrtc/close                                   POST    no auth 401   signed in 503
+Wrong method on an allowlisted route:
+webrtc/offer                                   GET     no auth 405   signed in 405
+webrtc/offer                                   PUT     no auth 405   signed in 405
+webrtc/offer                                   DELETE  no auth 405   signed in 405
+Another origin of the same site:
+webrtc/offer from :5999                        POST    no auth 401   signed in 403
+Outside the allowlist (serve-emu's unauthenticated actions and reads):
+/api/apps/install?device=emulator-5554         GET     no auth 404   signed in 404
+/api/apps/install?device=emulator-5554         POST    no auth 404   signed in 404
+/api/apps/launch?device=emulator-5554          GET     no auth 404   signed in 404
+/api/apps/launch?device=emulator-5554          POST    no auth 404   signed in 404
+/api/files/import?device=emulator-5554         GET     no auth 404   signed in 404
+/api/files/import?device=emulator-5554         POST    no auth 404   signed in 404
+/api/text?device=emulator-5554                 GET     no auth 404   signed in 404
+/api/text?device=emulator-5554                 POST    no auth 404   signed in 404
+/api/tap?device=emulator-5554                  GET     no auth 404   signed in 404
+/api/tap?device=emulator-5554                  POST    no auth 404   signed in 404
+/api/key?device=emulator-5554                  GET     no auth 404   signed in 404
+/api/key?device=emulator-5554                  POST    no auth 404   signed in 404
+/api/screenshot?device=emulator-5554           GET     no auth 404   signed in 404
+/api/screenshot?device=emulator-5554           POST    no auth 404   signed in 404
+/api/location?device=emulator-5554             GET     no auth 404   signed in 404
+/api/location?device=emulator-5554             POST    no auth 404   signed in 404
+/api/avds/start                                GET     no auth 404   signed in 404
+/api/avds/start                                POST    no auth 404   signed in 404
+/api/avds/stop                                 GET     no auth 404   signed in 404
+/api/avds/stop                                 POST    no auth 404   signed in 404
+/api/stream-mode?device=emulator-5554          GET     no auth 404   signed in 404
+/api/stream-mode?device=emulator-5554          POST    no auth 404   signed in 404
+/api/stream-settings?device=emulator-5554      GET     no auth 404   signed in 404
+/api/stream-settings?device=emulator-5554      POST    no auth 404   signed in 404
+/api/logcat?device=emulator-5554               GET     no auth 404   signed in 404
+/api/logcat?device=emulator-5554               POST    no auth 404   signed in 404
+/api/accessibility?device=emulator-5554        GET     no auth 404   signed in 404
+/api/accessibility?device=emulator-5554        POST    no auth 404   signed in 404
+/api/devices                                   GET     no auth 404   signed in 404
+/api/devices                                   POST    no auth 404   signed in 404
+/api?device=emulator-5554                      GET     no auth 404   signed in 404
+/api?device=emulator-5554                      POST    no auth 404   signed in 404
+/health?device=emulator-5554                   GET     no auth 404   signed in 404
+/health?device=emulator-5554                   POST    no auth 404   signed in 404
+/webrtc/stats?device=emulator-5554             GET     no auth 404   signed in 404
+/webrtc/stats?device=emulator-5554             POST    no auth 404   signed in 404
+/webrtc/offer                                  GET     no auth 404   signed in 404
+/webrtc/offer                                  POST    no auth 404   signed in 404
+/webrtc/offer?device=emulator-5554x            GET     no auth 404   signed in 404
+/webrtc/offer?device=emulator-5554x            POST    no auth 404   signed in 404
+/ws?device=emulator-5554                       GET     no auth 404   signed in 404
+/ws?device=emulator-5554                       POST    no auth 404   signed in 404
+Input socket upgrade (GET with Upgrade):
+ws?device=emulator-5554                        no auth 401   signed in 101   other origin 403
+ws?device=nitpick_proof_14                     signed in 404
+hub port 51277: refused from the LAN
+hub port 54360: refused from the LAN

@@ -1,0 +1,26 @@
+{
+  "emulatorBeforeStart": "emulator-5554",
+  "memoryBeforeBoot": "free 49% | available 2.01 GB | swap 313.62M used | simulators booted: 0 | emulators running: 1",
+  "startClickToReviewMs": 42466,
+  "firstFrameAfterStreamRequestMs": 6300,
+  "transport": "mjpeg",
+  "emulatorAfterStart": "none",
+  "memoryBootedStreaming": "free 37% | available 1.56 GB | swap 723.81M used | simulators booted: 1 | emulators running: 0",
+  "captureClickToResponseMs": 956,
+  "captureSize": "1206x2622",
+  "filed": [
+    {
+      "idReadable": "RM-103",
+      "summary": "Counter button label sits too close to the edge",
+      "reporter": "vera",
+      "block": [
+        "App: ch.liip.nitpick.smoke 1.0.0 (9)",
+        "Device: nitpick proof 14 — iOS 26.2"
+      ],
+      "attachments": [
+        "annotated.png",
+        "original.png"
+      ]
+    }
+  ]
+}

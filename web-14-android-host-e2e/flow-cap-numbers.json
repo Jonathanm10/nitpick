@@ -1,0 +1,9 @@
+{
+  "bootedWhileVeraReviews": "the proof AVD",
+  "refusedStatus": 409,
+  "refusedBody": "{\"error\":\"The Device Host is full: Vera Baumann is using its only device. Try again once a review there ends.\"}",
+  "bootedAfterRefusal": "the proof AVD",
+  "retryToFirstFrameMs": 25849,
+  "bootedAfterRetry": "the proof simulator",
+  "memoryAfterRetry": "free 62% | available 2.64 GB | swap 882.94M used | simulators booted: 1 | emulators running: 0"
+}
