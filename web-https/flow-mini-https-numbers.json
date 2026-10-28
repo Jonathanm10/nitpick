@@ -1,0 +1,14 @@
+{
+  "mode": "https",
+  "url": "https://<mini-ip>:4871",
+  "memoryBefore": "free 43% | available 1.80 GB | swap 602.94M used | simulators booted: 1 | emulators running: 0",
+  "secureContext": true,
+  "webCodecs": true,
+  "signInCookie": "nitpick_sign_in=<id>; Path=/api; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure",
+  "firstFrameAfterStreamRequestMs": 9818,
+  "transport": "h264",
+  "memoryStreaming": "free 30% | available 1.27 GB | swap 2449.31M used | simulators booted: 2 | emulators running: 0",
+  "sockets": [
+    "wss://<mini-ip>:4871/api/device-hub/vendor/serve-sim/helper/ws?device=<proof>"
+  ]
+}

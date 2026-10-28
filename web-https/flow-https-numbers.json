@@ -1,0 +1,12 @@
+{
+  "mode": "https",
+  "url": "https://nitpick.test:4851",
+  "secureContext": true,
+  "webCodecs": true,
+  "signInCookie": "nitpick_sign_in=<id>; Path=/api; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure",
+  "firstFrameAfterStreamRequestMs": 4317,
+  "transport": "h264",
+  "sockets": [
+    "wss://nitpick.test:4851/api/device-hub/vendor/serve-sim/helper/ws?device=<proof>"
+  ]
+}
