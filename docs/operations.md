@@ -74,7 +74,7 @@ documentation; the menu names depend on the YouTrack version.
    - **Earlier versions:** open `<YouTrack URL>/hub`, then Administration,
      Services, and add a service named nitpick.
 2. Set its Home URL to the address Reviewers open, for example
-   `http://<host>:4870`.
+   `https://<host>:4870` ([HTTPS](#https)).
 3. On its Authentication tab:
    - enable the Authorization Code flow
    - add the redirect URI `<address Reviewers open>/api/sign-in/youtrack/callback`,
@@ -472,6 +472,10 @@ browser profile or machine.
    `scp <host>:.config/nitpick/tls/ca.crt nitpick-ca.crt`.
    Send it to Reviewers with its fingerprint, and the new `https://` URL.
    The old `http://` URL stops answering.
+4. If nitpick is registered with YouTrack's Hub
+   ([Sign-in through YouTrack](#sign-in-through-youtrack)), change its Home
+   URL and redirect URIs to `https://`. YouTrack refuses a redirect URI that
+   doesn't match.
 
 ### Trust the CA, once per Reviewer
 
