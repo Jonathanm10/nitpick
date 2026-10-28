@@ -7,6 +7,8 @@ export interface HubRequestRecord {
   readonly method: string
   readonly url: string
   readonly headers: IncomingHttpHeaders
+  /** What a POST carried, once it arrived. */
+  body?: string
 }
 
 /** One MJPEG part as the hub frames it: one write each. */
@@ -40,12 +42,32 @@ export class FakeDeviceHub implements DeviceStream {
 
   constructor() {
     this.#server = createServer((request, response) => {
-      this.requests.push({
+      const record: HubRequestRecord = {
         method: request.method ?? "",
         url: request.url ?? "",
         headers: request.headers,
-      })
+      }
+      this.requests.push(record)
       request.on("close", () => this.closed.push(request.url ?? ""))
+      if (request.method === "POST") {
+        // serve-emu's WebRTC signaling: JSON in, JSON out.
+        const chunks: Buffer[] = []
+        request.on("data", (chunk: Buffer) => chunks.push(chunk))
+        request.on("end", () => {
+          record.body = Buffer.concat(chunks).toString("utf8")
+          // serve-emu caps a close body at 4 KiB.
+          if (request.url?.includes("/close") && record.body.length > 4096) {
+            response.writeHead(413).end()
+            return
+          }
+          response.writeHead(200, {
+            "Content-Type": "application/json",
+            "Set-Cookie": "hub_session=1",
+          })
+          response.end(JSON.stringify({ type: "answer", sdp: "v=0 answer" }))
+        })
+        return
+      }
       if (request.url?.endsWith("/stream.mjpeg")) {
         response.writeHead(200, {
           "Content-Type": "multipart/x-mixed-replace; boundary=frame",

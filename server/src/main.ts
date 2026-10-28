@@ -5,6 +5,7 @@ import { serve } from "@hono/node-server"
 import { createApp } from "./app.ts"
 import { loadConfig } from "./config.ts"
 import { makeLocalDeviceHost } from "./device/LocalDeviceHost.ts"
+import { androidSDK, ffmpegPath } from "./device/android.ts"
 import { DeviceClaims } from "./device/deviceClaims.ts"
 import { DeviceHub, spawnPinnedHub } from "./device/deviceHub.ts"
 import { hubUpgradeHandler } from "./device/deviceHubProxy.ts"
@@ -12,7 +13,7 @@ import { fetchTransport } from "./fetchTransport.ts"
 import { HistoryStore } from "./historyStore.ts"
 import { Reviewers } from "./reviewers.ts"
 import { SignInStore } from "./signInStore.ts"
-import { nodeSubprocessRunner } from "./subprocess.ts"
+import { nodeProcessStarter, nodeSubprocessRunner } from "./subprocess.ts"
 import { readServerVersion } from "./version.ts"
 
 const config = loadConfig(process.env)
@@ -31,16 +32,22 @@ if (!hasWebBuild) {
 const signIns = new SignInStore(config.dataDirectory, config.youTrackURL)
 await signIns.load()
 
+// The hub and the server find the same Android SDK and ffmpeg.
+const android = androidSDK(process.env)
+const ffmpeg = await ffmpegPath(process.env)
 const deviceHub = new DeviceHub({
-  spawn: spawnPinnedHub,
+  spawn: (port) => spawnPinnedHub(port, { android, ffmpeg }),
   log: (line) => console.log(`[device hub] ${line}`),
 })
 deviceHub.start()
 
-const deviceHost = makeLocalDeviceHost(
-  nodeSubprocessRunner,
-  join(config.dataDirectory, "captures")
-)
+const deviceHost = makeLocalDeviceHost({
+  runner: nodeSubprocessRunner,
+  starter: nodeProcessStarter,
+  captureDirectory: join(config.dataDirectory, "captures"),
+  android,
+  ffmpeg,
+})
 const history = new HistoryStore(join(config.dataDirectory, "history"))
 const deviceClaims = new DeviceClaims({
   limit: config.maxBootedDevices,

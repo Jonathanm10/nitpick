@@ -78,7 +78,13 @@ Do this once per Mac, at the Mac.
    SSH key to the account's `~/.ssh/authorized_keys`.
 5. Keep the Mac awake, and have it start again after a power cut:
    `sudo pmset -a sleep 0 disksleep 0 autorestart 1`.
-6. If the macOS firewall is on, allow incoming connections for the pinned
+6. For Android reviews ([ADR-0013](adr/0013-android-on-the-device-host.md)),
+   install the Android SDK with an AVD and build-tools in its default place,
+   `~/Library/Android/sdk`, and an `ffmpeg` with libx264 from Homebrew. The
+   LaunchAgent doesn't pass your shell's `ANDROID_HOME`, so the server reads
+   the default places. Without them, the server still reviews iOS, and the
+   page says what Android lacks.
+7. If the macOS firewall is on, allow incoming connections for the pinned
    Node after the first deploy. Otherwise the first start waits on a prompt
    at the console:
    `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add "$(readlink -f ~/.nitpick/node/bin/node)"`.
@@ -205,7 +211,8 @@ What a reboot does to the people using nitpick:
 - **Open Review Sessions** are kept on disk. Each Reviewer finds theirs
   paused, at "Ready to resume". Resume review boots their device again and
   relaunches the Build.
-- **Booted devices** go down with the host. None boots again by itself.
+- **Booted devices**, simulators and emulators, go down with the host. None
+  boots again by itself.
 - **Sign-ins** are kept on disk, sealed, so nobody has to sign in again.
 - **A File all** that the reboot cut short resumes when the server starts.
 - **A page left open** during the reboot shows its review paused once the
@@ -213,7 +220,8 @@ What a reboot does to the people using nitpick:
 
 ## The device cap
 
-`NITPICK_MAX_BOOTED_DEVICES` keeps the host's memory from running out.
+`NITPICK_MAX_BOOTED_DEVICES` keeps the host's memory from running out. It
+counts iOS simulators and Android emulators alike.
 
 - **When a start needs room:** if starting would boot one device too many,
   the server first shuts down booted devices that nobody is reviewing on.
@@ -229,8 +237,11 @@ What a reboot does to the people using nitpick:
 - **After a restart:** the server forgets which device is whose. A device
   booted before the restart counts as unused until its Reviewer resumes or
   starts again.
-- **Freeing a device by hand:** `xcrun simctl list devices booted`, then
-  `xcrun simctl shutdown <UDID>`.
+- **Freeing a device by hand:**
+  - a simulator: `xcrun simctl list devices booted`, then
+    `xcrun simctl shutdown <UDID>`
+  - an emulator: `~/Library/Android/sdk/platform-tools/adb devices`, then
+    `~/Library/Android/sdk/platform-tools/adb -s <serial> emu kill`
 
 Measured on the 8 GB mini with one iPhone 17 Pro simulator booted and
 streaming: free memory went from 74% to 54%. Two devices don't fit there.

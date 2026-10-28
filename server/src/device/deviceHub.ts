@@ -5,8 +5,9 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { createServer } from "node:net"
-import { dirname, join } from "node:path"
+import { delimiter, dirname, join } from "node:path"
 import { createInterface } from "node:readline"
+import type { AndroidSDK } from "./android.ts"
 
 /** Where the running hub listens and the token it requires. Neither leaves the server. */
 export interface HubEndpoint {
@@ -229,13 +230,16 @@ export class DeviceHub implements DeviceStream {
 
 /**
  * The live hub: the pinned expo-device-hub CLI on the server's own Node,
- * bound to loopback, requiring its token, iOS only. It gets the server's
- * environment minus nitpick's own keys, so no nitpick secret reaches it.
+ * bound to loopback, requiring its token, streaming iOS simulators through
+ * serve-sim and Android emulators through serve-emu. It gets the server's
+ * environment minus nitpick's own keys, so no nitpick secret reaches it,
+ * plus the Android SDK and ffmpeg the server found: serve-emu runs `adb`
+ * from `PATH`.
  */
-export function spawnPinnedHub(port: number): ChildProcess {
-  const environment = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith("NITPICK_"))
-  )
+export function spawnPinnedHub(
+  port: number,
+  tools: { readonly android: AndroidSDK; readonly ffmpeg: string | undefined }
+): ChildProcess {
   return spawn(
     process.execPath,
     [
@@ -245,11 +249,30 @@ export function spawnPinnedHub(port: number): ChildProcess {
       "--port",
       String(port),
       "--require-token",
-      "--platform",
-      "ios",
     ],
-    { env: environment, stdio: ["ignore", "pipe", "pipe"], shell: false }
+    {
+      env: hubEnvironment(process.env, tools),
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    }
   )
+}
+
+export function hubEnvironment(
+  environment: Readonly<Record<string, string | undefined>>,
+  { android, ffmpeg }: Parameters<typeof spawnPinnedHub>[1]
+): Record<string, string | undefined> {
+  return {
+    ...Object.fromEntries(
+      Object.entries(environment).filter(([key]) => !key.startsWith("NITPICK_"))
+    ),
+    ANDROID_HOME: android.root,
+    ANDROID_AVD_HOME: android.avdHome,
+    PATH: [dirname(android.adb), dirname(android.emulator), environment.PATH]
+      .filter((entry) => entry !== undefined && entry !== "")
+      .join(delimiter),
+    ...(ffmpeg !== undefined && { SERVE_EMU_FFMPEG: ffmpeg }),
+  }
 }
 
 function hubCLIPath(): string {

@@ -4,15 +4,20 @@ import type { SimulatorDevice } from "@nitpick/server/api"
 import { CircleIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
+import { LiveEmulator } from "@/components/live-emulator"
+import { StreamOverlay, type ShownStatus } from "@/components/stream-overlay"
 import { api } from "@/lib/api"
 import {
   createDeviceStreamClient,
   type DeviceStreamClient,
-  type DeviceStreamStatus,
 } from "@/lib/device-stream"
-
-/** Marks the stream's element, which Return to the Build focuses. */
-const streamAttribute = "data-device-stream"
+import {
+  clamp,
+  pointIn,
+  shownScreen,
+  streamAttribute,
+  wheelRelease,
+} from "@/lib/stream-surface"
 
 /**
  * Return to the Build: focus moves to the device in the page, so typing goes
@@ -26,7 +31,7 @@ export function focusDeviceStream(): boolean {
 
 type Attachment =
   | { readonly kind: "attaching" }
-  | { readonly kind: "attached" }
+  | { readonly kind: "attached"; readonly hubDevice: string }
   | { readonly kind: "failed"; readonly message: string }
 
 /**
@@ -48,7 +53,10 @@ export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
     let cancelled = false
     api
       .startDeviceStream(device.udid)
-      .then(() => !cancelled && setAttachment({ kind: "attached" }))
+      .then(
+        ({ hubDevice }) =>
+          !cancelled && setAttachment({ kind: "attached", hubDevice })
+      )
       .catch((error: unknown) => {
         if (cancelled) return
         setAttachment({
@@ -83,24 +91,34 @@ export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
           </Button>
         </DeviceFrame>
       )
-    case "attached":
-      return (
+    case "attached": {
+      // The stream's 401 says no more; asking who is signed in shows
+      // sign-in with the reason, or tries again if the sign-in holds.
+      const onUnauthorized = () => {
+        api.me().then(retry, () =>
+          setAttachment({
+            kind: "failed",
+            message: "The device stream needs you signed in.",
+          })
+        )
+      }
+      return device.platform === "android" ? (
+        <LiveEmulator
+          key={`${device.udid}:${attempt}`}
+          device={device}
+          serial={attachment.hubDevice}
+          onUnauthorized={onUnauthorized}
+          onReconnect={retry}
+        />
+      ) : (
         <LiveDevice
           key={`${device.udid}:${attempt}`}
           device={device}
-          // The stream's 401 says no more; asking who is signed in shows
-          // sign-in with the reason, or tries again if the sign-in holds.
-          onUnauthorized={() => {
-            api.me().then(retry, () =>
-              setAttachment({
-                kind: "failed",
-                message: "The device stream needs you signed in.",
-              })
-            )
-          }}
+          onUnauthorized={onUnauthorized}
           onReconnect={retry}
         />
       )
+    }
   }
 }
 
@@ -115,9 +133,6 @@ function DeviceFrame({ children }: { readonly children: React.ReactNode }) {
 
 /** Left and right Shift, by HID usage. */
 const shiftKeys = [hidUsage("ShiftLeft")!, hidUsage("ShiftRight")!]
-
-/** How long a wheel gesture may pause before its drag lets go. */
-const wheelRelease = 120
 
 /**
  * The stream itself. A pointer drag is a touch; the wheel or a trackpad
@@ -137,9 +152,7 @@ function LiveDevice({
   const canvas = useRef<HTMLCanvasElement>(null)
   const surface = useRef<HTMLDivElement>(null)
   const [client, setClient] = useState<DeviceStreamClient>()
-  const [status, setStatus] = useState<
-    Exclude<DeviceStreamStatus, { kind: "unauthorized" }>
-  >({ kind: "connecting" })
+  const [status, setStatus] = useState<ShownStatus>({ kind: "connecting" })
   const [screen, setScreen] = useState({ width: 1206, height: 2622 })
   const [mjpegURL, setMjpegURL] = useState<string>()
   const latest = useRef({ onUnauthorized })
@@ -297,25 +310,11 @@ function LiveDevice({
             className="size-full object-contain"
           />
         )}
-        {status.kind !== "streaming" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70 p-4 text-center text-sm text-white">
-            {status.kind === "connecting" ? (
-              <>
-                <Spinner />
-                Connecting to {device.name}…
-              </>
-            ) : (
-              <>
-                <p role="alert" className="select-text">
-                  {status.message}
-                </p>
-                <Button size="sm" variant="secondary" onClick={onReconnect}>
-                  Reconnect
-                </Button>
-              </>
-            )}
-          </div>
-        )}
+        <StreamOverlay
+          status={status}
+          device={device}
+          onReconnect={onReconnect}
+        />
       </div>
       <Button
         size="sm"
@@ -329,45 +328,4 @@ function LiveDevice({
       </Button>
     </div>
   )
-}
-
-/**
- * Where the screen shows inside the element: the whole of it, or centred
- * between bars when the column is too short for the device.
- */
-function shownScreen(
-  bounds: DOMRect,
-  screen: { readonly width: number; readonly height: number }
-) {
-  const scale = Math.min(
-    bounds.width / screen.width,
-    bounds.height / screen.height
-  )
-  const width = screen.width * scale
-  const height = screen.height * scale
-  return {
-    left: bounds.left + (bounds.width - width) / 2,
-    top: bounds.top + (bounds.height - height) / 2,
-    width,
-    height,
-  }
-}
-
-function pointIn(
-  bounds: {
-    readonly left: number
-    readonly top: number
-    readonly width: number
-    readonly height: number
-  },
-  event: { readonly clientX: number; readonly clientY: number }
-) {
-  return {
-    x: clamp((event.clientX - bounds.left) / bounds.width),
-    y: clamp((event.clientY - bounds.top) / bounds.height),
-  }
-}
-
-function clamp(value: number): number {
-  return Math.min(1, Math.max(0, value))
 }

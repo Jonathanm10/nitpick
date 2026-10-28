@@ -317,6 +317,7 @@ function ReviewApp({
                 selected={model.selectedDevice}
                 onSelect={model.selectDevice}
                 disabled={isBusy || host.status === "loading"}
+                androidProblem={model.androidProblem}
               />
             )}
             {projects.status === "failed" ? (

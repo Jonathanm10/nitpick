@@ -362,6 +362,12 @@ status() {
 		say "iOS runtimes: $runtimes"
 	fi
 	booted=$(xcrun simctl list devices booted 2>/dev/null | grep -c '(Booted)' || true)
+	# Running emulators count against the cap too, where the SDK is installed.
+	adb=${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb
+	if [ -x "$adb" ]; then
+		emulators=$("$adb" devices 2>/dev/null | grep -c '^emulator-[0-9]*	device$' || true)
+		booted=$((booted + emulators))
+	fi
 	say "Booted devices: $booted (cap: $(value maxBootedDevices | sed 's/^$/none/'))"
 	say "Memory: $(memory_pressure -Q 2>/dev/null | sed -n 's/^System-wide memory free percentage: /free /p')"
 	say "Disk: $(df -h "$(value dataDirectory)" 2>/dev/null | awk 'NR == 2 { print $4 " free" }')"

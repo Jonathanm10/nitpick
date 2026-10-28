@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import {
+  devicePlatform,
   discardFinding,
   filingPhase,
   findingsNeedingSummary,
@@ -18,6 +19,7 @@ import {
   unfiledFindingCount,
   updateFinding,
   type DesignSnapshot,
+  type DevicePlatform,
   type Finding,
   type ProjectSchema,
   type TrayItem,
@@ -118,10 +120,15 @@ export function useReview() {
     },
     [saver]
   )
-  const devices = host.status === "ready" ? host.devices : []
-  const selectedDevice = devices.find(
-    (device) => device.udid === selectedDeviceUDID
-  )
+  const buildPlatform = state?.build?.platform
+  const devices = devicesRunning(buildPlatform, host)
+  // A device that can't run the Build, an emulator picked before an .app
+  // came, gives way to the most recent one that can.
+  const selectedDevice =
+    devices.find((device) => device.udid === selectedDeviceUDID) ??
+    (host.status === "ready"
+      ? new RecentDevices(host.recentDeviceUDIDs).preferredDevice(devices)
+      : undefined)
   const projectList = projects.status === "loaded" ? projects.projects : []
   const selectedProject = projectList.find(
     (project) => project.id === selectedProjectID
@@ -554,6 +561,11 @@ export function useReview() {
     dismissFilingResult,
     devices,
     recentDeviceUDIDs: host.status === "ready" ? host.recentDeviceUDIDs : [],
+    /** Why no emulator is listed, unless the Build is an iOS one. */
+    androidProblem:
+      host.status === "ready" && buildPlatform !== "ios"
+        ? host.androidProblem
+        : undefined,
     selectedDevice,
     selectedProjectID,
     setSelectedProjectID,
@@ -580,6 +592,17 @@ export function useReview() {
     /** Sends every pending edit; false when one couldn't be saved. */
     saveEdits: () => saver.saveAll(),
   }
+}
+
+/** The host's devices that can run a Build of `platform`: all, before a Build. */
+function devicesRunning(
+  platform: DevicePlatform | undefined,
+  host: HostResponse | { readonly status: "loading" }
+): ReadonlyArray<SimulatorDevice> {
+  if (host.status !== "ready") return []
+  return platform === undefined
+    ? host.devices
+    : host.devices.filter((device) => devicePlatform(device) === platform)
 }
 
 /** The Finding with the patch's fields; null clears an optional one. */

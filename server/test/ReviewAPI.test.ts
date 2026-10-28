@@ -29,6 +29,7 @@ import type {
   StartReviewResponse,
 } from "../src/api.ts"
 import type { SimulatorDevice } from "../src/device/DeviceHost.ts"
+import { BuildIngestError } from "../src/buildIngestion.ts"
 import { claimIdleAfter, DeviceClaims } from "../src/device/deviceClaims.ts"
 import { RuntimeUnavailable } from "../src/device/simctl.ts"
 import {
@@ -62,6 +63,15 @@ const brokenPhone: SimulatorDevice = {
   isRuntimeAvailable: false,
 }
 
+const pixel: SimulatorDevice = {
+  udid: "nitpick-proof",
+  name: "Pixel 10",
+  osName: "Android 17",
+  isBooted: false,
+  isRuntimeAvailable: true,
+  platform: "android",
+}
+
 const schemaJSON = `[{"field":{"name":"Priority"},"bundle":{"values":[{"name":"Critical"},{"name":"Normal"}]}}]`
 
 function harness(
@@ -73,7 +83,7 @@ function harness(
 ) {
   const runner = new FakeSubprocessRunner()
   const deviceHost = new FakeDeviceHost(
-    options.devices ?? [iPad, iPhone, brokenPhone]
+    options.devices ?? [iPad, iPhone, brokenPhone, pixel]
   )
   const deviceClaims = new DeviceClaims({
     limit: options.maxBootedDevices,
@@ -167,6 +177,7 @@ const reviewMe = {
     version: "2.1.0",
     buildNumber: "421",
   },
+  platform: "ios",
 }
 
 describe("Build upload", () => {
@@ -198,7 +209,7 @@ describe("Build upload", () => {
     expect(response.status).toBe(400)
     expect(await response.json()).toEqual({
       error:
-        "“ReviewMe.app” is not a Build. Drop or choose a zip containing a simulator .app.",
+        "“ReviewMe.app” is not a Build. Drop or choose a zip containing a simulator .app, or an Android .apk.",
     })
     expect(h.runner.executedCommands).toEqual([])
   })
@@ -241,6 +252,7 @@ describe("Build upload", () => {
       build: {
         name: "NextUp",
         identity: { ...reviewMe.identity, buildNumber: "422" },
+        platform: "ios",
       },
       filing: { status: "idle" },
     })
@@ -282,6 +294,98 @@ describe("Build upload", () => {
     expect(await start.json()).toEqual(busy)
     expect((await first).status).toBe(200)
     expect(h.runner.executedCommands).toHaveLength(1)
+  })
+})
+
+describe("an Android Build", () => {
+  let h: Harness
+
+  beforeEach(() => {
+    h = harness()
+  })
+
+  test("an .apk is its own Build: read where it lands, named after the upload", async () => {
+    const response = await upload(h, "SmokeDroid.apk")
+
+    const smokeDroid = {
+      name: "SmokeDroid",
+      identity: h.deviceHost.androidIdentity,
+      platform: "android",
+    }
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ build: smokeDroid })
+    expect(await review(h)).toEqual({
+      build: smokeDroid,
+      filing: { status: "idle" },
+    })
+    const [read] = h.deviceHost.readAPKs
+    expect(read?.name).toBe("SmokeDroid.apk")
+    expect(read?.path).toBe(
+      join(
+        h.reviewerDirectory,
+        "builds",
+        buildDirectories(h)[0]!,
+        "SmokeDroid.apk"
+      )
+    )
+    expect(readFileSync(read!.path)).toEqual(
+      Buffer.from([0x50, 0x4b, 0x03, 0x04])
+    )
+    expect(readdirSync(join(h.reviewerDirectory, "uploads"))).toEqual([])
+    expect(h.runner.executedCommands).toEqual([])
+  })
+
+  test("an .apk the host can't read changes nothing and leaves no files", async () => {
+    h.deviceHost.readAndroidBuild = async () => {
+      throw new BuildIngestError({ kind: "unreadableAPK", apkName: "Bad.apk" })
+    }
+
+    const response = await upload(h, "Bad.apk")
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error:
+        "“Bad.apk” can't be read as an Android app. Is it a complete .apk?",
+    })
+    expect(await review(h)).toEqual({ filing: { status: "idle" } })
+    expect(buildDirectories(h)).toEqual([])
+  })
+
+  test("starts on an emulator, and a simulator is refused before anything launches", async () => {
+    await upload(h, "SmokeDroid.apk")
+    enqueueProjectsAndSchema(h)
+
+    const onSimulator = await startReview(h)
+    const onEmulator = await startReview(h, {
+      deviceUDID: pixel.udid,
+      projectID: "0-12",
+    })
+
+    expect(onSimulator.status).toBe(409)
+    expect(await onSimulator.json()).toEqual({
+      error: "This Build is an Android app: pick an Android emulator.",
+    })
+    expect(onEmulator.status).toBe(200)
+    expect(h.deviceHost.launches.map((launch) => launch.device)).toEqual([
+      pixel,
+    ])
+  })
+
+  test("an iOS Build is refused on an emulator", async () => {
+    enqueueExtraction(h)
+    await upload(h)
+    enqueueProjectsAndSchema(h)
+
+    const response = await startReview(h, {
+      deviceUDID: pixel.udid,
+      projectID: "0-12",
+    })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({
+      error: "This Build is an iOS app: pick an iOS simulator.",
+    })
+    expect(h.deviceHost.launches).toEqual([])
   })
 })
 
@@ -651,8 +755,27 @@ describe("Host and projects", () => {
 
     expect(body).toEqual({
       status: "ready",
-      devices: [iPad, iPhone, brokenPhone],
+      devices: [iPad, iPhone, brokenPhone, pixel],
       recentDeviceUDIDs: [],
+    })
+  })
+
+  test("a host that can't run Android lists its simulators, and says why no emulator shows", async () => {
+    const h = harness()
+    h.deviceHost.health = {
+      status: "ready",
+      devices: [iPhone],
+      androidProblem: { kind: "ffmpegMissing" },
+    }
+
+    const body = await (await h.app.request("/api/host")).json()
+
+    expect(body).toEqual({
+      status: "ready",
+      devices: [iPhone],
+      recentDeviceUDIDs: [],
+      androidProblem:
+        "ffmpeg with libx264 isn't installed on the Device Host, so Android emulators can't stream.",
     })
   })
 

@@ -4,13 +4,16 @@
 // startReview, switchDevice, endReview, captureScreen, the Editor's edits and
 // fileAllFindings.
 import { createWriteStream } from "node:fs"
-import { readFile, rm } from "node:fs/promises"
+import { readFile, rename, rm } from "node:fs/promises"
+import { join } from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { ReadableStream } from "node:stream/web"
 import {
   addDesignSnapshot,
   addFinding,
+  buildPlatform,
+  devicePlatform,
   designSnapshotMediaType,
   deviceContextOf,
   discardFinding,
@@ -48,10 +51,11 @@ import type {
   HistoryImportResult,
   SessionPatch,
 } from "./api.ts"
-import { readBuildFromArchive, zipArchiveName } from "./buildIngestion.ts"
+import { buildUploadName, readBuildFromArchive } from "./buildIngestion.ts"
 import { checkDesignSnapshotImage } from "./designSnapshotImage.ts"
 import { designReference, patchedFinding } from "./findingPatch.ts"
 import type {
+  AndroidProblem,
   DeviceHost,
   HostProblem,
   SimulatorDevice,
@@ -99,6 +103,7 @@ export type HostStatus =
       readonly status: "ready"
       readonly devices: SimulatorDevice[]
       readonly recentDevices: RecentDevices
+      readonly androidProblem?: AndroidProblem
     }
   | { readonly status: "notReady"; readonly problem: HostProblem }
 
@@ -110,6 +115,7 @@ export type StartOutcome =
       readonly schema: ProjectSchema
       readonly devices: SimulatorDevice[]
       readonly recentDevices: RecentDevices
+      readonly androidProblem?: AndroidProblem
     }
   | { readonly status: "hostNotReady"; readonly problem: HostProblem }
 
@@ -165,31 +171,36 @@ export class Reviewer {
       status: "ready",
       devices: health.devices,
       recentDevices: await this.#store.recentDevices(),
+      androidProblem: health.androidProblem,
     }
   }
 
   /**
-   * Ingests an uploaded zip. A Review Session reviews exactly one Build, so
-   * an accepted upload ends the open session, on disk too. A refused upload
-   * throws before anything changes, and leaves no files behind.
+   * Ingests an uploaded zip or .apk. A Review Session reviews exactly one
+   * Build, so an accepted upload ends the open session, on disk too. A
+   * refused upload throws before anything changes, and leaves no files
+   * behind.
    */
   ingest(
     upload: ReadableStream<Uint8Array> | null,
     fileName: string
   ): Promise<Build> {
     return this.#perform(async () => {
-      const archiveName = zipArchiveName(fileName)
+      const uploaded = buildUploadName(fileName)
       const slot = await this.#store.newBuildSlot()
       try {
         await pipeline(
           upload === null ? Readable.from([]) : Readable.fromWeb(upload),
           createWriteStream(slot.archivePath)
         )
-        const build = await readBuildFromArchive(
-          this.#dependencies.runner,
-          { path: slot.archivePath, name: archiveName },
-          slot.buildDirectory
-        )
+        const build =
+          uploaded.kind === "apk"
+            ? await this.#readAPK(slot, uploaded.stem, uploaded.name)
+            : await readBuildFromArchive(
+                this.#dependencies.runner,
+                { path: slot.archivePath, name: uploaded.name },
+                slot.buildDirectory
+              )
         await this.#serialized(() => this.#store.clearOpenSession())
         this.#dependencies.deviceClaims.release(this.#login)
         this.#uploadedBuild = build
@@ -204,6 +215,20 @@ export class Reviewer {
         await rm(slot.archivePath, { force: true })
       }
     })
+  }
+
+  /**
+   * An .apk is its own Build: it moves into the slot's folder under its
+   * upload's name, which the page shows, and is read there.
+   */
+  async #readAPK(
+    slot: { readonly archivePath: string; readonly buildDirectory: string },
+    stem: string,
+    name: string
+  ): Promise<Build> {
+    const path = join(slot.buildDirectory, `${stem}.apk`)
+    await rename(slot.archivePath, path)
+    return this.#dependencies.deviceHost.readAndroidBuild({ path, name })
   }
 
   /**
@@ -246,12 +271,12 @@ export class Reviewer {
       if (health.status === "notReady") {
         return { status: "hostNotReady", problem: health.problem }
       }
-      const device = deviceNamed(request.deviceUDID, health.devices)
+      const picked = deviceFor(build, request.deviceUDID, health.devices)
       const project =
         open?.project ?? (await this.#project(request.projectID, youTrack))
-      const rollback = await this.#dependencies.deviceClaims.claim(user, device)
-      await this.#dependencies.deviceHost
-        .launchBuild(build, device)
+      const rollback = await this.#dependencies.deviceClaims.claim(user, picked)
+      const device = await this.#dependencies.deviceHost
+        .launchBuild(build, picked)
         .catch(async (error: unknown) => {
           await rollback()
           throw error
@@ -271,8 +296,12 @@ export class Reviewer {
         session,
         device,
         schema,
-        devices: health.devices,
+        // The device as it now runs: booted, with an emulator's serial.
+        devices: health.devices.map((listed) =>
+          listed.udid === device.udid ? device : listed
+        ),
         recentDevices,
+        androidProblem: health.androidProblem,
       }
     })
   }
@@ -294,10 +323,14 @@ export class Reviewer {
         throw new ReviewRefused("There is no open review to switch devices in.")
       }
       const deviceHost = this.#dependencies.deviceHost
-      const device = deviceNamed(deviceUDID, await deviceHost.devices.list())
-      const rollback = await this.#dependencies.deviceClaims.claim(user, device)
-      await deviceHost
-        .launchBuild(open.build, device)
+      const picked = deviceFor(
+        open.build,
+        deviceUDID,
+        await deviceHost.devices.list()
+      )
+      const rollback = await this.#dependencies.deviceClaims.claim(user, picked)
+      const device = await deviceHost
+        .launchBuild(open.build, picked)
         .catch(async (error: unknown) => {
           await rollback()
           throw error
@@ -708,7 +741,9 @@ async function readOrNotFound(path: string): Promise<Buffer> {
   }
 }
 
-function deviceNamed(
+/** The device the Reviewer picked, when it is still there and runs the Build. */
+function deviceFor(
+  build: Build,
   udid: string,
   devices: ReadonlyArray<SimulatorDevice>
 ): SimulatorDevice {
@@ -716,6 +751,13 @@ function deviceNamed(
   if (device === undefined) {
     throw new ReviewRefused(
       "That device is no longer on the Device Host. Pick another one."
+    )
+  }
+  if (buildPlatform(build) !== devicePlatform(device)) {
+    throw new ReviewRefused(
+      buildPlatform(build) === "android"
+        ? "This Build is an Android app: pick an Android emulator."
+        : "This Build is an iOS app: pick an iOS simulator."
     )
   }
   return device

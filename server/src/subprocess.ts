@@ -22,6 +22,15 @@ export interface SubprocessRunner {
   run(command: SubprocessCommand): Promise<SubprocessResult>
 }
 
+/**
+ * Starts a process the server doesn't wait for, such as an emulator, which
+ * outlives the request that booted it, as a booted simulator does.
+ */
+export interface ProcessStarter {
+  /** Starts it, and answers what stops it. */
+  start(command: SubprocessCommand): { stop(): void }
+}
+
 /** A subprocess exited non-zero where the server required success. */
 export class SubprocessFailure extends Error {
   readonly command: SubprocessCommand
@@ -68,5 +77,32 @@ export const nodeSubprocessRunner: SubprocessRunner = {
         })
       })
     })
+  },
+}
+
+/**
+ * Live starter: the process gets its own group and no pipes, so it neither
+ * holds the server's output open nor stops with the server.
+ */
+export const nodeProcessStarter: ProcessStarter = {
+  start(command) {
+    const child = spawn(command.executablePath, command.arguments, {
+      shell: false,
+      stdio: "ignore",
+      detached: true,
+    })
+    // A start that fails shows as the device never booting.
+    child.on("error", () => {})
+    child.unref()
+    return {
+      // Its own process group, the emulator's included.
+      stop: () => {
+        try {
+          if (child.pid !== undefined) process.kill(-child.pid, "SIGTERM")
+        } catch {
+          // Already gone.
+        }
+      },
+    }
   },
 }

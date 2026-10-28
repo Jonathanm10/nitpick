@@ -2,13 +2,21 @@
 // seam (ADR-0012). Modelled on T3 Code's apps/server/src/device/DeviceHost.ts
 // (MIT). Every effect is a typed action with an argument array.
 // Types only: api.ts re-exports from here, and web/ must not reach Node code.
-import type { Build, DeviceSettings } from "@nitpick/core"
+import type {
+  AndroidDeviceSettings,
+  Build,
+  DeviceSettings,
+} from "@nitpick/core"
 
-/** A simulator a Build can be reviewed on: the device half of a Device Context. */
+/**
+ * A simulator or emulator a Build can be reviewed on: the device half of a
+ * Device Context.
+ */
 export interface SimulatorDevice {
+  /** A simulator's UDID, or an Android emulator's AVD name. */
   readonly udid: string
   readonly name: string
-  /** Human-readable OS, e.g. "iOS 26.4". */
+  /** Human-readable OS, e.g. "iOS 26.4" or "Android 17". */
   readonly osName: string
   readonly isBooted: boolean
   /**
@@ -16,11 +24,18 @@ export interface SimulatorDevice {
    * runtime was deleted or never downloaded.
    */
   readonly isRuntimeAvailable: boolean
+  /** Set on an Android emulator; a device without it is an iOS simulator. */
+  readonly platform?: "android"
+  /** A running emulator's adb serial, which serve-emu names it by. */
+  readonly serial?: string
 }
 
 /** Discovery for the devices a host can run. */
 export interface DeviceOperations {
-  /** iOS devices, newest OS first, then by name. */
+  /**
+   * iOS simulators, newest OS first, then by name; then Android emulators,
+   * likewise.
+   */
   readonly list: () => Promise<ReadonlyArray<SimulatorDevice>>
 }
 
@@ -31,8 +46,22 @@ export interface DeviceHost {
   readonly devices: DeviceOperations
   /** Whether the host can run a review, with its devices when it can. */
   readonly checkHealth: () => Promise<HostHealth>
-  /** Boots `device`, installs the Build and launches it. */
-  readonly launchBuild: (build: Build, device: SimulatorDevice) => Promise<void>
+  /**
+   * Boots `device`, installs the Build and launches it, and answers the
+   * device as it now runs.
+   */
+  readonly launchBuild: (
+    build: Build,
+    device: SimulatorDevice
+  ) => Promise<SimulatorDevice>
+  /**
+   * Reads an uploaded .apk's identity with the host's Android tools; the
+   * Build is the file at `path`.
+   */
+  readonly readAndroidBuild: (apk: {
+    readonly path: string
+    readonly name: string
+  }) => Promise<Build>
   /** Shuts the device down; one already shut down is no error. */
   readonly shutDown: (deviceUDID: string) => Promise<void>
   /**
@@ -56,7 +85,7 @@ export interface HostVersions {
 export interface ScreenCapture {
   readonly device: SimulatorDevice
   readonly png: Uint8Array
-  readonly settings: DeviceSettings
+  readonly settings: DeviceSettings | AndroidDeviceSettings
 }
 
 /** What the Device Host is missing before a review can run (ADR-0002). */
@@ -79,6 +108,19 @@ export type HostProblem =
   /** The tools work, but no iOS simulator device has an installed runtime. */
   | { readonly kind: "missingIOSRuntime" }
 
+/** What the Device Host lacks to review Android Builds; iOS goes on without it. */
+export type AndroidProblem =
+  | { readonly kind: "sdkMissing" }
+  | { readonly kind: "emulatorMissing" }
+  | { readonly kind: "buildToolsMissing" }
+  | { readonly kind: "ffmpegMissing" }
+  | { readonly kind: "noEmulator" }
+
 export type HostHealth =
-  | { readonly status: "ready"; readonly devices: SimulatorDevice[] }
+  | {
+      readonly status: "ready"
+      readonly devices: SimulatorDevice[]
+      /** Why no Android emulator is listed, when none can run. */
+      readonly androidProblem?: AndroidProblem
+    }
   | { readonly status: "notReady"; readonly problem: HostProblem }

@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url"
 import { defaultDeviceSettings, type Build } from "@nitpick/core"
 import type {
   DeviceHost,
@@ -44,6 +45,23 @@ export class FakeDeviceHost implements DeviceHost {
     this.#setBooted(device.udid, true)
     if (this.launchFailure !== undefined) throw this.launchFailure
     this.launches.push({ build, device })
+    return device
+  }
+
+  /** What `readAndroidBuild` answers for an uploaded .apk, by default. */
+  androidIdentity = {
+    bundleID: "dev.nitpick.fixture.smokedroid",
+    version: "1.4.0",
+    buildNumber: "42",
+  }
+  readonly readAPKs: { path: string; name: string }[] = []
+
+  readAndroidBuild = async (apk: { path: string; name: string }) => {
+    this.readAPKs.push(apk)
+    return {
+      identity: this.androidIdentity,
+      appBundleURL: pathToFileURL(apk.path).href,
+    }
   }
 
   readonly shutdowns: string[] = []
