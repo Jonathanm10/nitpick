@@ -26,6 +26,7 @@ import type {
   FeedbackEnvironmentResponse,
   FeedbackResponse,
   FilingResponse,
+  HistoryImportResponse,
   HistoryResponse,
   HostResponse,
   ProjectsResponse,
@@ -239,6 +240,37 @@ export function createApp({
       entries: await history.entries(),
       reviewer: signedInTo(c).user,
     } satisfies HistoryResponse)
+  )
+
+  // The Swift app's History files, or a zip of its history folder. A
+  // designer's whole History is a few megabytes at most.
+  app.post(
+    "/api/history/import",
+    bodyLimit({
+      maxSize: 50 * 1024 * 1024,
+      onError: () => {
+        throw new HTTPException(413, {
+          message: "That import is larger than 50 MB.",
+        })
+      },
+    }),
+    async (c) => {
+      const chosen = (await c.req.parseBody({ all: true })).files
+      const files = Array.isArray(chosen) ? chosen : [chosen]
+      if (!files.every((file) => file instanceof File) || files.length === 0) {
+        throw malformedRequest()
+      }
+      const results = await reviewerOf(c).importHistory(
+        await Promise.all(
+          files.map(async (file) => ({
+            name: file.name,
+            bytes: new Uint8Array(await file.arrayBuffer()),
+          }))
+        ),
+        signedInTo(c).user
+      )
+      return c.json({ results } satisfies HistoryImportResponse)
+    }
   )
 
   app.get("/api/feedback/environment", async (c) =>

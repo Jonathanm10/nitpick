@@ -275,7 +275,11 @@ function ReviewApp({
       >
         {review.status === "failed" && <ErrorLine message={review.error} />}
         {showsHistory ? (
-          <HistoryPage history={model.history} onBack={() => navigate("")} />
+          <HistoryPage
+            history={model.history}
+            onBack={() => navigate("")}
+            onImported={() => void model.refreshHistory()}
+          />
         ) : state?.build && session ? (
           <SessionScreen
             session={session}

@@ -42,7 +42,12 @@ import {
   type YouTrackUser,
 } from "@nitpick/core"
 import { annotatedScreenshotPNG } from "./annotationFlattening.ts"
-import type { FilingStatus, FindingPatch, SessionPatch } from "./api.ts"
+import type {
+  FilingStatus,
+  FindingPatch,
+  HistoryImportResult,
+  SessionPatch,
+} from "./api.ts"
 import { readBuildFromArchive, zipArchiveName } from "./buildIngestion.ts"
 import { checkDesignSnapshotImage } from "./designSnapshotImage.ts"
 import { designReference, patchedFinding } from "./findingPatch.ts"
@@ -51,6 +56,7 @@ import type {
   HostProblem,
   SimulatorDevice,
 } from "./device/DeviceHost.ts"
+import { importHistory, type HistoryUpload } from "./historyImport.ts"
 import type { HistoryStore } from "./historyStore.ts"
 import { ReviewerStore } from "./reviewerStore.ts"
 import type { SubprocessRunner } from "./subprocess.ts"
@@ -73,7 +79,7 @@ export class FindingNotFound extends Error {
 
 export interface ReviewerDependencies {
   readonly deviceHost: DeviceHost
-  /** Runs the extraction of uploaded Builds. */
+  /** Runs the extraction of uploaded Builds and History zips. */
   readonly runner: SubprocessRunner
   /** Every Reviewer's filed sessions, one store for all. */
   readonly history: HistoryStore
@@ -187,6 +193,22 @@ export class Reviewer {
       } finally {
         await rm(slot.archivePath, { force: true })
       }
+    })
+  }
+
+  /**
+   * Imports the Swift app's History files into the shared History, as filed
+   * by `importer`. Not a run: the review goes on beside it.
+   */
+  importHistory(
+    uploads: ReadonlyArray<HistoryUpload>,
+    importer: YouTrackUser
+  ): Promise<HistoryImportResult[]> {
+    return importHistory(uploads, {
+      history: this.#dependencies.history,
+      runner: this.#dependencies.runner,
+      scratchDirectory: this.#store.newImportDirectory(),
+      importer,
     })
   }
 

@@ -193,6 +193,7 @@ const registeredRoutes = [
   "POST /api/session/filing",
   "DELETE /api/filing-result",
   "GET /api/history",
+  "POST /api/history/import",
   "GET /api/feedback/environment",
   "POST /api/build",
   "POST /api/session",

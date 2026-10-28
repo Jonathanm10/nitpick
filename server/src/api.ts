@@ -124,6 +124,36 @@ export interface HistoryResponse {
   readonly reviewer: YouTrackUser
 }
 
+/**
+ * What became of one History file in `POST /api/history/import`:
+ *
+ * - `imported`: added to the shared History, as filed by the importer.
+ * - `duplicate`: History already holds the session: the same start and the
+ *   same Issue IDs.
+ * - `openSession`: an open Review Session, never imported: it's filed or
+ *   ended in the Swift app first.
+ * - `refused`: not a schema v1 History file; `error` says why.
+ *
+ * `file` is the chosen file's name, or `<zip> › <path inside>`.
+ */
+export type HistoryImportResult =
+  | { readonly file: string; readonly outcome: "imported" | "duplicate" }
+  | { readonly file: string; readonly outcome: "openSession" }
+  | {
+      readonly file: string
+      readonly outcome: "refused"
+      readonly error: string
+    }
+
+/**
+ * `POST /api/history/import`, as multipart/form-data with one `files` part
+ * per chosen file: the Swift app's History files, or a zip of its history
+ * folder. One result per History file, in the order chosen.
+ */
+export interface HistoryImportResponse {
+  readonly results: ReadonlyArray<HistoryImportResult>
+}
+
 /** `GET /api/feedback/environment`: the Environment lines only the server knows. */
 export interface FeedbackEnvironmentResponse {
   readonly server: string
