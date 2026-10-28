@@ -4,7 +4,12 @@ import { newUUID } from "@nitpick/core"
 import type { SubprocessRunner } from "../subprocess.ts"
 import type { DeviceHost } from "./DeviceHost.ts"
 import { checkHostHealth, macOSVersion, xcodeVersion } from "./hostHealth.ts"
-import { captureScreen, launchBuild, listSimulatorDevices } from "./simctl.ts"
+import {
+  captureScreen,
+  launchBuild,
+  listSimulatorDevices,
+  shutDownDevice,
+} from "./simctl.ts"
 
 /**
  * The machine the server runs on, the only Device Host for now. Captures
@@ -23,6 +28,7 @@ export function makeLocalDeviceHost(
     },
     checkHealth: () => checkHostHealth(runner),
     launchBuild: (build, device) => launchBuild(runner, build, device),
+    shutDown: (deviceUDID) => shutDownDevice(runner, deviceUDID),
     captureScreen: async (deviceUDID) => {
       await mkdir(captureDirectory, { recursive: true })
       return captureScreen(

@@ -16,6 +16,11 @@ export interface ServerConfig {
    * Undefined when unset; the server then refuses to start.
    */
   readonly youTrackURL: string | undefined
+  /**
+   * At most this many devices booted at once (PRD answer 4), so the host's
+   * memory holds; undefined for no cap.
+   */
+  readonly maxBootedDevices: number | undefined
 }
 
 export const defaultPort = 4870
@@ -46,6 +51,7 @@ export function loadConfig(
         join(homedir(), "Library", "Application Support", "nitpick-server")
     ),
     youTrackURL: youTrackURL(value),
+    maxBootedDevices: parseDeviceCap(value("NITPICK_MAX_BOOTED_DEVICES")),
   }
 }
 
@@ -76,6 +82,17 @@ function parsePort(value: string | undefined): number {
     )
   }
   return port
+}
+
+function parseDeviceCap(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const cap = Number(value)
+  if (!/^[0-9]+$/.test(value) || cap < 1) {
+    throw new Error(
+      `NITPICK_MAX_BOOTED_DEVICES must be a whole number from 1, not "${value}".`
+    )
+  }
+  return cap
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

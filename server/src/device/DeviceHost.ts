@@ -33,6 +33,8 @@ export interface DeviceHost {
   readonly checkHealth: () => Promise<HostHealth>
   /** Boots `device`, installs the Build and launches it. */
   readonly launchBuild: (build: Build, device: SimulatorDevice) => Promise<void>
+  /** Shuts the device down; one already shut down is no error. */
+  readonly shutDown: (deviceUDID: string) => Promise<void>
   /**
    * The booted device's screen at native pixels with the accessibility
    * state it was taken under. Refuses a device that isn't booted.

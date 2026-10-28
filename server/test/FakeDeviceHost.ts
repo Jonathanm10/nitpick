@@ -44,6 +44,20 @@ export class FakeDeviceHost implements DeviceHost {
     this.launches.push({ build, device })
   }
 
+  readonly shutdowns: string[] = []
+
+  /** Records the shutdown and shows the device shut down from then on. */
+  shutDown = async (deviceUDID: string) => {
+    this.shutdowns.push(deviceUDID)
+    if (this.health.status !== "ready") return
+    this.health = {
+      status: "ready",
+      devices: this.health.devices.map((device) =>
+        device.udid === deviceUDID ? { ...device, isBooted: false } : device
+      ),
+    }
+  }
+
   captureScreen = async (deviceUDID: string): Promise<ScreenCapture> => {
     const device = (await this.devices.list()).find(
       (candidate) => candidate.udid === deviceUDID

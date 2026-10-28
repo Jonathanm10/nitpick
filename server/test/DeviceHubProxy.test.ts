@@ -47,6 +47,7 @@ async function fixture(
     devices: { list },
     checkHealth: async () => ({ status: "ready", devices: await list() }),
     launchBuild: async () => {},
+    shutDown: async () => {},
     captureScreen: async () => {
       throw new Error("not captured here")
     },

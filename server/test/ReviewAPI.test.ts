@@ -29,6 +29,7 @@ import type {
   StartReviewResponse,
 } from "../src/api.ts"
 import type { SimulatorDevice } from "../src/device/DeviceHost.ts"
+import { claimIdleAfter, DeviceClaims } from "../src/device/deviceClaims.ts"
 import { RuntimeUnavailable } from "../src/device/simctl.ts"
 import {
   simulatorInfoPlist,
@@ -63,17 +64,38 @@ const brokenPhone: SimulatorDevice = {
 
 const schemaJSON = `[{"field":{"name":"Priority"},"bundle":{"values":[{"name":"Critical"},{"name":"Normal"}]}}]`
 
-function harness() {
+function harness(
+  options: {
+    readonly devices?: SimulatorDevice[]
+    readonly maxBootedDevices?: number
+    readonly now?: () => number
+  } = {}
+) {
   const runner = new FakeSubprocessRunner()
-  const deviceHost = new FakeDeviceHost([iPad, iPhone, brokenPhone])
+  const deviceHost = new FakeDeviceHost(
+    options.devices ?? [iPad, iPhone, brokenPhone]
+  )
+  const deviceClaims = new DeviceClaims({
+    limit: options.maxBootedDevices,
+    shutDown: deviceHost.shutDown,
+    now: options.now,
+  })
   const transport = new FakeHTTPTransport()
   const { app, directory } = signedInApp({
     data: temporaryDirectory(),
     deviceHost,
     runner,
     transport,
+    deviceClaims,
   })
-  return { app, runner, deviceHost, transport, reviewerDirectory: directory }
+  return {
+    app,
+    runner,
+    deviceHost,
+    deviceClaims,
+    transport,
+    reviewerDirectory: directory,
+  }
 }
 
 type Harness = ReturnType<typeof harness>
@@ -407,6 +429,95 @@ describe("Start review", () => {
   })
 })
 
+describe("The host's cap on booted devices", () => {
+  const noor = { login: "noor", fullName: "Noor Haddad" }
+  const bootedIPad = { ...iPad, isBooted: true }
+
+  async function cappedHarness(now?: () => number) {
+    const h = harness({
+      devices: [bootedIPad, iPhone, brokenPhone],
+      maxBootedDevices: 1,
+      now,
+    })
+    enqueueExtraction(h)
+    await upload(h)
+    return h
+  }
+
+  test("a start that needs room shuts down a booted device nobody reviews on, then launches", async () => {
+    const h = await cappedHarness()
+    enqueueProjectsAndSchema(h)
+
+    const response = await startReview(h)
+
+    expect(response.status).toBe(200)
+    expect(h.deviceHost.shutdowns).toEqual([iPad.udid])
+    expect(h.deviceHost.launches.map((launch) => launch.device)).toEqual([
+      iPhone,
+    ])
+  })
+
+  test("with the host full, Start review names who reviews there, and nothing shuts down, launches or saves", async () => {
+    const h = await cappedHarness()
+    await h.deviceClaims.claim(noor, bootedIPad, [bootedIPad])
+    enqueueProjectsAndSchema(h)
+
+    const response = await startReview(h)
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({
+      error:
+        "The Device Host is full: Noor Haddad is using its only device. Try again once a review there ends.",
+    })
+    expect(h.deviceHost.shutdowns).toEqual([])
+    expect(h.deviceHost.launches).toEqual([])
+    expect(storedSession(h)).toBeUndefined()
+  })
+
+  test("the Reviewer's requests keep their device theirs past the idle time", async () => {
+    let now = 0
+    const h = await cappedHarness(() => now)
+    enqueueProjectsAndSchema(h)
+    await startReview(h)
+    const booted = [iPad, { ...iPhone, isBooted: true }]
+
+    now += claimIdleAfter - 1
+    await review(h)
+    now += claimIdleAfter - 1
+
+    await expect(h.deviceClaims.claim(noor, iPad, booted)).rejects.toThrow(
+      "Vera Baumann is using its only device"
+    )
+  })
+
+  test.each([
+    [
+      "End review",
+      (h: Harness) => h.app.request("/api/session", { method: "DELETE" }),
+    ],
+    [
+      "A new Build",
+      (h: Harness) => {
+        enqueueExtraction(h)
+        return upload(h)
+      },
+    ],
+  ])("%s gives the device up to the next Reviewer", async (_, endSession) => {
+    const h = await cappedHarness()
+    enqueueProjectsAndSchema(h)
+    await startReview(h)
+    const bootedIPhone = { ...iPhone, isBooted: true }
+    await expect(
+      h.deviceClaims.claim(noor, iPad, [iPad, bootedIPhone])
+    ).rejects.toThrow("Vera Baumann is using its only device")
+
+    expect((await endSession(h)).ok).toBe(true)
+
+    await h.deviceClaims.claim(noor, iPad, [iPad, bootedIPhone])
+    expect(h.deviceHost.shutdowns).toEqual([iPad.udid, iPhone.udid])
+  })
+})
+
 describe("In the session", () => {
   let h: Harness
 
@@ -436,6 +547,21 @@ describe("In the session", () => {
     expect(h.deviceHost.launches.map((launch) => launch.device)).toEqual([
       iPhone,
       iPad,
+    ])
+  })
+
+  test("a device another Reviewer is reviewing on is refused, and nothing relaunches", async () => {
+    const noor = { login: "noor", fullName: "Noor Haddad" }
+    await h.deviceClaims.claim(noor, iPad, [iPad])
+
+    const response = await switchTo(iPad.udid)
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({
+      error: "Noor Haddad is reviewing on iPad (A16). Pick another device.",
+    })
+    expect(h.deviceHost.launches.map((launch) => launch.device)).toEqual([
+      iPhone,
     ])
   })
 

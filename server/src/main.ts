@@ -5,6 +5,7 @@ import { serve } from "@hono/node-server"
 import { createApp } from "./app.ts"
 import { loadConfig } from "./config.ts"
 import { makeLocalDeviceHost } from "./device/LocalDeviceHost.ts"
+import { DeviceClaims } from "./device/deviceClaims.ts"
 import { DeviceHub, spawnPinnedHub } from "./device/deviceHub.ts"
 import { hubUpgradeHandler } from "./device/deviceHubProxy.ts"
 import { fetchTransport } from "./fetchTransport.ts"
@@ -41,12 +42,21 @@ const deviceHost = makeLocalDeviceHost(
   join(config.dataDirectory, "captures")
 )
 const history = new HistoryStore(join(config.dataDirectory, "history"))
+const deviceClaims = new DeviceClaims({
+  limit: config.maxBootedDevices,
+  shutDown: deviceHost.shutDown,
+})
 const reviewers = new Reviewers({
   directory: join(config.dataDirectory, "reviewers"),
   instanceURL: config.youTrackURL,
   transport: fetchTransport,
   signIns,
-  dependencies: { deviceHost, runner: nodeSubprocessRunner, history },
+  dependencies: {
+    deviceHost,
+    runner: nodeSubprocessRunner,
+    history,
+    deviceClaims,
+  },
 })
 
 // A File all the server's last run didn't finish picks up where its saved

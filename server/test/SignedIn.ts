@@ -12,6 +12,7 @@ import {
 } from "@nitpick/core"
 import { createApp } from "../src/app.ts"
 import type { DeviceHost } from "../src/device/DeviceHost.ts"
+import { DeviceClaims } from "../src/device/deviceClaims.ts"
 import type { DeviceStream } from "../src/device/deviceHub.ts"
 import { HistoryStore } from "../src/historyStore.ts"
 import type { YouTrackAccount } from "../src/reviewer.ts"
@@ -39,6 +40,8 @@ export function signedInApp(options: {
   readonly deviceStream?: DeviceStream
   readonly serverVersion?: string
   readonly webRoot?: string
+  /** The host's claims; no cap by default. */
+  readonly deviceClaims?: DeviceClaims
 }) {
   const {
     data,
@@ -50,12 +53,15 @@ export function signedInApp(options: {
   } = options
   const signIns = new SignInStore(data, instanceURL)
   const history = options.history ?? new HistoryStore(join(data, "history"))
+  const deviceClaims =
+    options.deviceClaims ??
+    new DeviceClaims({ limit: undefined, shutDown: deviceHost.shutDown })
   const reviewers = new Reviewers({
     directory: join(data, "reviewers"),
     instanceURL,
     transport,
     signIns,
-    dependencies: { deviceHost, runner, history },
+    dependencies: { deviceHost, runner, history, deviceClaims },
   })
   const server = createApp({
     deviceHost,

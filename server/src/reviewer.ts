@@ -56,6 +56,7 @@ import type {
   HostProblem,
   SimulatorDevice,
 } from "./device/DeviceHost.ts"
+import type { DeviceClaims } from "./device/deviceClaims.ts"
 import { importHistory, type HistoryUpload } from "./historyImport.ts"
 import type { HistoryStore } from "./historyStore.ts"
 import { ReviewerStore } from "./reviewerStore.ts"
@@ -83,6 +84,8 @@ export interface ReviewerDependencies {
   readonly runner: SubprocessRunner
   /** Every Reviewer's filed sessions, one store for all. */
   readonly history: HistoryStore
+  /** Which Reviewer each device runs for, under the host's cap. */
+  readonly deviceClaims: DeviceClaims
 }
 
 /** The signed-in Reviewer's YouTrack account: who files, with whose token. */
@@ -111,6 +114,7 @@ export type StartOutcome =
   | { readonly status: "hostNotReady"; readonly problem: HostProblem }
 
 export class Reviewer {
+  readonly #login: string
   readonly #dependencies: ReviewerDependencies
   readonly #store: ReviewerStore
   #activity = new ShellActivity()
@@ -133,7 +137,12 @@ export class Reviewer {
    */
   #filing: FilingStatus = { status: "idle" }
 
-  constructor(directory: string, dependencies: ReviewerDependencies) {
+  constructor(
+    login: string,
+    directory: string,
+    dependencies: ReviewerDependencies
+  ) {
+    this.#login = login
     this.#dependencies = dependencies
     this.#store = new ReviewerStore(directory)
   }
@@ -182,6 +191,7 @@ export class Reviewer {
           slot.buildDirectory
         )
         await this.#serialized(() => this.#store.clearOpenSession())
+        this.#dependencies.deviceClaims.release(this.#login)
         this.#uploadedBuild = build
         // The next Build dismisses a held filing result (ADR-0007).
         this.#filing = { status: "idle" }
@@ -214,15 +224,16 @@ export class Reviewer {
 
   /**
    * Starts the Review Session, or resumes the open one under its pinned
-   * project: re-checks the host, launches the Build, records the device in
-   * Recent, reads the project's schema, and saves a new session.
+   * project: re-checks the host, claims the device, launches the Build,
+   * records the device in Recent, reads the project's schema, and saves a
+   * new session.
    */
   start(
     request: {
       readonly deviceUDID: string
       readonly projectID: string | undefined
     },
-    youTrack: YouTrackClient
+    { user, youTrack }: YouTrackAccount
   ): Promise<StartOutcome> {
     return this.#perform(async () => {
       const open = await this.#store.openSession()
@@ -238,6 +249,7 @@ export class Reviewer {
       const device = deviceNamed(request.deviceUDID, health.devices)
       const project =
         open?.project ?? (await this.#project(request.projectID, youTrack))
+      await this.#dependencies.deviceClaims.claim(user, device, health.devices)
       await this.#dependencies.deviceHost.launchBuild(build, device)
       const recentDevices = await this.#recordRecentDevice(device)
       // Non-fatal: an empty schema hides the Editor's controls, and capture
@@ -264,7 +276,10 @@ export class Reviewer {
    * Relaunches the session's Build on another device. The session itself is
    * untouched, and a failure leaves Recent as it was.
    */
-  switchDevice(deviceUDID: string): Promise<{
+  switchDevice(
+    deviceUDID: string,
+    user: YouTrackUser
+  ): Promise<{
     readonly device: SimulatorDevice
     readonly recentDevices: RecentDevices
   }> {
@@ -274,7 +289,9 @@ export class Reviewer {
         throw new ReviewRefused("There is no open review to switch devices in.")
       }
       const deviceHost = this.#dependencies.deviceHost
-      const device = deviceNamed(deviceUDID, await deviceHost.devices.list())
+      const devices = await deviceHost.devices.list()
+      const device = deviceNamed(deviceUDID, devices)
+      await this.#dependencies.deviceClaims.claim(user, device, devices)
       await deviceHost.launchBuild(open.build, device)
       return { device, recentDevices: await this.#recordRecentDevice(device) }
     })
@@ -290,6 +307,7 @@ export class Reviewer {
         const open = await this.#store.openSession()
         if (open !== undefined) this.#uploadedBuild = open.build
         await this.#store.clearOpenSession()
+        this.#dependencies.deviceClaims.release(this.#login)
         // Or the next session would open on a stale "File n remaining".
         this.#filing = { status: "idle" }
       })
@@ -412,6 +430,7 @@ export class Reviewer {
   ): Promise<HistoryEntry> {
     await this.#dependencies.history.record(entry)
     await this.#serialized(() => this.#store.clearOpenSession())
+    this.#dependencies.deviceClaims.release(this.#login)
     this.#uploadedBuild = session.build
     return entry
   }

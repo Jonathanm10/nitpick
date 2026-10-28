@@ -43,6 +43,7 @@ import {
 } from "./annotationFlattening.ts"
 import { BuildIngestError, buildName } from "./buildIngestion.ts"
 import type { DeviceHost, SimulatorDevice } from "./device/DeviceHost.ts"
+import { DeviceHostFull, DeviceInUse } from "./device/deviceClaims.ts"
 import {
   DeviceStreamUnavailable,
   type DeviceStream,
@@ -296,7 +297,7 @@ export function createApp({
     }
     const outcome = await reviewerOf(c).start(
       { deviceUDID: deviceUDID(body), projectID },
-      signedInTo(c).youTrack
+      signedInTo(c)
     )
     return c.json(
       (outcome.status === "started"
@@ -316,7 +317,8 @@ export function createApp({
 
   app.put("/api/session/device", async (c) => {
     const { device, recentDevices } = await reviewerOf(c).switchDevice(
-      deviceUDID(await jsonBody(c))
+      deviceUDID(await jsonBody(c)),
+      signedInTo(c).user
     )
     return c.json({
       device,
@@ -530,7 +532,9 @@ function errorStatus(error: unknown): ContentfulStatusCode {
     error instanceof ShellBusy ||
     error instanceof ReviewRefused ||
     error instanceof RuntimeUnavailable ||
-    error instanceof DeviceNotRunning
+    error instanceof DeviceNotRunning ||
+    error instanceof DeviceInUse ||
+    error instanceof DeviceHostFull
   ) {
     return 409
   }

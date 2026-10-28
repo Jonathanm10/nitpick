@@ -25,6 +25,7 @@ import type {
   SignedInResponse,
 } from "../src/api.ts"
 import { createApp } from "../src/app.ts"
+import { DeviceClaims } from "../src/device/deviceClaims.ts"
 import { HistoryStore } from "../src/historyStore.ts"
 import { ReviewerStore } from "../src/reviewerStore.ts"
 import {
@@ -72,7 +73,15 @@ function server(
     instanceURL: fake.instanceURL,
     transport: fake.transport,
     signIns,
-    dependencies: { deviceHost, runner: new FakeSubprocessRunner(), history },
+    dependencies: {
+      deviceHost,
+      runner: new FakeSubprocessRunner(),
+      history,
+      deviceClaims: new DeviceClaims({
+        limit: undefined,
+        shutDown: deviceHost.shutDown,
+      }),
+    },
   })
   const app = createApp({
     deviceHost,
