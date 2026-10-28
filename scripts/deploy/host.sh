@@ -126,13 +126,15 @@ install_node() {
 		rm -rf "$download"
 	fi
 	ln -sfn "$name" "$runtime/node"
+	# A pnpm shim beside node: the workspace's own scripts call pnpm by name.
+	"$runtime/node/bin/corepack" enable pnpm
 }
 
 # pnpm at the version package.json's packageManager pins, through the
 # corepack that ships with Node. CI keeps it from asking anything.
 run_pnpm() {
 	CI=true PATH="$runtime/node/bin:$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
-		"$runtime/node/bin/corepack" pnpm "$@"
+		"$runtime/node/bin/pnpm" "$@"
 }
 
 # The running server keeps its Node until the restart; older ones go after.
