@@ -117,6 +117,10 @@ export const api = {
   history: () => call<HistoryResponse>("/api/history"),
   feedbackEnvironment: () =>
     call<FeedbackEnvironmentResponse>("/api/feedback/environment"),
+  grantStreamAccess: (token: string) =>
+    call<void>("/api/stream-access", json("POST", { token })),
+  startDeviceStream: (deviceUDID: string) =>
+    call<void>("/api/device-stream", json("POST", { deviceUDID })),
   sendFeedback: (feedback: FeedbackRequest, image: Blob | undefined) => {
     const form = new FormData()
     form.set("feedback", JSON.stringify(feedback))

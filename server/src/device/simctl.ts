@@ -93,9 +93,9 @@ export async function launchBuild(
  * the launch (a crash, a host reboot), or was never booted. The review pauses.
  */
 export class DeviceNotRunning extends Error {
-  constructor(deviceName: string) {
+  constructor(deviceName: string, consequence = "nothing was captured") {
     super(
-      `${deviceName} is no longer running on the Device Host, so nothing was captured. Resume review to relaunch the Build.`
+      `${deviceName} is no longer running on the Device Host, so ${consequence}. Resume review to relaunch the Build.`
     )
     this.name = "DeviceNotRunning"
   }

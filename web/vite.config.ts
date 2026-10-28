@@ -38,8 +38,12 @@ export default defineConfig({
   },
   server: {
     // `pnpm dev` runs the nitpick server next to Vite, on the port its config resolves to.
+    // WebSocket upgrades too: the device's input socket is under /api.
     proxy: {
-      "/api": `http://127.0.0.1:${loadConfig(process.env).port}`,
+      "/api": {
+        target: `http://127.0.0.1:${loadConfig(process.env).port}`,
+        ws: true,
+      },
     },
   },
 })

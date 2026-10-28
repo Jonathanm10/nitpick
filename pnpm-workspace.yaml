@@ -5,3 +5,5 @@ packages:
 
 allowBuilds:
   esbuild: true
+  # Only serve-emu's WebRTC publisher loads it; the iOS stream doesn't.
+  node-datachannel: false

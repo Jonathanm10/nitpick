@@ -30,10 +30,11 @@ export interface DevicesResponse {
 export interface ErrorResponse {
   readonly error: string
   /**
-   * Set when the capture found its device stopped on the host: the page
-   * pauses the review.
+   * `deviceNotRunning`: the capture found its device stopped on the host, so
+   * the page pauses the review. `streamAccess`: the device stream wants the
+   * Device Host's access token.
    */
-  readonly code?: "deviceNotRunning"
+  readonly code?: "deviceNotRunning" | "streamAccess"
 }
 
 /** A Build as the page shows it: name plus identity, never a server path. */
@@ -243,3 +244,28 @@ export interface DesignSnapshotRename {
 
 // `GET /api/session/findings/:id/design-snapshot-data/:dataVersion`: the
 // bytes a Design Snapshot's dataVersion names.
+
+/**
+ * `POST /api/stream-access`: trades the Device Host's shared access token
+ * (until sign-in exists) for the HttpOnly cookie the device stream asks for.
+ * 204 with the cookie, 401 with `streamAccess` for a wrong token, 503 when
+ * the host set none.
+ */
+export interface StreamAccessRequest {
+  readonly token: string
+}
+
+/**
+ * `POST /api/device-stream`: starts streaming the booted device the Build
+ * runs on: 204. Without the cookie it answers 401 with `streamAccess`; a
+ * stopped device answers 409 with `deviceNotRunning`.
+ */
+export interface DeviceStreamRequest {
+  readonly deviceUDID: string
+}
+
+// `GET /api/device-hub/vendor/serve-sim/helper/:udid/stream.avcc` (H.264) and
+// `…/stream.mjpeg`, and the input WebSocket at
+// `/api/device-hub/vendor/serve-sim/helper/ws?device=:udid`, go to the hub
+// through the proxy. Anything else under /api/device-hub is a 404, any method
+// but GET a 405, and a request without the cookie a 401.

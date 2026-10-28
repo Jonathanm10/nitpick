@@ -3,6 +3,7 @@ import { unfiledFindingCount } from "@nitpick/core"
 import { HistoryIcon } from "lucide-react"
 import { BuildDropZone } from "@/components/build-drop-zone"
 import { DevicePicker } from "@/components/device-picker"
+import { focusDeviceStream } from "@/components/device-stream"
 import { FeedbackButton } from "@/components/feedback-dialog"
 import { FilingResult } from "@/components/filing-result"
 import { HistoryPage } from "@/components/history-page"
@@ -114,11 +115,13 @@ export function App() {
   }
 
   // Start review and Resume review: ⌘⏎ / Ctrl+Enter, since ⌘R reloads the
-  // page. While the Build runs, the chord belongs to the Build.
+  // page. While the Build runs, the chord returns to the Build: focus moves
+  // to the device, so typing goes to it.
   const startChord = useRef(() => {})
   useEffect(() => {
     startChord.current = () => {
       if (model.run === undefined) void model.startReview()
+      else focusDeviceStream()
     }
   })
   useEffect(() => {

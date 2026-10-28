@@ -9,6 +9,7 @@ import {
 import type { FindingPatch } from "@nitpick/server/api"
 import { DesignSnapshotsSection } from "@/components/design-snapshots-section"
 import { AssigneePicker } from "@/components/assignee-picker"
+import { focusDeviceStream } from "@/components/device-stream"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -133,9 +134,9 @@ export function FindingFields({
           value={finding.summary}
           disabled={disabled}
           onChange={(event) => edit({ summary: event.target.value }, true)}
-          // Return goes back to the Build once the page shows the device
-          // stream; until then it does nothing. A chord with Return, such
-          // as File all's, still reaches the page.
+          // Return goes back to the Build: focus moves to the device
+          // stream. A chord with Return, such as File all's, still reaches
+          // the page.
           onKeyDown={(event) => {
             if (
               event.key === "Enter" &&
@@ -145,6 +146,7 @@ export function FindingFields({
               !event.shiftKey
             ) {
               event.preventDefault()
+              focusDeviceStream()
             }
           }}
         />

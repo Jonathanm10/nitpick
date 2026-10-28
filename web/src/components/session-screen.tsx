@@ -8,7 +8,7 @@ import {
   unfiledFindingCount,
   type TrayItem,
 } from "@nitpick/core"
-import type { SessionSummary } from "@nitpick/server/api"
+import type { SessionSummary, SimulatorDevice } from "@nitpick/server/api"
 import { CameraIcon, LinkIcon } from "lucide-react"
 import { AnnotationSurface } from "@/components/annotation-surface"
 import {
@@ -16,6 +16,7 @@ import {
   AnnotationToolbar,
 } from "@/components/annotation-toolbar"
 import { DevicePicker } from "@/components/device-picker"
+import { DeviceStream } from "@/components/device-stream"
 import { FileAll } from "@/components/file-all"
 import { FindingFields } from "@/components/finding-fields"
 import { HostNotReady } from "@/components/host-not-ready"
@@ -151,7 +152,7 @@ export function SessionScreen({
 
       <div className="grid min-h-0 flex-1 grid-cols-[14rem_minmax(20rem,1fr)_20rem] gap-4 xl:grid-cols-[16rem_minmax(20rem,1fr)_22rem] xl:gap-5">
         <DeviceColumn
-          deviceName={run?.device.name}
+          device={run?.device}
           refusal={refusal}
           onCapture={() => void capture()}
         />
@@ -225,15 +226,15 @@ export function SessionScreen({
 }
 
 /**
- * Where the device goes. Until the page streams it, the slot names the
- * device the Build runs on; Capture sits under it.
+ * The device the Build runs on, live from the Device Host, with Capture
+ * under it. While the review is paused, the slot says how to resume.
  */
 function DeviceColumn({
-  deviceName,
+  device,
   refusal,
   onCapture,
 }: {
-  readonly deviceName: string | undefined
+  readonly device: SimulatorDevice | undefined
   readonly refusal: ReturnType<typeof captureRefusal>
   readonly onCapture: () => void
 }) {
@@ -251,11 +252,13 @@ function DeviceColumn({
   )
   return (
     <div className="flex min-h-0 flex-col gap-3">
-      <div className="flex aspect-[9/19.5] max-h-full min-h-0 items-center justify-center rounded-[2rem] border bg-muted/30 p-6 text-center text-sm text-muted-foreground">
-        {deviceName === undefined
-          ? "Resume review to run the Build."
-          : `The Build is running on ${deviceName} on the Device Host.`}
-      </div>
+      {device === undefined ? (
+        <div className="flex aspect-[9/19.5] max-h-full min-h-0 items-center justify-center rounded-[2rem] border bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+          Resume review to run the Build.
+        </div>
+      ) : (
+        <DeviceStream key={device.udid} device={device} />
+      )}
       {refusal === undefined ? (
         button
       ) : (

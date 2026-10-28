@@ -83,6 +83,27 @@ describe("Server config", () => {
     expect(JSON.stringify(config)).not.toContain("server-token")
   })
 
+  test("the device stream's access token is off unless set, can't be short, and never shows when the config is logged", () => {
+    expect(loadConfig({}, noFile).streamAccess).toBeUndefined()
+    expect(() =>
+      loadConfig({ NITPICK_ACCESS_TOKEN: "too-short" }, noFile)
+    ).toThrow("NITPICK_ACCESS_TOKEN must be at least 16 characters long.")
+
+    const config = loadConfig(
+      { NITPICK_ACCESS_TOKEN: "shared-access-token-for-tests" },
+      noFile
+    )
+
+    expect(config.streamAccess?.accepts("shared-access-token-for-tests")).toBe(
+      true
+    )
+    expect(config.streamAccess?.accepts("shared-access-token-for-test")).toBe(
+      false
+    )
+    expect(inspect(config, { depth: Infinity })).not.toContain("shared-access")
+    expect(JSON.stringify(config)).not.toContain("shared-access")
+  })
+
   test("a YouTrack URL that would send the token in cleartext is refused", () => {
     expect(() =>
       loadConfig(

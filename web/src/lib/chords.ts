@@ -49,7 +49,7 @@ export const chords = {
     { command: true, shift: true }
   ),
   // ⌘R reloads the page in every browser, so Start and Resume review move to
-  // ⌘⏎: the chord that goes to the Build.
+  // ⌘⏎: the chord that goes to the Build, and returns to it while it runs.
   startReview: chord(
     "Enter",
     { apple: "⌘⏎", other: "Ctrl+Enter" },
@@ -91,11 +91,24 @@ export const shortcutGroups: ReadonlyArray<{
   {
     title: "Review",
     shortcuts: [
-      { action: "Start or resume review", keys: chords.startReview.label },
+      {
+        action: "Start or resume review, or return to the Build",
+        keys: chords.startReview.label,
+      },
       { action: "Capture", keys: chords.capture.label },
       { action: "Previous Finding", keys: chords.previousFinding.label },
       { action: "Next Finding", keys: chords.nextFinding.label },
       { action: "File all", keys: chords.fileAll.label },
+    ],
+  },
+  {
+    title: "The device",
+    shortcuts: [
+      {
+        action: "Return to the Build from Summary",
+        keys: isApplePlatform ? "⏎" : "Enter",
+      },
+      { action: "Leave the device once it has focus", keys: "Esc" },
     ],
   },
   {
