@@ -47,4 +47,6 @@ pnpm build && pnpm start  # the server alone, serving the built app on port 4870
 
 The server reads its config from the environment, or from a file outside the repo that `NITPICK_CONFIG_FILE` points at. [server/config.example.env](server/config.example.env) lists the keys.
 
+`scripts/deploy/deploy.sh <host>` installs or updates it on the Device Host over SSH. [docs/operations.md](docs/operations.md) is the runbook: install, health check, logs, reboots, Xcode updates, backups and moving hosts.
+
 `core/` must match the Swift app's golden files in [core/test/golden](core/test/golden/README.md). `make test` checks them against the Swift code.
