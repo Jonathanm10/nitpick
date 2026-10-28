@@ -6,7 +6,6 @@ import type { IncomingMessage } from "node:http"
 import { STATUS_CODES } from "node:http"
 import type { Duplex } from "node:stream"
 import { WebSocket, WebSocketServer, type RawData } from "ws"
-import type { StreamAccess } from "../streamAccess.ts"
 import type { DeviceStream, HubEndpoint } from "./deviceHub.ts"
 import { repeatStillFrame } from "./mjpegStillFrame.ts"
 
@@ -34,6 +33,9 @@ export interface HubRequest {
   readonly header: (name: string) => string | undefined
 }
 
+/** Whether a request's headers carry a live sign-in. */
+export type Admits = (header: (name: string) => string | undefined) => boolean
+
 export type HubRoute =
   | { readonly status: 401 | 403 | 404 | 405 | 503 }
   | { readonly upstream: string; readonly hub: HubEndpoint }
@@ -41,11 +43,11 @@ export type HubRoute =
 /**
  * Where a request goes, checked in T3 Code's order: the allowlist first, so
  * any other route is a 404 with or without auth, then the method, then the
- * access token, then whether the hub runs.
+ * sign-in, then whether the hub runs.
  */
 export function routeHubRequest(
   request: HubRequest,
-  access: StreamAccess | undefined,
+  admits: Admits,
   stream: DeviceStream | undefined
 ): HubRoute {
   let url: URL
@@ -64,9 +66,7 @@ export function routeHubRequest(
   }
   // The viewer only reads: no route it needs takes another method.
   if (request.method !== "GET") return { status: 405 }
-  if (access === undefined || !access.admits(request.header)) {
-    return { status: 401 }
-  }
+  if (!admits(request.header)) return { status: 401 }
   // WebSockets skip CORS, so a page on another origin of the same site,
   // which the SameSite cookie doesn't stop, mustn't open the input socket.
   if (request.isUpgrade && !isSameOrigin(request.header)) {
@@ -84,7 +84,7 @@ export function routeHubRequest(
 }
 
 /** The `Origin` header, when the client sent one, names this server. */
-function isSameOrigin(header: HubRequest["header"]): boolean {
+export function isSameOrigin(header: HubRequest["header"]): boolean {
   const origin = header("origin")
   if (origin === undefined) return true
   try {
@@ -179,7 +179,7 @@ export function refusal(status: number): Response {
  * browser never sees the hub's headers. Frames pass through unchanged.
  */
 export function hubUpgradeHandler(
-  access: StreamAccess | undefined,
+  admits: Admits,
   stream: DeviceStream | undefined
 ): (request: IncomingMessage, socket: Duplex, head: Buffer) => void {
   const server = new WebSocketServer({ noServer: true })
@@ -194,7 +194,7 @@ export function hubUpgradeHandler(
           return Array.isArray(value) ? value.join(", ") : value
         },
       },
-      access,
+      admits,
       stream
     )
     if ("status" in route) {

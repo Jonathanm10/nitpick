@@ -2,11 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, onTestFinished, test, vi } from "vitest"
-import { createApp } from "../src/app.ts"
 import type { DeviceHost, SimulatorDevice } from "../src/device/DeviceHost.ts"
-import { HistoryStore } from "../src/historyStore.ts"
-import { Reviewer } from "../src/reviewer.ts"
-import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
+import { temporaryDirectory } from "./BuildFixtures.ts"
+import { signedInApp } from "./SignedIn.ts"
 
 const device: SimulatorDevice = {
   udid: "CCCC-3333",
@@ -33,26 +31,12 @@ function hostListing(list: DeviceHost["devices"]["list"]): DeviceHost {
   }
 }
 
-function appListing(
-  list: DeviceHost["devices"]["list"],
-  webRoot?: string
-): ReturnType<typeof createApp> {
-  const deviceHost = hostListing(list)
-  const history = new HistoryStore(join(tmpdir(), "nitpick-unused-history"))
-  const reviewer = new Reviewer(join(tmpdir(), "nitpick-unused-reviewer"), {
-    deviceHost,
-    runner: new FakeSubprocessRunner(),
-    youTrack: undefined,
-    history,
-  })
-  return createApp({
-    deviceHost,
-    reviewer,
-    youTrack: undefined,
-    history,
-    serverVersion: "0.0.0",
+function appListing(list: DeviceHost["devices"]["list"], webRoot?: string) {
+  return signedInApp({
+    data: temporaryDirectory(),
+    deviceHost: hostListing(list),
     webRoot,
-  })
+  }).app
 }
 
 describe("HTTP app", () => {

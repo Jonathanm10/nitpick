@@ -571,6 +571,8 @@ export function useReview() {
     editSessionDesignReference,
     discard,
     setDesignSnapshots,
+    /** Sends every pending edit; false when one couldn't be saved. */
+    saveEdits: () => saver.saveAll(),
   }
 }
 

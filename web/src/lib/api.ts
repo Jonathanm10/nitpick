@@ -14,6 +14,7 @@ import type {
   ProjectsResponse,
   ReviewStateResponse,
   SessionPatch,
+  SignedInResponse,
   StartReviewRequest,
   StartReviewResponse,
   SwitchDeviceResponse,
@@ -33,6 +34,24 @@ export class APIError extends Error {
   }
 }
 
+const signedOutListeners = new Set<(reason: string | undefined) => void>()
+
+/**
+ * Calls `listener` whenever the server answers that the sign-in is gone,
+ * with the reason when it ended by itself; returns the unsubscribe.
+ */
+export function onSignedOut(
+  listener: (reason: string | undefined) => void
+): () => void {
+  signedOutListeners.add(listener)
+  return () => signedOutListeners.delete(listener)
+}
+
+/** The page shows sign-in: a 401 from a call, the stream or its socket. */
+export function reportSignedOut(reason?: string): void {
+  for (const listener of signedOutListeners) listener(reason)
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
@@ -44,6 +63,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     const body = (await response
       .json()
       .catch(() => null)) as ErrorResponse | null
+    if (body?.code === "signIn") reportSignedOut(body.error)
     throw new APIError(
       body?.error ?? `The server answered ${response.status}.`,
       response.status,
@@ -62,6 +82,11 @@ function json(method: string, body: unknown): RequestInit {
 }
 
 export const api = {
+  me: () => call<SignedInResponse>("/api/me"),
+  // A POST body, so the token never sits in a URL or the browser's history.
+  signIn: (token: string) =>
+    call<SignedInResponse>("/api/sign-in", json("POST", { token })),
+  signOut: () => call<void>("/api/sign-out", { method: "POST" }),
   review: () => call<ReviewStateResponse>("/api/review"),
   host: () => call<HostResponse>("/api/host"),
   projects: () => call<ProjectsResponse>("/api/projects"),
@@ -117,8 +142,6 @@ export const api = {
   history: () => call<HistoryResponse>("/api/history"),
   feedbackEnvironment: () =>
     call<FeedbackEnvironmentResponse>("/api/feedback/environment"),
-  grantStreamAccess: (token: string) =>
-    call<void>("/api/stream-access", json("POST", { token })),
   startDeviceStream: (deviceUDID: string) =>
     call<void>("/api/device-stream", json("POST", { deviceUDID })),
   sendFeedback: (feedback: FeedbackRequest, image: Blob | undefined) => {

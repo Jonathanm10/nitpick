@@ -243,10 +243,12 @@ async function removeAllBut(
 /** A crash mid-write keeps the previous good file. */
 export async function writeAtomically(
   path: string,
-  contents: string | Uint8Array
+  contents: string | Uint8Array,
+  /** The new file's permissions, for a file only the server may read. */
+  mode?: number
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   const temporary = `${path}.${newUUID()}.tmp`
-  await writeFile(temporary, contents)
+  await writeFile(temporary, contents, { mode })
   await rename(temporary, path)
 }

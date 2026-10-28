@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { hidUsage } from "@nitpick/core"
 import type { SimulatorDevice } from "@nitpick/server/api"
-import { CircleIcon, KeyRoundIcon } from "lucide-react"
+import { CircleIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
-import { api, APIError } from "@/lib/api"
+import { api } from "@/lib/api"
 import {
   createDeviceStreamClient,
   type DeviceStreamClient,
@@ -27,14 +26,13 @@ export function focusDeviceStream(): boolean {
 
 type Attachment =
   | { readonly kind: "attaching" }
-  | { readonly kind: "needsAccess"; readonly error?: string }
   | { readonly kind: "attached" }
   | { readonly kind: "failed"; readonly message: string }
 
 /**
  * The device the Build runs on, live from the Device Host. The server first
- * starts streaming it, which needs the host's access token once per browser;
- * then the stream shows here, and taps, scrolling and typing go back to it.
+ * starts streaming it; then the stream shows here, reached with the sign-in
+ * cookie, and taps, scrolling and typing go back to it.
  */
 export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
   const [attachment, setAttachment] = useState<Attachment>({
@@ -53,17 +51,13 @@ export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
       .then(() => !cancelled && setAttachment({ kind: "attached" }))
       .catch((error: unknown) => {
         if (cancelled) return
-        setAttachment(
-          error instanceof APIError && error.code === "streamAccess"
-            ? { kind: "needsAccess" }
-            : {
-                kind: "failed",
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "The device stream couldn't start.",
-              }
-        )
+        setAttachment({
+          kind: "failed",
+          message:
+            error instanceof Error
+              ? error.message
+              : "The device stream couldn't start.",
+        })
       })
     return () => {
       cancelled = true
@@ -77,14 +71,6 @@ export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
           <Spinner />
           Starting the device stream…
         </DeviceFrame>
-      )
-    case "needsAccess":
-      return (
-        <AccessTokenForm
-          error={attachment.error}
-          onGranted={retry}
-          onRefused={(error) => setAttachment({ kind: "needsAccess", error })}
-        />
       )
     case "failed":
       return (
@@ -102,7 +88,16 @@ export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
         <LiveDevice
           key={`${device.udid}:${attempt}`}
           device={device}
-          onUnauthorized={() => setAttachment({ kind: "needsAccess" })}
+          // The stream's 401 says no more; asking who is signed in shows
+          // sign-in with the reason, or tries again if the sign-in holds.
+          onUnauthorized={() => {
+            api.me().then(retry, () =>
+              setAttachment({
+                kind: "failed",
+                message: "The device stream needs you signed in.",
+              })
+            )
+          }}
           onReconnect={retry}
         />
       )
@@ -115,63 +110,6 @@ function DeviceFrame({ children }: { readonly children: React.ReactNode }) {
     <div className="flex aspect-[9/19.5] max-h-full min-h-0 flex-col items-center justify-center gap-3 rounded-[2rem] border bg-muted/30 p-6 text-center text-sm text-muted-foreground">
       {children}
     </div>
-  )
-}
-
-/** Until sign-in exists, the Device Host's shared access token, once per browser. */
-function AccessTokenForm({
-  error,
-  onGranted,
-  onRefused,
-}: {
-  readonly error: string | undefined
-  readonly onGranted: () => void
-  readonly onRefused: (error: string) => void
-}) {
-  const [token, setToken] = useState("")
-  const [isSending, setIsSending] = useState(false)
-  return (
-    <DeviceFrame>
-      <KeyRoundIcon className="size-5" />
-      <p>Enter the Device Host's access token to see the device.</p>
-      <form
-        className="flex w-full flex-col gap-2"
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (token === "" || isSending) return
-          setIsSending(true)
-          api
-            .grantStreamAccess(token)
-            .then(onGranted)
-            .catch((refusal: unknown) =>
-              onRefused(
-                refusal instanceof Error
-                  ? refusal.message
-                  : "The access token couldn't be checked."
-              )
-            )
-            .finally(() => setIsSending(false))
-        }}
-      >
-        <Input
-          type="password"
-          autoComplete="off"
-          aria-label="Access token"
-          placeholder="Access token"
-          value={token}
-          aria-invalid={error !== undefined}
-          onChange={(event) => setToken(event.target.value)}
-        />
-        {error !== undefined && (
-          <p role="alert" className="text-left text-destructive">
-            {error}
-          </p>
-        )}
-        <Button type="submit" size="sm" disabled={token === "" || isSending}>
-          Show device
-        </Button>
-      </form>
-    </DeviceFrame>
   )
 }
 

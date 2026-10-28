@@ -4,21 +4,16 @@
 // through a real server.
 import { get } from "node:http"
 import { connect, type AddressInfo } from "node:net"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { serve, type ServerType } from "@hono/node-server"
 import { afterEach, describe, expect, test } from "vitest"
 import { WebSocket } from "ws"
-import { createApp } from "../src/app.ts"
 import type { DeviceHost, SimulatorDevice } from "../src/device/DeviceHost.ts"
 import { hubUpgradeHandler } from "../src/device/deviceHubProxy.ts"
-import { HistoryStore } from "../src/historyStore.ts"
-import { Reviewer } from "../src/reviewer.ts"
-import { StreamAccess, streamAccessCookieName } from "../src/streamAccess.ts"
+import { signInCookieName } from "../src/reviewers.ts"
+import { temporaryDirectory } from "./BuildFixtures.ts"
 import { FakeDeviceHub, mjpegPart } from "./FakeDeviceHub.ts"
-import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
+import { signedInApp } from "./SignedIn.ts"
 
-const sharedToken = "shared-access-token-for-tests"
 const udid = "C0FFEE00-0000-4000-8000-000000000009"
 const proxy = "http://nitpick.test/api/device-hub"
 const streamRoutes = [
@@ -40,15 +35,11 @@ afterEach(async () => {
 })
 
 async function fixture(
-  options: { access?: StreamAccess | null; devices?: SimulatorDevice[] } = {}
+  options: { streams?: boolean; devices?: SimulatorDevice[] } = {}
 ) {
   const hub = new FakeDeviceHub()
   await hub.listen()
   cleanups.push(() => hub.close())
-  const access =
-    options.access === null
-      ? undefined
-      : (options.access ?? new StreamAccess(sharedToken))
   const list = async () => options.devices ?? [device]
   const deviceHost: DeviceHost = {
     id: "fake",
@@ -61,36 +52,21 @@ async function fixture(
     },
     versions: async () => ({}),
   }
-  const history = new HistoryStore(join(tmpdir(), "nitpick-unused-history"))
-  const app = createApp({
+  const signedIn = signedInApp({
+    data: temporaryDirectory(),
     deviceHost,
-    reviewer: new Reviewer(join(tmpdir(), "nitpick-unused-reviewer"), {
-      deviceHost,
-      runner: new FakeSubprocessRunner(),
-      youTrack: undefined,
-      history,
-    }),
-    youTrack: undefined,
-    history,
-    serverVersion: "0.0.0",
-    streamAccess: access,
-    deviceStream: hub,
+    deviceStream: options.streams === false ? undefined : hub,
   })
-  return { app, hub, access }
+  const cookie = await signedIn.cookie()
+  return {
+    app: signedIn.server,
+    hub,
+    reviewers: signedIn.reviewers,
+    signIns: signedIn.signIns,
+    /** The headers of the signed-in browser. */
+    signedIn: { cookie },
+  }
 }
-
-/** The cookie POST /api/stream-access sets, as the browser sends it back. */
-async function browserCookie(app: Awaited<ReturnType<typeof fixture>>["app"]) {
-  const response = await app.request("/api/stream-access", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: sharedToken }),
-  })
-  expect(response.status).toBe(204)
-  return response.headers.get("set-cookie")!.split(";")[0]!
-}
-
-const bearer = { authorization: `Bearer ${sharedToken}` }
 
 describe("device hub proxy: the auth and allowlist matrix", () => {
   test.each(streamRoutes)(
@@ -106,9 +82,12 @@ describe("device hub proxy: the auth and allowlist matrix", () => {
   )
 
   test.each([
-    ["no token", {}],
-    ["a wrong Bearer token", { authorization: "Bearer not-the-shared-token" }],
-    ["a forged cookie", { cookie: `${streamAccessCookieName}=forged` }],
+    ["no cookie", {}],
+    ["a forged cookie", { cookie: `${signInCookieName}=forged` }],
+    [
+      "a sign-in ID the server never issued",
+      { cookie: `${signInCookieName}=${"A".repeat(43)}` },
+    ],
     [
       "the hub's own token",
       { authorization: "Bearer hub-token-from-startup-link" },
@@ -124,14 +103,24 @@ describe("device hub proxy: the auth and allowlist matrix", () => {
     expect(hub.requests).toEqual([])
   })
 
-  test("without a shared token set on the host, nothing authenticates", async () => {
-    const { app, hub } = await fixture({ access: null })
+  test("a sign-in's ID as a Bearer token, or the cookie after sign-out, gets 401", async () => {
+    const { app, hub, signedIn } = await fixture()
+    const id = signedIn.cookie.slice(`${signInCookieName}=`.length)
 
-    const response = await app.request(`${proxy}${streamRoutes[0]}`, {
-      headers: bearer,
+    const asBearer = await app.request(`${proxy}${streamRoutes[0]}`, {
+      headers: { authorization: `Bearer ${id}` },
+    })
+    const signOut = await app.request("/api/sign-out", {
+      method: "POST",
+      headers: signedIn,
+    })
+    const afterSignOut = await app.request(`${proxy}${streamRoutes[0]}`, {
+      headers: signedIn,
     })
 
-    expect(response.status).toBe(401)
+    expect([asBearer.status, signOut.status, afterSignOut.status]).toEqual([
+      401, 204, 401,
+    ])
     expect(hub.requests).toEqual([])
   })
 
@@ -159,10 +148,9 @@ describe("device hub proxy: the auth and allowlist matrix", () => {
   ])(
     "%s, outside the allowlist, answers 404 with or without auth",
     async (route) => {
-      const { app, hub } = await fixture()
-      const cookie = await browserCookie(app)
+      const { app, hub, signedIn } = await fixture()
 
-      for (const headers of [{}, bearer, { cookie }]) {
+      for (const headers of [{}, signedIn]) {
         for (const method of ["GET", "POST"]) {
           const response = await app.request(`${proxy}${route}`, {
             method,
@@ -187,9 +175,9 @@ describe("device hub proxy: the auth and allowlist matrix", () => {
   )(
     "%s on the read route %s answers 405 with or without auth",
     async (method, route) => {
-      const { app, hub } = await fixture()
+      const { app, hub, signedIn } = await fixture()
 
-      for (const headers of [{}, bearer]) {
+      for (const headers of [{}, signedIn]) {
         const response = await app.request(`${proxy}${route}`, {
           method,
           headers,
@@ -201,12 +189,12 @@ describe("device hub proxy: the auth and allowlist matrix", () => {
     }
   )
 
-  test("a hub that isn't running answers 503 to an authenticated request", async () => {
-    const { app, hub } = await fixture()
+  test("a hub that isn't running answers 503 to a signed-in request", async () => {
+    const { app, hub, signedIn } = await fixture()
     hub.running = false
 
     const response = await app.request(`${proxy}${streamRoutes[0]}`, {
-      headers: bearer,
+      headers: signedIn,
     })
 
     expect(response.status).toBe(503)
@@ -214,41 +202,33 @@ describe("device hub proxy: the auth and allowlist matrix", () => {
 })
 
 describe("device hub proxy: forwarding", () => {
-  test.each(["a Bearer token", "the browser's cookie"])(
-    "with %s, a stream route reaches the hub with the hub's token, and no cookie or auth goes either way",
-    async (credentials) => {
-      const { app, hub } = await fixture()
-      const headers =
-        credentials === "a Bearer token"
-          ? { ...bearer, cookie: "other=1" }
-          : { cookie: `${await browserCookie(app)}; other=1` }
+  test("signed in, a stream route reaches the hub with the hub's token, and no cookie or auth goes either way", async () => {
+    const { app, hub, signedIn } = await fixture()
+    const headers = { cookie: `${signedIn.cookie}; other=1` }
 
-      const response = await app.request(
-        `${proxy}${streamRoutes[0]}?token=guess&quality=1`,
-        { headers }
-      )
+    const response = await app.request(
+      `${proxy}${streamRoutes[0]}?token=guess&quality=1`,
+      { headers }
+    )
 
-      expect(response.status).toBe(200)
-      expect(await response.text()).toBe("frame")
-      expect(response.headers.get("cache-control")).toBe(
-        "no-store, no-transform"
-      )
-      expect(response.headers.get("set-cookie")).toBeNull()
-      expect(response.headers.get("x-hub-secret")).toBeNull()
-      expect(hub.requests.map((request) => request.url)).toEqual([
-        streamRoutes[0],
-      ])
-      const forwarded = hub.requests[0]!.headers
-      expect(forwarded.authorization).toBe(`Bearer ${hub.token}`)
-      expect(forwarded.cookie).toBeUndefined()
-    }
-  )
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe("frame")
+    expect(response.headers.get("cache-control")).toBe("no-store, no-transform")
+    expect(response.headers.get("set-cookie")).toBeNull()
+    expect(response.headers.get("x-hub-secret")).toBeNull()
+    expect(hub.requests.map((request) => request.url)).toEqual([
+      streamRoutes[0],
+    ])
+    const forwarded = hub.requests[0]!.headers
+    expect(forwarded.authorization).toBe(`Bearer ${hub.token}`)
+    expect(forwarded.cookie).toBeUndefined()
+  })
 
   test("an MJPEG stream re-sends its last frame once the screen goes still", async () => {
-    const { app } = await fixture()
+    const { app, signedIn } = await fixture()
 
     const response = await app.request(`${proxy}${streamRoutes[1]}`, {
-      headers: bearer,
+      headers: signedIn,
     })
     const reader = response.body!.getReader()
     const received: Buffer[] = []
@@ -267,14 +247,14 @@ describe("device hub proxy: forwarding", () => {
   })
 
   test("a viewer that goes away releases its stream from the hub", async () => {
-    const { app, hub } = await fixture()
+    const { app, hub, signedIn } = await fixture()
     const server = await listen(app)
     const { port } = server.address() as AddressInfo
 
     await new Promise<void>((resolve, reject) => {
       const request = get(
         `http://127.0.0.1:${port}/api/device-hub${streamRoutes[1]}`,
-        { headers: bearer },
+        { headers: signedIn },
         (response) => {
           response.once("data", () => {
             request.destroy()
@@ -296,7 +276,13 @@ describe("device hub proxy: the input socket", () => {
   async function proxied() {
     const context = await fixture()
     const server = await listen(context.app)
-    server.on("upgrade", hubUpgradeHandler(context.access, context.hub))
+    server.on(
+      "upgrade",
+      hubUpgradeHandler(
+        (header) => context.reviewers.admits(header),
+        context.hub
+      )
+    )
     const { port } = server.address() as AddressInfo
     return { ...context, origin: `127.0.0.1:${port}` }
   }
@@ -318,9 +304,9 @@ describe("device hub proxy: the input socket", () => {
     })
   }
 
-  test("with the cookie, binary input and the hub's admission frame pass through unchanged", async () => {
-    const { app, hub, origin } = await proxied()
-    const cookie = await browserCookie(app)
+  test("signed in, binary input and the hub's admission frame pass through unchanged", async () => {
+    const { hub, origin, signedIn } = await proxied()
+    const { cookie } = signedIn
 
     const opened = await open(`ws://${origin}${socketPath}`, {
       cookie,
@@ -343,7 +329,7 @@ describe("device hub proxy: the input socket", () => {
   })
 
   test.each([
-    ["without auth", {}, socketPath, 401],
+    ["without a sign-in", {}, socketPath, 401],
     ["from another origin of the same site", "foreign", socketPath, 403],
     [
       "to serve-sim's exec socket",
@@ -361,8 +347,8 @@ describe("device hub proxy: the input socket", () => {
   ] as const)(
     "an upgrade %s is refused before the hub sees it",
     async (_, credentials, path, status) => {
-      const { app, hub, origin } = await proxied()
-      const cookie = await browserCookie(app)
+      const { hub, origin, signedIn } = await proxied()
+      const { cookie } = signedIn
       const headers =
         credentials === "cookie"
           ? { cookie }
@@ -378,9 +364,12 @@ describe("device hub proxy: the input socket", () => {
 
 describe("the input socket: a target no URL parses", () => {
   test("is refused, and the server keeps answering", async () => {
-    const { app, access, hub } = await fixture()
+    const { app, reviewers, hub } = await fixture()
     const server = await listen(app)
-    server.on("upgrade", hubUpgradeHandler(access, hub))
+    server.on(
+      "upgrade",
+      hubUpgradeHandler((header) => reviewers.admits(header), hub)
+    )
     const { port } = server.address() as AddressInfo
 
     const answer = await new Promise<string>((resolve, reject) => {
@@ -403,54 +392,21 @@ describe("the input socket: a target no URL parses", () => {
   })
 })
 
-describe("the access and stream routes", () => {
-  test("a wrong token gets 401 and no cookie; the right one an HttpOnly, SameSite cookie for /api", async () => {
-    const { app } = await fixture()
+describe("the stream route", () => {
+  test("without a hub, the stream is off", async () => {
+    const { app, signedIn } = await fixture({ streams: false })
 
-    const wrong = await app.request("/api/stream-access", {
+    const response = await app.request("/api/device-stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: "not-the-shared-token" }),
+      headers: { "Content-Type": "application/json", ...signedIn },
+      body: JSON.stringify({ deviceUDID: udid }),
     })
-    expect(wrong.status).toBe(401)
-    expect(await wrong.json()).toEqual({
-      error: "That isn't the Device Host's access token.",
-      code: "streamAccess",
-    })
-    expect(wrong.headers.get("set-cookie")).toBeNull()
 
-    const right = await app.request("/api/stream-access", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: sharedToken }),
-    })
-    const cookie = right.headers.get("set-cookie")!
-    expect(cookie).toMatch(
-      new RegExp(
-        `^${streamAccessCookieName}=[A-Za-z0-9_-]+; Path=/api; Max-Age=2592000; HttpOnly; SameSite=Strict$`
-      )
-    )
-    expect(cookie).not.toContain(sharedToken)
+    expect(response.status).toBe(503)
   })
 
-  test("without a shared token set, the stream is off", async () => {
-    const { app } = await fixture({ access: null })
-
-    for (const [path, body] of [
-      ["/api/stream-access", { token: sharedToken }],
-      ["/api/device-stream", { deviceUDID: udid }],
-    ] as const) {
-      const response = await app.request(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      })
-      expect(response.status).toBe(503)
-    }
-  })
-
-  test("starting the stream needs the cookie and a booted device", async () => {
-    const { app, hub } = await fixture()
+  test("starting the stream needs a sign-in and a booted device", async () => {
+    const { app, hub, signedIn } = await fixture()
     const start = (headers: Record<string, string>) =>
       app.request("/api/device-stream", {
         method: "POST",
@@ -460,20 +416,21 @@ describe("the access and stream routes", () => {
 
     const refused = await start({})
     expect(refused.status).toBe(401)
-    expect(await refused.json()).toMatchObject({ code: "streamAccess" })
+    expect(await refused.json()).toMatchObject({ code: "signIn" })
+    expect(hub.attached).toEqual([])
 
-    expect((await start({ cookie: await browserCookie(app) })).status).toBe(204)
+    expect((await start(signedIn)).status).toBe(204)
     expect(hub.attached).toEqual([udid])
   })
 
   test("a device that stopped can't be streamed", async () => {
-    const { app, hub } = await fixture({
+    const { app, hub, signedIn } = await fixture({
       devices: [{ ...device, isBooted: false }],
     })
 
     const response = await app.request("/api/device-stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...bearer },
+      headers: { "Content-Type": "application/json", ...signedIn },
       body: JSON.stringify({ deviceUDID: udid }),
     })
 
