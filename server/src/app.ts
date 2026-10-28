@@ -1,6 +1,7 @@
 import { serveStatic } from "@hono/node-server/serve-static"
 import {
   annotationColors,
+  buildPlatform,
   designSnapshotContentType,
   DesignSnapshotError,
   sendFeedback,
@@ -22,6 +23,7 @@ import type {
   CaptureResponse,
   DesignSnapshotResponse,
   DevicesResponse,
+  DeviceStreamResponse,
   ErrorResponse,
   FeedbackEnvironmentResponse,
   FeedbackResponse,
@@ -42,7 +44,11 @@ import {
   labelSpritePNG,
 } from "./annotationFlattening.ts"
 import { BuildIngestError, buildName } from "./buildIngestion.ts"
-import type { DeviceHost, SimulatorDevice } from "./device/DeviceHost.ts"
+import type {
+  AndroidProblem,
+  DeviceHost,
+  SimulatorDevice,
+} from "./device/DeviceHost.ts"
 import {
   DeviceStreamUnavailable,
   type DeviceStream,
@@ -54,7 +60,12 @@ import {
   refusal,
   routeHubRequest,
 } from "./device/deviceHubProxy.ts"
-import { hostProblemReason } from "./device/hostHealth.ts"
+import { EmulatorBootTimedOut, NoLauncherActivity } from "./device/android.ts"
+import {
+  AndroidUnavailable,
+  androidProblemReason,
+  hostProblemReason,
+} from "./device/hostHealth.ts"
 import { DeviceNotRunning, RuntimeUnavailable } from "./device/simctl.ts"
 import {
   feedbackImagePNG,
@@ -105,8 +116,9 @@ export function createApp({
 }: AppOptions): Hono<SignedInEnvironment> {
   const app = new Hono<SignedInEnvironment>()
 
-  // The only way to the hub: allowlisted, signed in, GET only. It checks the
-  // sign-in itself, after the allowlist, so any other route is a 404.
+  // The only way to the hub: allowlisted, signed in, each route with the
+  // one method the viewer uses. It checks the sign-in itself, after the
+  // allowlist, so any other route is a 404.
   app.all(`${deviceHubRoutePrefix}/*`, (c) => {
     const route = routeHubRequest(
       {
@@ -118,9 +130,7 @@ export function createApp({
       (header) => reviewers.admit(header),
       deviceStream
     )
-    return "status" in route
-      ? refusal(route.status)
-      : proxyHubHTTP(c.req.raw, route)
+    return "status" in route ? refusal(route) : proxyHubHTTP(c.req.raw, route)
   })
 
   // The sign-in cookie is SameSite=Lax, which a page on another origin of
@@ -197,7 +207,7 @@ export function createApp({
     const status = await reviewerOf(c).hostStatus()
     return c.json(
       (status.status === "ready"
-        ? readyHost(status.devices, status.recentDevices)
+        ? readyHost(status)
         : {
             status: "notReady",
             reason: hostProblemReason(status.problem),
@@ -305,7 +315,7 @@ export function createApp({
             session: sessionSummary(outcome.session),
             device: outcome.device,
             schema: outcome.schema,
-            host: readyHost(outcome.devices, outcome.recentDevices),
+            host: readyHost(outcome),
           }
         : {
             status: "notReady",
@@ -458,7 +468,8 @@ export function createApp({
 
   // Starts streaming the device the Build runs on. The page then reads the
   // stream and opens the input socket through the proxy above, which an
-  // <img> and a WebSocket reach with the sign-in cookie.
+  // <img>, a fetch and a WebSocket reach with the sign-in cookie. serve-emu
+  // streams an emulator on the viewer's first request, by its serial.
   app.post("/api/device-stream", async (c) => {
     if (deviceStream === undefined) return streamOff(c)
     const udid = deviceUDID(await jsonBody(c))
@@ -471,8 +482,11 @@ export function createApp({
         "it can't be shown"
       )
     }
+    if (device.serial !== undefined) {
+      return c.json({ hubDevice: device.serial } satisfies DeviceStreamResponse)
+    }
     await deviceStream.attach(udid)
-    return c.body(null, 204)
+    return c.json({ hubDevice: udid } satisfies DeviceStreamResponse)
   })
 
   app.onError(async (error, c) => {
@@ -530,10 +544,13 @@ function errorStatus(error: unknown): ContentfulStatusCode {
     error instanceof ShellBusy ||
     error instanceof ReviewRefused ||
     error instanceof RuntimeUnavailable ||
-    error instanceof DeviceNotRunning
+    error instanceof DeviceNotRunning ||
+    error instanceof AndroidUnavailable ||
+    error instanceof NoLauncherActivity
   ) {
     return 409
   }
+  if (error instanceof EmulatorBootTimedOut) return 504
   if (error instanceof YouTrackError) return 502
   if (error instanceof DeviceStreamUnavailable) return 503
   return 500
@@ -582,7 +599,11 @@ function deviceUDID(body: Record<string, unknown>): string {
 }
 
 function buildSummary(build: Build): BuildSummary {
-  return { name: buildName(build), identity: build.identity }
+  return {
+    name: buildName(build),
+    identity: build.identity,
+    platform: buildPlatform(build),
+  }
 }
 
 function sessionSummary(session: ReviewSession): SessionSummary {
@@ -607,9 +628,21 @@ function imageResponse(data: Uint8Array, contentType: string): Response {
   })
 }
 
-function readyHost(
-  devices: ReadonlyArray<SimulatorDevice>,
-  recentDevices: RecentDevices
-): ReadyHost {
-  return { status: "ready", devices, recentDeviceUDIDs: recentDevices.udids }
+function readyHost({
+  devices,
+  recentDevices,
+  androidProblem,
+}: {
+  readonly devices: ReadonlyArray<SimulatorDevice>
+  readonly recentDevices: RecentDevices
+  readonly androidProblem?: AndroidProblem
+}): ReadyHost {
+  return {
+    status: "ready",
+    devices,
+    recentDeviceUDIDs: recentDevices.udids,
+    ...(androidProblem !== undefined && {
+      androidProblem: androidProblemReason(androidProblem),
+    }),
+  }
 }

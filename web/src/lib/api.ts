@@ -3,6 +3,7 @@ import type {
   BuildResponse,
   CaptureResponse,
   DesignSnapshotResponse,
+  DeviceStreamResponse,
   ErrorResponse,
   FeedbackEnvironmentResponse,
   FeedbackRequest,
@@ -152,7 +153,10 @@ export const api = {
   feedbackEnvironment: () =>
     call<FeedbackEnvironmentResponse>("/api/feedback/environment"),
   startDeviceStream: (deviceUDID: string) =>
-    call<void>("/api/device-stream", json("POST", { deviceUDID })),
+    call<DeviceStreamResponse>(
+      "/api/device-stream",
+      json("POST", { deviceUDID })
+    ),
   sendFeedback: (feedback: FeedbackRequest, image: Blob | undefined) => {
     const form = new FormData()
     form.set("feedback", JSON.stringify(feedback))

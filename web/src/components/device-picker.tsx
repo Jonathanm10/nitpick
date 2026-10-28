@@ -26,6 +26,8 @@ interface DevicePickerProps {
   readonly selected: SimulatorDevice | undefined
   readonly onSelect: (device: SimulatorDevice) => void
   readonly disabled?: boolean
+  /** Why no Android emulator is listed, when the host can't run one. */
+  readonly androidProblem?: string
   /**
    * `field` is home's control under the drop zone; `chip` is the Device
    * Context at the start of the session's top bar. Both open the same list.
@@ -36,7 +38,7 @@ interface DevicePickerProps {
 /**
  * The Device Host's devices in a searchable list, after
  * Sources/Nitpick/DeviceContextChip.swift: a Recent section of the devices
- * actually reviewed on, then All. Runtime-missing devices stay visible in All,
+ * actually reviewed on, then All, each named with its OS, so iOS or Android. Runtime-missing devices stay visible in All,
  * greyed out and unselectable, and never appear in Recent.
  */
 export function DevicePicker({
@@ -46,11 +48,18 @@ export function DevicePicker({
   onSelect,
   disabled = false,
   variant,
+  androidProblem,
 }: DevicePickerProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const recent = new RecentDevices(recentDeviceUDIDs).resolved(devices)
-  const hasMissingRuntime = devices.some((device) => !device.isRuntimeAvailable)
+  const missing = devices.filter((device) => !device.isRuntimeAvailable)
+  const missingSimulator = missing.some(
+    (device) => device.platform !== "android"
+  )
+  const missingEmulator = missing.some(
+    (device) => device.platform === "android"
+  )
 
   function choose(device: SimulatorDevice) {
     setQuery("")
@@ -135,10 +144,21 @@ export function DevicePicker({
               {rows("all", [...devices])}
             </CommandGroup>
           </CommandList>
-          {hasMissingRuntime && (
+          {missingSimulator && (
             <p className="border-t px-3 py-2 text-xs text-muted-foreground">
               A greyed-out device needs its iOS runtime installed on the Device
               Host. Ask whoever runs the Device Host.
+            </p>
+          )}
+          {missingEmulator && (
+            <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+              A greyed-out emulator needs its Android system image installed on
+              the Device Host. Ask whoever runs the Device Host.
+            </p>
+          )}
+          {androidProblem !== undefined && (
+            <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+              {androidProblem}
             </p>
           )}
         </Command>
@@ -147,7 +167,7 @@ export function DevicePicker({
   )
 }
 
-/** "Name — iOS x.y", marked when its runtime is missing. */
+/** "Name — iOS x.y" or "Name — Android n", marked when its runtime is missing. */
 function deviceLabel(device: SimulatorDevice): string {
   const label = `${device.name} — ${device.osName}`
   return device.isRuntimeAvailable ? label : `${label} (runtime missing)`

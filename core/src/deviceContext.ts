@@ -79,13 +79,52 @@ export function accessibilityDescriptions(settings: DeviceSettings): string[] {
 }
 
 /**
+ * An Android emulator's accessibility state, read back with `adb` at capture
+ * as iOS's is with `simctl ui` (ADR-0009, ADR-0013).
+ */
+export interface AndroidDeviceSettings {
+  readonly platform: "android"
+  /** `settings get system font_scale`; 1 is Android's default size. */
+  readonly fontScale: number
+  /** Whether the dark theme is in effect, whatever its schedule. */
+  readonly darkTheme: boolean
+  /** `settings get secure high_text_contrast_enabled`. */
+  readonly highContrastText: boolean
+}
+
+/** Android's defaults, which the Accessibility line leaves out. */
+export const defaultAndroidDeviceSettings: AndroidDeviceSettings = {
+  platform: "android",
+  fontScale: 1,
+  darkTheme: false,
+  highContrastText: false,
+}
+
+/**
+ * Android's non-default settings in the iOS line's order: text size,
+ * appearance, contrast. The tokens are part of the ADR-0004 contract
+ * (ADR-0013): the font scale as a whole percentage ("Font Size 130%"), the
+ * dark theme as iOS's own "Dark Mode", and "High Contrast Text".
+ */
+export function androidAccessibilityDescriptions(
+  settings: AndroidDeviceSettings
+): string[] {
+  const descriptions: string[] = []
+  const percent = Math.round(settings.fontScale * 100)
+  if (percent !== 100) descriptions.push(`Font Size ${percent}%`)
+  if (settings.darkTheme) descriptions.push("Dark Mode")
+  if (settings.highContrastText) descriptions.push("High Contrast Text")
+  return descriptions
+}
+
+/**
  * The device and settings in effect when a Finding is captured. Stamped per
  * Finding, not on the Review Session.
  */
 export interface DeviceContext {
-  /** e.g. "iPhone 17 Pro". */
+  /** e.g. "iPhone 17 Pro", or an emulator's "Pixel 10". */
   readonly deviceModel: string
-  /** e.g. "iOS 26.4". */
+  /** e.g. "iOS 26.4" or "Android 17". */
   readonly osName: string
   /**
    * The non-default accessibility settings, in display order. Empty leaves
@@ -97,11 +136,14 @@ export interface DeviceContext {
 /** The Device Context every capture stamps: the device under its settings. */
 export function deviceContextOf(
   device: { readonly name: string; readonly osName: string },
-  settings: DeviceSettings = defaultDeviceSettings
+  settings: DeviceSettings | AndroidDeviceSettings = defaultDeviceSettings
 ): DeviceContext {
   return {
     deviceModel: device.name,
     osName: device.osName,
-    accessibilitySettings: accessibilityDescriptions(settings),
+    accessibilitySettings:
+      "platform" in settings
+        ? androidAccessibilityDescriptions(settings)
+        : accessibilityDescriptions(settings),
   }
 }

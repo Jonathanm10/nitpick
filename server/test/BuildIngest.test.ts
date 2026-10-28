@@ -12,7 +12,7 @@ import {
   buildName,
   readAppBundle,
   readBuildFromArchive,
-  zipArchiveName,
+  buildUploadName,
 } from "../src/buildIngestion.ts"
 import { SubprocessFailure } from "../src/subprocess.ts"
 import {
@@ -75,8 +75,8 @@ describe("Build ingestion", () => {
   })
 
   test("a file that is neither .app nor .zip is rejected", () => {
-    expect(() => zipArchiveName("notes.txt")).toThrow(
-      "“notes.txt” is not a Build. Drop or choose a zip containing a simulator .app."
+    expect(() => buildUploadName("notes.txt")).toThrow(
+      "“notes.txt” is not a Build. Drop or choose a zip containing a simulator .app, or an Android .apk."
     )
   })
 
@@ -127,13 +127,13 @@ describe("Build ingestion, port checks", () => {
   })
 
   test("a bare .app is refused: a browser uploads files, not bundles", () => {
-    expect(() => zipArchiveName("ReviewMe.app")).toThrow(
+    expect(() => buildUploadName("ReviewMe.app")).toThrow(
       ingestError({ kind: "unsupportedFileType", fileName: "ReviewMe.app" })
     )
   })
 
   test("the zip check ignores case, as Swift lowercased the extension", () => {
-    expect(zipArchiveName("Build.ZIP")).toBe("Build.ZIP")
+    expect(buildUploadName("Build.ZIP").name).toBe("Build.ZIP")
   })
 
   test("a non-string identity value counts as missing", async () => {
@@ -169,7 +169,7 @@ describe("Zipped Build ingestion", () => {
   function ingest(name = "build.zip") {
     return readBuildFromArchive(
       runner,
-      { path: zipPath, name: zipArchiveName(name) },
+      { path: zipPath, name: buildUploadName(name).name },
       destination
     )
   }
@@ -252,7 +252,7 @@ describe("Zipped Build ingestion", () => {
   test("a leading-dot zip name is rejected, never extracted", () => {
     // Foundation parses "..zip" as extensionless, so it is an unsupported
     // file type long before any extraction.
-    expect(() => zipArchiveName("..zip")).toThrow(
+    expect(() => buildUploadName("..zip")).toThrow(
       ingestError({ kind: "unsupportedFileType", fileName: "..zip" })
     )
     expect(runner.executedCommands).toEqual([])

@@ -14,16 +14,56 @@ export const deviceHubRoutePrefix = "/api/device-hub"
 
 const udid = "[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}"
 
-/** The viewer's video: H.264 for WebCodecs, and MJPEG where it can't decode. */
-const allowedPaths = [
-  new RegExp(`^/vendor/serve-sim/helper/${udid}/stream\\.(avcc|mjpeg)$`),
+/** An Android emulator as adb names it, which serve-emu takes as `device`. */
+const emulatorSerial = /^emulator-[0-9]{1,5}$/
+
+/** A route the viewer needs, and exactly how it uses it. */
+interface AllowedRoute {
+  readonly path: RegExp
+  readonly isUpgrade: boolean
+  /** The one method the viewer sends; any other is a 405. */
+  readonly method: "GET" | "POST"
+  /**
+   * The `device` query, the only one forwarded. Without a pattern it is
+   * optional and passed as it came; with one it is required and checked.
+   */
+  readonly device?: RegExp
+  /** Query the proxy sets itself, whatever the viewer sent. */
+  readonly fixedQuery?: Readonly<Record<string, string>>
+}
+
+const allowedRoutes: ReadonlyArray<AllowedRoute> = [
+  // iOS video: H.264 for WebCodecs, and MJPEG where it can't decode.
+  {
+    path: new RegExp(
+      `^/vendor/serve-sim/helper/${udid}/stream\\.(avcc|mjpeg)$`
+    ),
+    isUpgrade: false,
+    method: "GET",
+  },
+  // iOS touch and keyboard input.
+  {
+    path: /^\/vendor\/serve-sim\/helper\/ws$/,
+    isUpgrade: true,
+    method: "GET",
+  },
+  // Android video: serve-emu's WebRTC answer to the viewer's offer, and the
+  // session's close, both POSTed JSON. WebRTC needs no secure context.
+  {
+    path: /^\/vendor\/serve-emu\/webrtc\/(offer|close)$/,
+    isUpgrade: false,
+    method: "POST",
+    device: emulatorSerial,
+  },
+  // Android gestures and keys. Video goes over WebRTC, never this socket.
+  {
+    path: /^\/vendor\/serve-emu\/ws$/,
+    isUpgrade: true,
+    method: "GET",
+    device: emulatorSerial,
+    fixedQuery: { video: "0" },
+  },
 ]
-
-/** The viewer's touch and keyboard input. */
-const allowedSocketPaths = [/^\/vendor\/serve-sim\/helper\/ws$/]
-
-/** The only query the viewer sends: which device the input socket drives. */
-const forwardedQuery = ["device"]
 
 export interface HubRequest {
   readonly method: string
@@ -45,7 +85,8 @@ export type Admit = (
 ) => Admission | undefined
 
 export type HubRoute =
-  | { readonly status: 401 | 403 | 404 | 405 | 503 }
+  | { readonly status: 401 | 403 | 404 | 503 }
+  | { readonly status: 405; readonly allow: string }
   | {
       readonly upstream: string
       readonly hub: HubEndpoint
@@ -55,7 +96,8 @@ export type HubRoute =
 /**
  * Where a request goes, checked in T3 Code's order: the allowlist first, so
  * any other route is a 404 with or without auth, then the method, then the
- * sign-in, then whether the hub runs.
+ * sign-in, then the origin of anything that isn't a plain read, then
+ * whether the hub runs.
  */
 export function routeHubRequest(
   request: HubRequest,
@@ -70,27 +112,37 @@ export function routeHubRequest(
     return { status: 404 }
   }
   const hubPath = url.pathname.slice(deviceHubRoutePrefix.length)
-  const allowed = (request.isUpgrade ? allowedSocketPaths : allowedPaths).some(
-    (pattern) => pattern.test(hubPath)
-  )
-  if (!url.pathname.startsWith(`${deviceHubRoutePrefix}/`) || !allowed) {
-    return { status: 404 }
+  const device = url.searchParams.get("device")
+  const route = url.pathname.startsWith(`${deviceHubRoutePrefix}/`)
+    ? allowedRoutes.find(
+        (candidate) =>
+          candidate.isUpgrade === request.isUpgrade &&
+          candidate.path.test(hubPath) &&
+          (candidate.device === undefined ||
+            (device !== null && candidate.device.test(device)))
+      )
+    : undefined
+  if (route === undefined) return { status: 404 }
+  if (request.method !== route.method) {
+    return { status: 405, allow: route.method }
   }
-  // The viewer only reads: no route it needs takes another method.
-  if (request.method !== "GET") return { status: 405 }
   const admission = admit(request.header)
   if (admission === undefined) return { status: 401 }
-  // WebSockets skip CORS, so a page on another origin of the same site,
-  // which the SameSite cookie doesn't stop, mustn't open the input socket.
-  if (request.isUpgrade && !isSameOrigin(request.header)) {
+  // WebSockets skip CORS, and a POST may come from a form, so a page on
+  // another origin of the same site, which the SameSite cookie doesn't
+  // stop, mustn't open the input socket or a WebRTC session.
+  if (
+    (request.isUpgrade || request.method !== "GET") &&
+    !isSameOrigin(request.header)
+  ) {
     return { status: 403 }
   }
   const hub = stream?.endpoint()
   if (hub === undefined) return { status: 503 }
   const query = new URLSearchParams()
-  for (const name of forwardedQuery) {
-    const value = url.searchParams.get(name)
-    if (value !== null) query.set(name, value)
+  if (device !== null) query.set("device", device)
+  for (const [name, value] of Object.entries(route.fixedQuery ?? {})) {
+    query.set(name, value)
   }
   const search = query.size > 0 ? `?${query.toString()}` : ""
   return { upstream: `${hub.origin}${hubPath}${search}`, hub, admission }
@@ -123,19 +175,25 @@ export async function proxyHubHTTP(
   const signal = AbortSignal.any([request.signal, signedOut.signal])
   let upstream: Response
   try {
+    const contentType = request.headers.get("content-type")
     upstream = await fetch(route.upstream, {
-      headers: { authorization: `Bearer ${route.hub.token}` },
+      method: request.method,
+      headers: {
+        authorization: `Bearer ${route.hub.token}`,
+        ...(contentType !== null && { "content-type": contentType }),
+      },
+      ...(request.body !== null && { body: request.body, duplex: "half" }),
       signal,
     })
   } catch {
     stopWatching()
-    return refusal(502)
+    return refusal({ status: 502 })
   }
   // The hub refusing its own token means it restarted under the request.
   if (upstream.status === 401 || upstream.status === 403) {
     stopWatching()
     await upstream.body?.cancel()
-    return refusal(503)
+    return refusal({ status: 503 })
   }
   const headers = new Headers({
     "Cache-Control": "no-store, no-transform",
@@ -192,13 +250,16 @@ function endingWithViewer(
   )
 }
 
-export function refusal(status: number): Response {
-  return new Response(STATUS_CODES[status] ?? "Refused", {
-    status,
+export function refusal(route: {
+  readonly status: number
+  readonly allow?: string
+}): Response {
+  return new Response(STATUS_CODES[route.status] ?? "Refused", {
+    status: route.status,
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-store",
-      ...(status === 405 && { Allow: "GET" }),
+      ...(route.allow !== undefined && { Allow: route.allow }),
     },
   })
 }
