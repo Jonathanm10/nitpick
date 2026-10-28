@@ -127,7 +127,7 @@ install_node() {
 	fi
 	ln -sfn "$name" "$runtime/node"
 	# A pnpm shim beside node: the workspace's own scripts call pnpm by name.
-	"$runtime/node/bin/corepack" enable pnpm
+	PATH="$runtime/node/bin:$PATH" "$runtime/node/bin/corepack" enable pnpm
 }
 
 # pnpm at the version package.json's packageManager pins, through the
