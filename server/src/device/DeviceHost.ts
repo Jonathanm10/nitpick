@@ -62,6 +62,8 @@ export interface DeviceHost {
     readonly path: string
     readonly name: string
   }) => Promise<Build>
+  /** Shuts the device down; one already shut down is no error. */
+  readonly shutDown: (deviceUDID: string) => Promise<void>
   /**
    * The booted device's screen at native pixels with the accessibility
    * state it was taken under. Refuses a device that isn't booted.

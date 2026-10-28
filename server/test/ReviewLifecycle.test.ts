@@ -6,7 +6,7 @@
 import type { Build } from "@nitpick/core"
 import { beforeEach, describe, expect, test } from "vitest"
 import type { SimulatorDevice } from "../src/device/DeviceHost.ts"
-import { launchBuild } from "../src/device/simctl.ts"
+import { launchBuild, shutDownDevice } from "../src/device/simctl.ts"
 import { SubprocessFailure, type SubprocessCommand } from "../src/subprocess.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 
@@ -87,5 +87,33 @@ describe("Launching a Build on a simulator", () => {
       /Failed to install/
     )
     expect(runner.executedCommands).toEqual(expectedSequence.slice(0, 3))
+  })
+})
+
+describe("Shutting a device down for room under the host's cap", () => {
+  test("runs simctl shutdown, and a device already shut down is not an error", async () => {
+    const runner = new FakeSubprocessRunner()
+    runner.enqueue({ exitCode: 0 })
+    runner.enqueue({
+      exitCode: 149,
+      standardError: "Unable to shutdown device in current state: Shutdown",
+    })
+
+    await shutDownDevice(runner, "AAAA-1111")
+    await shutDownDevice(runner, "AAAA-1111")
+
+    expect(runner.executedCommands).toEqual([
+      xcrun("shutdown", "AAAA-1111"),
+      xcrun("shutdown", "AAAA-1111"),
+    ])
+  })
+
+  test("a real failure surfaces", async () => {
+    const runner = new FakeSubprocessRunner()
+    runner.enqueue({ exitCode: 1, standardError: "Invalid device: AAAA-1111" })
+
+    await expect(shutDownDevice(runner, "AAAA-1111")).rejects.toThrow(
+      SubprocessFailure
+    )
   })
 })

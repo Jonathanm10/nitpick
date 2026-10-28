@@ -69,6 +69,20 @@ describe("Server config", () => {
     ).toThrow(/is not secure/)
   })
 
+  test("the cap on booted devices is a whole number from 1, and no cap when unset", () => {
+    expect(
+      loadConfig({ NITPICK_MAX_BOOTED_DEVICES: "1" }, noFile).maxBootedDevices
+    ).toBe(1)
+    expect(loadConfig({}, noFile).maxBootedDevices).toBeUndefined()
+    for (const cap of ["0", "1.5", "two", "-1"]) {
+      expect(() =>
+        loadConfig({ NITPICK_MAX_BOOTED_DEVICES: cap }, noFile)
+      ).toThrow(
+        `NITPICK_MAX_BOOTED_DEVICES must be a whole number from 1, not "${cap}".`
+      )
+    }
+  })
+
   test.each(["NITPICK_YOUTRACK_TOKEN", "NITPICK_ACCESS_TOKEN"])(
     "the retired %s is refused, so no token sits in the config for nothing",
     (key) => {

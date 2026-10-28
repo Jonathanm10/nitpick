@@ -20,6 +20,7 @@ import {
 } from "../src/device/android.ts"
 import type { SimulatorDevice } from "../src/device/DeviceHost.ts"
 import { hubEnvironment } from "../src/device/deviceHub.ts"
+import { makeLocalDeviceHost } from "../src/device/LocalDeviceHost.ts"
 import { DeviceNotRunning } from "../src/device/simctl.ts"
 import type { SubprocessCommand } from "../src/subprocess.ts"
 import { temporaryDirectory } from "./BuildFixtures.ts"
@@ -737,5 +738,41 @@ describe("the hub's environment", () => {
       ANDROID_AVD_HOME: "/avds",
       SERVE_EMU_FFMPEG: "/opt/homebrew/bin/ffmpeg",
     })
+  })
+})
+
+describe("shutting a device down for room under the host's cap", () => {
+  test("a running emulator stops by its serial, and a simulator through simctl", async () => {
+    const runner = new FakeSubprocessRunner()
+    const host = makeLocalDeviceHost({
+      runner,
+      starter: {
+        start: () => {
+          throw new Error("nothing boots here")
+        },
+      },
+      captureDirectory: temporaryDirectory(),
+      android: sdkWith([proof]),
+      ffmpeg: undefined,
+    })
+    enqueueListing(runner, "nitpick-proof-13\n", [
+      { serial: "emulator-5554", name: "nitpick-proof-13" },
+    ])
+    runner.enqueue({ exitCode: 0 })
+    enqueueListing(runner, "nitpick-proof-13\n")
+    runner.enqueue({ exitCode: 0 })
+
+    await host.shutDown("nitpick-proof-13")
+    await host.shutDown("AAAA-1111")
+
+    expect(runner.executedCommands.map(commandLine)).toEqual([
+      "emulator -list-avds",
+      "adb devices",
+      "adb -s emulator-5554 emu avd name",
+      "adb -s emulator-5554 emu kill",
+      "emulator -list-avds",
+      "adb devices",
+      "xcrun simctl shutdown AAAA-1111",
+    ])
   })
 })

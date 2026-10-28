@@ -49,4 +49,6 @@ The server reads its config from the environment, or from a file outside the rep
 
 Android Builds (`.apk`) need the Android SDK with an AVD, build-tools and an `ffmpeg` with libx264 on the Device Host ([ADR-0013](docs/adr/0013-android-on-the-device-host.md)). Without them the server still reviews iOS, and the device picker says what Android lacks.
 
+`scripts/deploy/deploy.sh <host>` installs or updates it on the Device Host over SSH. [docs/operations.md](docs/operations.md) is the runbook: install, health check, logs, reboots, Xcode updates, backups and moving hosts.
+
 `core/` must match the Swift app's golden files in [core/test/golden](core/test/golden/README.md). `make test` checks them against the Swift code.

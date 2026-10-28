@@ -125,6 +125,8 @@ export class Reviewers {
         ? { status: "signedOut" }
         : { status: "signedOut", reason }
     }
+    // Any request keeps the Reviewer's device theirs.
+    this.#dependencies.deviceClaims.seen(signIn.user.login)
     return { status: "signedIn", id, signedIn: this.#signedIn(signIn) }
   }
 
@@ -182,6 +184,7 @@ export class Reviewers {
     let reviewer = this.#reviewers.get(login)
     if (reviewer === undefined) {
       reviewer = new Reviewer(
+        login,
         join(this.#directory, directoryName(login)),
         this.#dependencies
       )

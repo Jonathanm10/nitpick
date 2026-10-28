@@ -89,6 +89,17 @@ export async function launchBuild(
 }
 
 /**
+ * Shuts a device down to make room under the host's cap. Exit 149, "Unable
+ * to shutdown device in current state: Shutdown", means it already was.
+ */
+export async function shutDownDevice(
+  runner: SubprocessRunner,
+  deviceUDID: string
+): Promise<void> {
+  await runRequiringSuccess(runner, simctl("shutdown", deviceUDID), [0, 149])
+}
+
+/**
  * The device to capture is not booted on the Device Host: it stopped after
  * the launch (a crash, a host reboot), or was never booted. The review pauses.
  */

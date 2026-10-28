@@ -11,6 +11,7 @@ import {
   hasLibx264,
   installAndLaunch,
   listAndroidDevices,
+  shutdownEmulator,
   type AndroidSDK,
 } from "./android.ts"
 import type { DeviceHost, SimulatorDevice } from "./DeviceHost.ts"
@@ -20,7 +21,12 @@ import {
   macOSVersion,
   xcodeVersion,
 } from "./hostHealth.ts"
-import { captureScreen, launchBuild, listSimulatorDevices } from "./simctl.ts"
+import {
+  captureScreen,
+  launchBuild,
+  listSimulatorDevices,
+  shutDownDevice,
+} from "./simctl.ts"
 
 export interface LocalDeviceHostOptions {
   readonly runner: SubprocessRunner
@@ -103,6 +109,16 @@ export function makeLocalDeviceHost({
       if (aapt2 === undefined)
         throw new AndroidUnavailable({ kind: "buildToolsMissing" })
       return readBuildFromAPK(runner, aapt2, apk)
+    },
+    // An emulator is shut down by its serial, which only a running one has.
+    shutDown: async (deviceUDID) => {
+      const emulator = (await listEmulators()).find(
+        (device) => device.udid === deviceUDID
+      )
+      if (emulator === undefined) return shutDownDevice(runner, deviceUDID)
+      if (emulator.serial !== undefined) {
+        await shutdownEmulator(runner, android, emulator.serial)
+      }
     },
     captureScreen: async (deviceUDID) => {
       const emulators = await listEmulators()

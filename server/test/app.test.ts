@@ -27,6 +27,7 @@ function hostListing(list: DeviceHost["devices"]["list"]): DeviceHost {
     readAndroidBuild: async () => {
       throw new Error("no .apk read here")
     },
+    shutDown: async () => {},
     captureScreen: async () => {
       throw new Error("not captured here")
     },

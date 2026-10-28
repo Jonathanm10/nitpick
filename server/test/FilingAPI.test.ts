@@ -25,6 +25,7 @@ import type {
   HistoryResponse,
   ReviewStateResponse,
 } from "../src/api.ts"
+import { DeviceClaims } from "../src/device/deviceClaims.ts"
 import { HistoryStore } from "../src/historyStore.ts"
 import { ReviewerStore } from "../src/reviewerStore.ts"
 import { temporaryDirectory } from "./BuildFixtures.ts"
@@ -43,7 +44,10 @@ const golden = goldenInput<SessionAndFinding>(
 function reviewerOn(
   dataDirectory: string,
   fake: FakeYouTrack,
-  { login = "vera" }: { readonly login?: string } = {}
+  {
+    login = "vera",
+    deviceClaims,
+  }: { readonly login?: string; readonly deviceClaims?: DeviceClaims } = {}
 ) {
   const signedIn = signedInApp({
     data: dataDirectory,
@@ -52,6 +56,7 @@ function reviewerOn(
     instanceURL: fake.instanceURL,
     user: fake.users[`perm:${login}`],
     serverVersion: "0.0.0 (test)",
+    deviceClaims,
   })
   return { ...signedIn, store: new ReviewerStore(signedIn.directory) }
 }
@@ -187,6 +192,37 @@ describe("File all", () => {
       reviewer: { login: "vera", fullName: "Vera Baumann" },
     } satisfies HistoryResponse)
     expect(existsSync(join(h.directory, "open-session"))).toBe(false)
+  })
+
+  test("a filed session gives its device up to the next Reviewer", async () => {
+    const fake = new FakeYouTrack()
+    const iPhone = {
+      udid: "AAAA-1111",
+      name: "iPhone 17 Pro",
+      osName: "iOS 26.5",
+      isBooted: true,
+      isRuntimeAvailable: true,
+    }
+    const iPad = { ...iPhone, udid: "DDDD-4444", name: "iPad (A16)" }
+    const host = new FakeDeviceHost([iPhone, { ...iPad, isBooted: false }])
+    const deviceClaims = new DeviceClaims({
+      limit: 1,
+      list: host.devices.list,
+      shutDown: host.shutDown,
+    })
+    const h = reviewerOn(temporaryDirectory(), fake, { deviceClaims })
+    await stage(h, [{}])
+    await deviceClaims.claim(fake.users["perm:vera"], iPhone)
+    const noor = { login: "noor", fullName: "Noor Haddad" }
+    await expect(deviceClaims.claim(noor, iPad)).rejects.toThrow(
+      "Vera Baumann is using its only device"
+    )
+
+    await fileAll(h)
+    expect((await settled(h)).status).toBe("filed")
+
+    await deviceClaims.claim(noor, iPad)
+    expect(host.shutdowns).toEqual([iPhone.udid])
   })
 
   test("a failure keeps the error for the rows, and File n remaining resumes without a second Issue", async () => {
