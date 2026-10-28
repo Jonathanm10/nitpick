@@ -84,7 +84,7 @@ preflight() {
 update_checkout() {
 	case $1 in '' | *[!A-Za-z0-9._/-]*) fail "not a git ref: $1" ;; esac
 	if [ ! -d "$checkout/.git" ]; then
-		say "Cloning $repository…"
+		say "Cloning ${repository}…"
 		git clone --quiet "$repository" "$checkout"
 	fi
 	cd "$checkout"
