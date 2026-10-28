@@ -28,6 +28,8 @@ export class SessionSaver {
   #saveAgain = false
   /** Counts failed sends, so a caller can tell one happened while it waited. */
   #failures = 0
+  /** Counts Findings whose edits were sent, or dropped with their Finding. */
+  #settled = 0
 
   /** `report` gets the failure to show, or undefined once a save succeeds. */
   constructor(report: (error: string | undefined) => void) {
@@ -83,13 +85,18 @@ export class SessionSaver {
   /**
    * Sends every pending edit, edits made while a save was in flight
    * included, and answers whether all reached the server. A failed save
-   * stops it; the usual retry carries on.
+   * stops it, and so does a pass that settles nothing: edits waiting on a
+   * discard still in flight, which only its answer settles. The usual retry
+   * carries on.
    */
   async saveAll(): Promise<boolean> {
     while (this.#dirty.size > 0 || this.#saving !== undefined) {
       const failures = this.#failures
+      const settled = this.#settled
       await this.flush()
-      if (this.#failures !== failures) return false
+      if (this.#failures !== failures || this.#settled === settled) {
+        return false
+      }
     }
     return true
   }
@@ -143,10 +150,14 @@ export class SessionSaver {
       }
       try {
         await this.#save(key, fields)
+        this.#settled++
       } catch (error) {
         // A Finding discarded meanwhile, or by another tab, takes its
         // edits with it.
-        if (error instanceof APIError && error.status === 404) continue
+        if (error instanceof APIError && error.status === 404) {
+          this.#settled++
+          continue
+        }
         failure = error instanceof Error ? error.message : String(error)
         this.#requeue(key, fields)
       }
