@@ -254,6 +254,8 @@ export function createDeviceStreamClient(
     const session = generation
     const controller = new AbortController()
     video = controller
+    // Each subscription's seed shows until its own first decoded frame.
+    decodedFrame = false
     const current = () =>
       !stopped && generation === session && video === controller
     const demuxer = new AvccDemuxer()

@@ -48,7 +48,13 @@ export function routeHubRequest(
   access: StreamAccess | undefined,
   stream: DeviceStream | undefined
 ): HubRoute {
-  const url = new URL(request.url, "http://nitpick.invalid")
+  let url: URL
+  try {
+    url = new URL(request.url, "http://nitpick.invalid")
+  } catch {
+    // A target no URL parses, which an upgrade's handler can't let throw.
+    return { status: 404 }
+  }
   const hubPath = url.pathname.slice(deviceHubRoutePrefix.length)
   const allowed = (request.isUpgrade ? allowedSocketPaths : allowedPaths).some(
     (pattern) => pattern.test(hubPath)

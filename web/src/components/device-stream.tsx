@@ -294,22 +294,28 @@ function LiveDevice({
     phase: "down" | "up",
     event: React.KeyboardEvent<HTMLDivElement>
   ) {
-    if (event.metaKey || event.ctrlKey) return
-    if (event.key === "Escape") {
-      if (phase === "down") {
+    const usage = hidUsage(event.code)
+    if (phase === "up") {
+      // A key the device has down goes up there, whatever is held now.
+      if (usage !== undefined && held.current.has(usage)) {
         event.preventDefault()
-        event.currentTarget.blur()
+        press("up", usage)
       }
       return
     }
-    const usage = hidUsage(event.code)
+    if (event.metaKey || event.ctrlKey) return
+    if (event.key === "Escape") {
+      event.preventDefault()
+      event.currentTarget.blur()
+      return
+    }
     if (usage === undefined) return
     event.preventDefault()
-    if (phase === "down" && event.repeat) return
+    if (event.repeat) return
     // A character that needs Shift can come without Shift's own key
     // event, from a key remapper or an automated keyboard, so the device's
     // Shift follows the event's.
-    if (phase === "down" && !shiftKeys.includes(usage)) {
+    if (!shiftKeys.includes(usage)) {
       const shiftHeld = shiftKeys.some((shift) => held.current.has(shift))
       if (event.shiftKey && !shiftHeld) press("down", shiftKeys[0]!)
       if (!event.shiftKey && shiftHeld) {
@@ -318,7 +324,7 @@ function LiveDevice({
         }
       }
     }
-    press(phase, usage)
+    press("down", usage)
   }
 
   return (

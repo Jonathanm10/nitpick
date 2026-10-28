@@ -3,7 +3,7 @@
 // the methods and the auth matrix, then the stream and the input socket
 // through a real server.
 import { get } from "node:http"
-import type { AddressInfo } from "node:net"
+import { connect, type AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { serve, type ServerType } from "@hono/node-server"
@@ -374,6 +374,33 @@ describe("device hub proxy: the input socket", () => {
       expect(hub.socketRequests).toEqual([])
     }
   )
+})
+
+describe("the input socket: a target no URL parses", () => {
+  test("is refused, and the server keeps answering", async () => {
+    const { app, access, hub } = await fixture()
+    const server = await listen(app)
+    server.on("upgrade", hubUpgradeHandler(access, hub))
+    const { port } = server.address() as AddressInfo
+
+    const answer = await new Promise<string>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1", () =>
+        socket.write(
+          "GET //[ HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+        )
+      )
+      let received = ""
+      socket.on("data", (data) => (received += data.toString()))
+      socket.on("close", () => resolve(received))
+      socket.on("error", reject)
+    })
+
+    expect(answer).toMatch(/^HTTP\/1\.1 404 /)
+    const still = await fetch(`http://127.0.0.1:${port}/api/device-hub/`)
+    expect(still.status).toBe(404)
+    expect(hub.socketRequests).toEqual([])
+  })
 })
 
 describe("the access and stream routes", () => {
