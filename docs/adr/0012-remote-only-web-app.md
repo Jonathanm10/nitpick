@@ -25,7 +25,7 @@ This supersedes ADR-0001 (nitpick now shows the device itself), ADR-0005 (Androi
   - Accessibility is still read with `simctl ui` (ADR-0009).
   - The metadata block contract (ADR-0004) and the YouTrack triage fields (ADR-0008) are unchanged.
 - **Device Host is a seam.** Everything that depends on the machine running the devices sits behind it. The same server could later run on a designer's Mac to bring local devices back. Nothing is built for that now.
-- **Login and data.**
+- **Login and data.** (Revised by ADR-0014: Reviewers sign in through YouTrack's login once nitpick is registered with YouTrack's Hub, and each sees only their own History.)
   - Proposed: a reviewer signs in with their YouTrack token, which the server checks against YouTrack's current-user endpoint. There are no separate accounts.
   - Review Sessions and History move to the server and become shared.
   - Existing History (stored JSON, schema v1, see `Sources/NitpickCore/SessionPersistence.swift`) is imported.

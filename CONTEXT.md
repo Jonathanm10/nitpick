@@ -61,7 +61,7 @@ The Review Session's Findings in capture order, awaiting filing. A Finding leave
 _Avoid_: queue, basket, list
 
 **History**:
-The shared record of filed Review Sessions and the Issues their Findings became, visible to every Reviewer. Written only at filing — a discarded session leaves no trace — and never reflects later changes in YouTrack.
+A Reviewer's own record of the Review Sessions they filed and the Issues their Findings became; no other Reviewer sees it (ADR-0014). Written only at filing — a discarded session leaves no trace — and never reflects later changes in YouTrack.
 _Avoid_: log, archive, recents
 
 **Design Reference**:

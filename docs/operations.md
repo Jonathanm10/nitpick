@@ -49,12 +49,51 @@ server at it with `NITPICK_CONFIG_FILE`.
 | `NITPICK_PORT` | The port Reviewers open. The default is 4870. |
 | `NITPICK_DATA_DIR` | Where the data lives; back it up. |
 | `NITPICK_YOUTRACK_URL` | The one YouTrack instance Reviewers sign in to and file into. Required. Changing it drops every stored sign-in. |
+| `NITPICK_YOUTRACK_CLIENT_ID` | nitpick's client ID in YouTrack's Hub. When set, Reviewers sign in through YouTrack's login instead of with a token. See [Sign-in through YouTrack](#sign-in-through-youtrack). |
+| `NITPICK_YOUTRACK_CLIENT_SECRET` | Its client secret, for a confidential client. Leave it empty for a public client. |
 | `NITPICK_MAX_BOOTED_DEVICES` | At most this many devices booted at once: 1 on an 8 GB host, 2 on a 16 GB one. See [The device cap](#the-device-cap). |
 
-The config holds no token. Each Reviewer signs in with their own YouTrack
-token, which the server keeps encrypted in the data directory, under its
-`sign-in-key`. The server refuses to start while the retired
-`NITPICK_YOUTRACK_TOKEN` or `NITPICK_ACCESS_TOKEN` is set.
+The config holds no Reviewer's token. Each Reviewer signs in as
+themselves, through YouTrack's login or with their own permanent token. The
+server keeps that sign-in's tokens encrypted in the data directory, under its
+`sign-in-key`. The client secret is the config's only secret. The server
+refuses to start while the retired `NITPICK_YOUTRACK_TOKEN` or
+`NITPICK_ACCESS_TOKEN` is set.
+
+### Sign-in through YouTrack
+
+Reviewers sign in with YouTrack's own login once a YouTrack administrator
+registers nitpick with the Hub service built into YouTrack. Until then, the
+sign-in page asks for a permanent token. These steps follow JetBrains'
+documentation; the menu names depend on the YouTrack version.
+
+1. Register nitpick:
+   - **YouTrack 2026.2 or later:** Administration, Access Management, OAuth
+     Clients, New OAuth client, named nitpick.
+   - **Earlier versions:** open `<YouTrack URL>/hub`, then Administration,
+     Services, and add a service named nitpick.
+2. Set its Home URL to the address Reviewers open, for example
+   `http://<host>:4870`.
+3. On its Authentication tab:
+   - enable the Authorization Code flow
+   - add the redirect URI `<address Reviewers open>/api/sign-in/youtrack/callback`,
+     once for each address they use
+   - set a client secret
+4. Optional: trust the service, so YouTrack skips its "allow access" page.
+5. Put the client ID and the secret in `server.env` as
+   `NITPICK_YOUTRACK_CLIENT_ID` and `NITPICK_YOUTRACK_CLIENT_SECRET`.
+6. Restart the server and sign in.
+   - If the page says YouTrack couldn't sign you in, the server log
+     (`~/Library/Logs/nitpick/server.log`) has a "Signing in through
+     YouTrack failed" line with Hub's error code.
+     `invalid_client` means a wrong ID or secret. A mismatched redirect URI
+     makes YouTrack show its own error page instead.
+
+Existing sign-ins keep working after the switch. A sign-in through YouTrack
+ends like a token sign-in, after a month without use or at sign-out. It also
+ends when YouTrack stops renewing its token, for example after the
+Reviewer's access is revoked. The page then says so, and the open review is
+kept.
 
 To change a value:
 
