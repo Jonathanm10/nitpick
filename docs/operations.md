@@ -52,6 +52,7 @@ server at it with `NITPICK_CONFIG_FILE`.
 | `NITPICK_YOUTRACK_CLIENT_ID` | nitpick's client ID in YouTrack's Hub. When set, Reviewers sign in through YouTrack's login instead of with a token. See [Sign-in through YouTrack](#sign-in-through-youtrack). |
 | `NITPICK_YOUTRACK_CLIENT_SECRET` | Its client secret, for a confidential client. Leave it empty for a public client. |
 | `NITPICK_MAX_BOOTED_DEVICES` | At most this many devices booted at once: 1 on an 8 GB host, 2 on a 16 GB one. See [The device cap](#the-device-cap). |
+| `NITPICK_TLS_CERT`, `NITPICK_TLS_KEY` | The absolute paths of the certificate and private key the server serves HTTPS with. Set both, or neither for plain HTTP. See [HTTPS](#https). |
 
 The config holds no Reviewer's token. Each Reviewer signs in as
 themselves, through YouTrack's login or with their own permanent token. The
@@ -73,7 +74,7 @@ documentation; the menu names depend on the YouTrack version.
    - **Earlier versions:** open `<YouTrack URL>/hub`, then Administration,
      Services, and add a service named nitpick.
 2. Set its Home URL to the address Reviewers open, for example
-   `http://<host>:4870`.
+   `https://<host>:4870` ([HTTPS](#https)).
 3. On its Authentication tab:
    - enable the Authorization Code flow
    - add the redirect URI `<address Reviewers open>/api/sign-in/youtrack/callback`,
@@ -181,7 +182,9 @@ It prints each check, ends with `Healthy.`, and exits non-zero on any
 problem. It checks:
 
 - **The server:** whether it is running, and the deployed commit.
-- **HTTP:** whether the page and the API answer.
+- **HTTP or HTTPS:** whether the page and the API answer.
+- **The certificate**, with HTTPS: its expiry date. It counts as a problem
+  from 30 days before the certificate expires.
 - **The addresses it listens on:** the server's port, and the hub on
   loopback only.
 - **Uptime:** it warns from day 35 ([Reboots](#reboots-and-the-497-day-bug)).
@@ -194,7 +197,8 @@ problem. It checks:
 - **Backups:** the newest one. A missing backup, or one older than a day,
   counts as a problem.
 
-From another machine on the LAN, open `http://<host>:<port>`: the page shows
+From another machine on the LAN, open `https://<host>:<port>` (`http://`
+without a certificate): the page shows
 sign-in. Once signed in, the home page shows "Device Host not ready" with
 the reason when Xcode or an iOS runtime is missing.
 
@@ -435,19 +439,72 @@ The main host is the 16 GB mini with FileVault off, once its CI use ends.
    - Their open Review Sessions and History came along.
    - Browsers keep sign-in cookies per address, so each Reviewer signs in
      once at the new URL.
+   - The new host needs its own certificate ([HTTPS](#https)), so each
+     Reviewer trusts its `ca.crt` too.
 8. On the old host, keep the server from coming back at the next login:
    `launchctl disable gui/$(id -u)/ch.liip.nitpick.server`. Do the same for
    `ch.liip.nitpick.backup`. Keep its backups for a while.
 
 ## HTTPS
 
-There is no HTTPS yet: nitpick serves plain HTTP on the office LAN, which a
-VPN into the office also reaches. Over plain HTTP the browser has no
-WebCodecs, so the iOS stream falls back to MJPEG.
+With a certificate, the server serves HTTPS on its port, and no longer plain
+HTTP. HTTPS keeps each Reviewer's YouTrack token and sign-in cookie off the
+network in clear, and it gives the page a secure context, so the iOS stream
+is H.264 decoded in the browser instead of MJPEG.
 
-A certificate that Liip machines trust needs a Liip infrastructure decision.
-A TLS proxy in front of the server would also need two server changes:
+The certificate comes from a CA made for this host alone. It may sign only
+the names you give it, and `host.sh tls` deletes its key once it has signed,
+so trusting it vouches for nothing else. Each Reviewer trusts it once per
+browser profile or machine.
 
-- keep the original `Host`, which the Origin check compares against
-- set the sign-in cookie's `Secure` flag from the forwarded scheme, which
-  the server doesn't read yet
+### Turn it on
+
+1. On the host, make the certificate for every address and host name
+   Reviewers type, IPv4 addresses or names:
+   `~/nitpick/scripts/deploy/host.sh tls <address> [<name>...]`.
+   It writes `ca.crt`, `server.crt` and `server.key` to
+   `~/.config/nitpick/tls/`, and prints the CA's SHA-256 fingerprint and the
+   two config lines.
+2. Add those lines, `NITPICK_TLS_CERT` and `NITPICK_TLS_KEY`, to the config.
+   Restart the server and run the [health check](#health-check): it reports
+   `HTTPS:` and the certificate's expiry date.
+3. Copy `ca.crt` to your machine, from your own machine:
+   `scp <host>:.config/nitpick/tls/ca.crt nitpick-ca.crt`.
+   Send it to Reviewers with its fingerprint, and the new `https://` URL.
+   The old `http://` URL stops answering.
+4. If nitpick is registered with YouTrack's Hub
+   ([Sign-in through YouTrack](#sign-in-through-youtrack)), change its Home
+   URL and redirect URIs to `https://`. YouTrack refuses a redirect URI that
+   doesn't match.
+
+### Trust the CA, once per Reviewer
+
+Check that the fingerprint matches before you trust the file. Then:
+
+- **macOS** (Safari, Chrome, Edge): open `nitpick-ca.crt`, which adds it to
+  the login keychain. In Keychain Access, open the certificate, expand
+  **Trust**, and set **When using this certificate** to **Always Trust**.
+  `security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db nitpick-ca.crt`
+  does the same from Terminal.
+- **Windows** (Edge, Chrome): open `nitpick-ca.crt`, choose **Install
+  Certificate…**, **Current User**, then **Place all certificates in the
+  following store**: **Trusted Root Certification Authorities**.
+- **Firefox**, on any system: Settings › Privacy & Security › Certificates ›
+  View Certificates › Authorities › Import, and tick **Trust this CA to
+  identify websites**.
+
+Reopen the browser, then open the `https://` URL.
+
+### Renew it
+
+The certificate lasts 825 days, the most Apple accepts. To renew it, or to
+cover another address:
+
+1. On the host, delete `~/.config/nitpick/tls/`, run `host.sh tls` again,
+   and restart the server.
+2. Send Reviewers the new `ca.crt`. They trust it as above, and can delete
+   the old one: its name ends with the date it was made.
+
+A certificate from a CA that Liip machines already trust needs no step per
+Reviewer. Point `NITPICK_TLS_CERT` and `NITPICK_TLS_KEY` at it instead, with
+the certificate file holding any intermediate certificates after it.

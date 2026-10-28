@@ -27,6 +27,12 @@ export interface ServerConfig {
    * memory holds; undefined for no cap.
    */
   readonly maxBootedDevices: number | undefined
+  /**
+   * The PEM certificate and private key the server serves HTTPS with, both
+   * set or both unset; unset serves plain HTTP.
+   */
+  readonly tlsCertificateFile: string | undefined
+  readonly tlsKeyFile: string | undefined
 }
 
 export const defaultPort = 4870
@@ -49,6 +55,14 @@ export function loadConfig(
   const value = (key: string) =>
     nonEmpty(environment[key]) ?? nonEmpty(fromFile[key])
 
+  const tlsCertificateFile = value("NITPICK_TLS_CERT")
+  const tlsKeyFile = value("NITPICK_TLS_KEY")
+  if ((tlsCertificateFile === undefined) !== (tlsKeyFile === undefined)) {
+    throw new Error(
+      "Set both NITPICK_TLS_CERT and NITPICK_TLS_KEY to serve HTTPS, or neither."
+    )
+  }
+
   return {
     host: value("NITPICK_HOST") ?? "127.0.0.1",
     port: parsePort(value("NITPICK_PORT")),
@@ -59,6 +73,8 @@ export function loadConfig(
     youTrackURL: youTrackURL(value),
     hubClient: hubClient(value),
     maxBootedDevices: parseDeviceCap(value("NITPICK_MAX_BOOTED_DEVICES")),
+    tlsCertificateFile,
+    tlsKeyFile,
   }
 }
 

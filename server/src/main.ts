@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
+import { createServer as createHTTPSServer } from "node:https"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { serve } from "@hono/node-server"
@@ -24,6 +25,19 @@ if (config.youTrackURL === undefined) {
   )
   process.exit(1)
 }
+// HTTPS gives the page a secure context, so the iOS stream decodes H.264.
+// The files are read before anything starts, so a bad path stops it all.
+const { tlsCertificateFile: certificate, tlsKeyFile: key } = config
+const tls =
+  certificate === undefined || key === undefined
+    ? undefined
+    : {
+        createServer: createHTTPSServer,
+        serverOptions: {
+          cert: readFileSync(certificate),
+          key: readFileSync(key),
+        },
+      }
 const webRoot = fileURLToPath(new URL("../../web/dist", import.meta.url))
 const hasWebBuild = existsSync(webRoot)
 if (!hasWebBuild) {
@@ -96,9 +110,10 @@ const app = createApp({
 })
 
 const server = serve(
-  { fetch: app.fetch, hostname: config.host, port: config.port },
+  { fetch: app.fetch, hostname: config.host, port: config.port, ...tls },
   () => {
-    console.log(`nitpick server on http://${config.host}:${config.port}`)
+    const scheme = tls === undefined ? "http" : "https"
+    console.log(`nitpick server on ${scheme}://${config.host}:${config.port}`)
   }
 )
 // The device's input socket goes through the proxy as well.
