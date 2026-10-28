@@ -1,0 +1,5 @@
+captures sha256: 3c0f5f2f52df7da7a2824fddd9621921bb4dbad03e99728fb2d3a49018e0d0e0, 723775b2dd9f7f0da6a29a5057ca0bcc4cb6b897f574c272e5fe6bf5f7fa3cca
+RM-101 attachments: annotated.png cf72f883af3f626dad044884667ee2a4942289d168b114ad094c4ae5da2818b5, original.png 3c0f5f2f52df7da7a2824fddd9621921bb4dbad03e99728fb2d3a49018e0d0e0; tags design-review, nitpick-type:bug; customFields null
+RM-102 attachments: annotated.png 723775b2dd9f7f0da6a29a5057ca0bcc4cb6b897f574c272e5fe6bf5f7fa3cca, original.png 723775b2dd9f7f0da6a29a5057ca0bcc4cb6b897f574c272e5fe6bf5f7fa3cca; tags design-review, nitpick-type:bug; customFields null
+original.png equals the capture byte for byte: true
+History newest first: noor WX-61+WX-62 | vera RM-101+RM-102 | (Swift app) RM-421+RM-422

@@ -1,0 +1,16 @@
+NIT-105 in project 0-99, tags nitpick-feedback:improvement
+Summary: Show which device the Build runs on in the header
+
+With two reviews a day I lose track of the device.
+The chip helps, but the header would too.
+
+## Environment
+- Web app: 0.0.1 (b174913)
+- Server: 0.0.0 (b174913)
+- Browser: Chrome 156 on macOS
+- Device Host macOS: Version 27.0.1 (Build 26A434)
+- Device Host Xcode: 27.0 (27A266a)
+- Build: ch.liip.nitpick.smoke 1.0.0 (7)
+- Capture Source: Simulator — iPhone 17 Pro (proof), iOS 26.5
+
+Attachments: nitpick-window.png (59944 bytes)

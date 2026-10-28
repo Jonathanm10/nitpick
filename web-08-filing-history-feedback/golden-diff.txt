@@ -1,0 +1,7 @@
+POST /api/session/filing → 202
+filing: filed RM-106
+diff filed description vs core/test/golden/issue-description/with-designer-text.txt: (no differences)
+cmp: identical
+cmp original.png vs core/test/golden/images/capture.png: identical
+sha256 original.png f4d871115db844e3b696b5ec732a02f4f44a943e3a641baa62f2f0dc0693728e
+sha256 capture.png  f4d871115db844e3b696b5ec732a02f4f44a943e3a641baa62f2f0dc0693728e

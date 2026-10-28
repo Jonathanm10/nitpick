@@ -1,0 +1,8 @@
+POST /api/session/filing → 202
+server killed with SIGKILL while YouTrack held the second Issue's design-review tag request
+on disk: Search field loses focus on rotate: filed | Empty state illustration is cropped: attachmentsUploaded; filing mark present: true
+server started again
+after the restart: filing filed, RM-107, RM-108; open slot left: false
+this run's YouTrack writes — Issues created: 2, attachment uploads: 2, tags applied: 4, requests never answered: 1
+RM-107: annotated.png, original.png; tags design-review, nitpick-type:bug
+RM-108: annotated.png, original.png; tags design-review, nitpick-type:bug

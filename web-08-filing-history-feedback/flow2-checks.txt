@@ -1,0 +1,5 @@
+Issues created in this flow: RM-103, RM-104
+POST api/issues answered: 2
+POST attachments answered: 2, refused: 1
+RM-103: annotated.png, original.png; tags design-review, nitpick-type:bug
+RM-104: annotated.png, original.png; tags design-review, nitpick-type:bug
