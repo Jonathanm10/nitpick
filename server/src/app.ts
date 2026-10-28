@@ -42,6 +42,16 @@ import {
 } from "./annotationFlattening.ts"
 import { BuildIngestError, buildName } from "./buildIngestion.ts"
 import type { DeviceHost, SimulatorDevice } from "./device/DeviceHost.ts"
+import {
+  DeviceStreamUnavailable,
+  type DeviceStream,
+} from "./device/deviceHub.ts"
+import {
+  deviceHubRoutePrefix,
+  proxyHubHTTP,
+  refusal,
+  routeHubRequest,
+} from "./device/deviceHubProxy.ts"
 import { hostProblemReason } from "./device/hostHealth.ts"
 import { DeviceNotRunning, RuntimeUnavailable } from "./device/simctl.ts"
 import {
@@ -56,6 +66,7 @@ import {
 } from "./findingPatch.ts"
 import type { HistoryStore } from "./historyStore.ts"
 import { FindingNotFound, ReviewRefused, type Reviewer } from "./reviewer.ts"
+import type { StreamAccess } from "./streamAccess.ts"
 
 export interface AppOptions {
   readonly deviceHost: DeviceHost
@@ -69,6 +80,13 @@ export interface AppOptions {
   readonly serverVersion: string
   /** The built web app. Omitted in development, where Vite serves it. */
   readonly webRoot?: string
+  /**
+   * The shared access token the device stream asks for until sign-in
+   * exists. Omitted when the host set none, which keeps the stream off.
+   */
+  readonly streamAccess?: StreamAccess
+  /** The hub that streams the devices; omitted where nothing streams. */
+  readonly deviceStream?: DeviceStream
 }
 
 export function createApp({
@@ -78,6 +96,8 @@ export function createApp({
   history,
   serverVersion,
   webRoot,
+  streamAccess,
+  deviceStream,
 }: AppOptions): Hono {
   const app = new Hono()
 
@@ -326,6 +346,63 @@ export function createApp({
     )
   })
 
+  // Trades the shared access token for the cookie the device stream asks
+  // for: an <img> or a WebSocket can carry a cookie but not a header.
+  app.post("/api/stream-access", async (c) => {
+    if (streamAccess === undefined) return streamOff(c)
+    const token = (await jsonBody(c)).token
+    if (typeof token !== "string") throw malformedRequest()
+    if (!streamAccess.accepts(token)) {
+      return streamAccessNeeded(c, "That isn't the Device Host's access token.")
+    }
+    const secure = new URL(c.req.url).protocol === "https:"
+    c.header("Set-Cookie", streamAccess.cookie(secure))
+    return c.body(null, 204)
+  })
+
+  // Starts streaming the device the Build runs on. The page then reads the
+  // stream and opens the input socket through the proxy below.
+  app.post("/api/device-stream", async (c) => {
+    if (streamAccess === undefined || deviceStream === undefined) {
+      return streamOff(c)
+    }
+    if (!streamAccess.admits((name) => c.req.header(name))) {
+      return streamAccessNeeded(
+        c,
+        "Enter the Device Host's access token to see the device."
+      )
+    }
+    const udid = deviceUDID(await jsonBody(c))
+    const device = (await deviceHost.devices.list()).find(
+      (candidate) => candidate.udid === udid
+    )
+    if (device?.isBooted !== true) {
+      throw new DeviceNotRunning(
+        device?.name ?? "The device",
+        "it can't be shown"
+      )
+    }
+    await deviceStream.attach(udid)
+    return c.body(null, 204)
+  })
+
+  // The only way to the hub: allowlisted, authenticated, GET only.
+  app.all(`${deviceHubRoutePrefix}/*`, (c) => {
+    const route = routeHubRequest(
+      {
+        method: c.req.method,
+        url: c.req.url,
+        isUpgrade: false,
+        header: (name) => c.req.header(name),
+      },
+      streamAccess,
+      deviceStream
+    )
+    return "status" in route
+      ? refusal(route.status)
+      : proxyHubHTTP(c.req.raw, route)
+  })
+
   app.onError((error, c) => {
     const status = errorStatus(error)
     if (status === 500) console.error(error)
@@ -374,7 +451,25 @@ function errorStatus(error: unknown): ContentfulStatusCode {
     return 409
   }
   if (error instanceof YouTrackError) return 502
+  if (error instanceof DeviceStreamUnavailable) return 503
   return 500
+}
+
+function streamOff(c: Context): Response {
+  return c.json(
+    {
+      error:
+        "The Device Host has no access token set (NITPICK_ACCESS_TOKEN), so the device stream is off.",
+    } satisfies ErrorResponse,
+    503
+  )
+}
+
+function streamAccessNeeded(c: Context, message: string): Response {
+  return c.json(
+    { error: message, code: "streamAccess" } satisfies ErrorResponse,
+    401
+  )
 }
 
 function notConnected(c: Context, action: string): Response {

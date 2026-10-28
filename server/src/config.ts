@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { parseEnv } from "node:util"
 import { YouTrackCredentials } from "@nitpick/core"
+import { StreamAccess } from "./streamAccess.ts"
 
 export interface ServerConfig {
   /**
@@ -20,6 +21,13 @@ export interface ServerConfig {
    * never prints it.
    */
   readonly youTrack: YouTrackCredentials | undefined
+  /**
+   * The one access token the device stream accepts until sign-in exists
+   * (issue 10), shared by every Reviewer. Undefined when unset, which keeps
+   * the stream off: nothing could authenticate to it. Like the YouTrack
+   * token, it sits in a private field.
+   */
+  readonly streamAccess: StreamAccess | undefined
 }
 
 export const defaultPort = 4870
@@ -53,7 +61,21 @@ export function loadConfig(
       value("NITPICK_YOUTRACK_URL"),
       value("NITPICK_YOUTRACK_TOKEN")
     ),
+    streamAccess: streamAccess(value("NITPICK_ACCESS_TOKEN")),
   }
+}
+
+/** Whoever has this token can drive the host's devices, so it can't be short. */
+const minimumAccessTokenLength = 16
+
+function streamAccess(token: string | undefined): StreamAccess | undefined {
+  if (token === undefined) return undefined
+  if (token.length < minimumAccessTokenLength) {
+    throw new Error(
+      `NITPICK_ACCESS_TOKEN must be at least ${minimumAccessTokenLength} characters long.`
+    )
+  }
+  return new StreamAccess(token)
 }
 
 function youTrackCredentials(
