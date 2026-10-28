@@ -9,6 +9,7 @@ import type {
   FeedbackResponse,
   FilingResponse,
   FindingPatch,
+  HistoryImportResponse,
   HistoryResponse,
   HostResponse,
   ProjectsResponse,
@@ -140,6 +141,14 @@ export const api = {
   dismissFilingResult: () =>
     call<void>("/api/filing-result", { method: "DELETE" }),
   history: () => call<HistoryResponse>("/api/history"),
+  importHistory: (files: ReadonlyArray<File>) => {
+    const form = new FormData()
+    for (const file of files) form.append("files", file)
+    return call<HistoryImportResponse>("/api/history/import", {
+      method: "POST",
+      body: form,
+    })
+  },
   feedbackEnvironment: () =>
     call<FeedbackEnvironmentResponse>("/api/feedback/environment"),
   startDeviceStream: (deviceUDID: string) =>

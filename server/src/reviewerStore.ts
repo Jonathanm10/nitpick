@@ -10,6 +10,7 @@
 //   <reviewer>/recent-devices.json
 //   <reviewer>/builds/<id>/…          one extracted upload each
 //   <reviewer>/uploads/<id>.zip       an upload until it is extracted
+//   <reviewer>/imports/<id>/…         a History import's zips while read
 import {
   mkdir,
   readdir,
@@ -171,6 +172,11 @@ export class ReviewerStore {
       archivePath: join(this.#uploadsDirectory, `${id}.zip`),
       buildDirectory,
     }
+  }
+
+  /** A directory for one History import's zips; it isn't created yet. */
+  newImportDirectory(): string {
+    return join(this.directory, "imports", newUUID())
   }
 
   /** Deletes every extracted Build except the one `keep` names. */
