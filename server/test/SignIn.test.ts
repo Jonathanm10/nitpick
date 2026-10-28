@@ -47,6 +47,13 @@ const golden = goldenInput<SessionAndFinding>(
 const vera = { login: "vera", fullName: "Vera Baumann" }
 const noor = { login: "noor", fullName: "Noor Haddad" }
 const day = 24 * 60 * 60 * 1000
+const iPhone = {
+  udid: "AAAA-1111",
+  name: "iPhone 17 Pro",
+  osName: "iOS 26.5",
+  isBooted: true,
+  isRuntimeAvailable: true,
+}
 
 function server(
   options: {
@@ -59,7 +66,7 @@ function server(
   const fake = options.fake ?? new FakeYouTrack()
   const signIns = new SignInStore(data, fake.instanceURL, options.now)
   const history = new HistoryStore(join(data, "history"))
-  const deviceHost = new FakeDeviceHost([])
+  const deviceHost = new FakeDeviceHost([iPhone])
   const reviewers = new Reviewers({
     directory: join(data, "reviewers"),
     instanceURL: fake.instanceURL,
@@ -516,6 +523,26 @@ describe("a token YouTrack rejects later", () => {
       "Button color is off",
       "Label truncates",
     ])
+  })
+
+  test("on Resume review, whose project schema read is otherwise non-fatal, ends the sign-in too", async () => {
+    const h = server()
+    await stage(h, "vera", ["Button color is off"])
+    const cookie = await signedIn(h, "perm:vera")
+    delete h.fake.users["perm:vera"]
+
+    const resume = await h.app.request("/api/session", {
+      method: "POST",
+      headers: { cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceUDID: iPhone.udid }),
+    })
+
+    expect(resume.status).toBe(401)
+    expect(await resume.json()).toEqual({
+      error: rejectedTokenMessage,
+      code: "signIn",
+    })
+    expect(signInFiles(h)).toEqual([])
   })
 
   test("in a File all running on the server ends the sign-in too; the session stays to file again", async () => {

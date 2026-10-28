@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent } from "react"
 import { unfiledFindingCount, type YouTrackUser } from "@nitpick/core"
 import { HistoryIcon } from "lucide-react"
+import { toast } from "sonner"
 import { BuildDropZone } from "@/components/build-drop-zone"
 import { DevicePicker } from "@/components/device-picker"
 import { focusDeviceStream } from "@/components/device-stream"
@@ -179,13 +180,20 @@ function ReviewApp({
     if (file !== undefined) takeBuild(file)
   }
 
-  /** Pending edits go to the open session first, which waits for the next sign-in. */
+  /**
+   * Pending edits go to the open session first, which waits for the next
+   * sign-in. Sign-in shows only once the server has ended the sign-in.
+   */
   function signOut() {
     void model
       .saveEdits()
+      .catch(() => false)
       .then(() => api.signOut())
-      .catch(() => {})
-      .finally(onSignedOut)
+      .then(onSignedOut, (error: unknown) =>
+        toast.error(
+          `Signing out failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      )
   }
 
   function requestEndReview() {

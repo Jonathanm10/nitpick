@@ -30,6 +30,12 @@ export class SessionSaver {
   #failures = 0
   /** Counts Findings whose edits were sent, or dropped with their Finding. */
   #settled = 0
+  /**
+   * Set while the page that owns it is unmounted, as on sign-out: nothing
+   * goes out then, retries included, or it would go out under whoever
+   * signs in next.
+   */
+  #stopped = false
 
   /** `report` gets the failure to show, or undefined once a save succeeds. */
   constructor(report: (error: string | undefined) => void) {
@@ -65,6 +71,7 @@ export class SessionSaver {
   flush(): Promise<void> {
     clearTimeout(this.#timer)
     this.#timer = undefined
+    if (this.#stopped) return Promise.resolve()
     if (this.#saving !== undefined) {
       this.#saveAgain = true
       return this.#saving
@@ -106,6 +113,19 @@ export class SessionSaver {
     this.#dirty.delete(itemID)
   }
 
+  /** The page mounted: saving may go out. */
+  start(): void {
+    this.#stopped = false
+  }
+
+  /** The page unmounted: drop everything pending, and send nothing more. */
+  stop(): void {
+    this.#stopped = true
+    clearTimeout(this.#timer)
+    this.#timer = undefined
+    this.#dirty = new Map()
+  }
+
   /** The session ended: drop everything pending, and the error with it. */
   cancel(): void {
     clearTimeout(this.#timer)
@@ -129,6 +149,7 @@ export class SessionSaver {
   }
 
   #schedule(due: number): void {
+    if (this.#stopped) return
     clearTimeout(this.#timer)
     this.#timer = setTimeout(
       () => void this.flush(),
@@ -139,6 +160,7 @@ export class SessionSaver {
   async #send(work: Map<string, Set<string>>): Promise<void> {
     let failure: string | undefined
     for (const [key, fields] of work) {
+      if (this.#stopped) return
       // A Finding being discarded keeps its edits until the server confirms
       // the discard (`forget`), so a refused discard still saves them.
       if (
@@ -162,6 +184,7 @@ export class SessionSaver {
         this.#requeue(key, fields)
       }
     }
+    if (this.#stopped) return
     if (failure === undefined) {
       this.#typingSave = this.#typingSave.saved()
       this.#report(undefined)

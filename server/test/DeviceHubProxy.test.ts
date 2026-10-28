@@ -246,6 +246,27 @@ describe("device hub proxy: forwarding", () => {
     expect(Buffer.concat(received)).toEqual(Buffer.concat([part, part]))
   })
 
+  test("an open stream ends when its sign-in does", async () => {
+    const { app, signedIn } = await fixture()
+    const response = await app.request(`${proxy}${streamRoutes[1]}`, {
+      headers: signedIn,
+    })
+    const reader = response.body!.getReader()
+    await reader.read()
+
+    const signOut = await app.request("/api/sign-out", {
+      method: "POST",
+      headers: signedIn,
+    })
+    let done = false
+    for (let reads = 0; !done && reads < 100; reads++) {
+      done = (await reader.read()).done
+    }
+
+    expect(signOut.status).toBe(204)
+    expect(done).toBe(true)
+  })
+
   test("a viewer that goes away releases its stream from the hub", async () => {
     const { app, hub, signedIn } = await fixture()
     const server = await listen(app)
@@ -279,7 +300,7 @@ describe("device hub proxy: the input socket", () => {
     server.on(
       "upgrade",
       hubUpgradeHandler(
-        (header) => context.reviewers.admits(header),
+        (header) => context.reviewers.admit(header),
         context.hub
       )
     )
@@ -328,6 +349,26 @@ describe("device hub proxy: the input socket", () => {
     expect(forwarded.cookie).toBeUndefined()
   })
 
+  test("an open socket closes when its sign-in ends, and input stops reaching the hub", async () => {
+    const { app, hub, origin, signedIn } = await proxied()
+    const opened = await open(`ws://${origin}${socketPath}`, {
+      ...signedIn,
+      origin: `http://${origin}`,
+    })
+    if (!("socket" in opened)) throw new Error(`refused ${opened.status}`)
+    const closed = new Promise((resolve) =>
+      opened.socket.once("close", resolve)
+    )
+
+    await app.request("/api/sign-out", { method: "POST", headers: signedIn })
+    await closed
+    opened.socket.send(Uint8Array.of(0x03, 9))
+
+    expect(opened.socket.readyState).toBe(WebSocket.CLOSED)
+    await eventually(() => expect(hub.socketRequests).toHaveLength(1))
+    expect(opened.frames).toEqual([[0x83]])
+  })
+
   test.each([
     ["without a sign-in", {}, socketPath, 401],
     ["from another origin of the same site", "foreign", socketPath, 403],
@@ -368,7 +409,7 @@ describe("the input socket: a target no URL parses", () => {
     const server = await listen(app)
     server.on(
       "upgrade",
-      hubUpgradeHandler((header) => reviewers.admits(header), hub)
+      hubUpgradeHandler((header) => reviewers.admit(header), hub)
     )
     const { port } = server.address() as AddressInfo
 

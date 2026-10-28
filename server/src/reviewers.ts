@@ -15,6 +15,7 @@ import {
   type HTTPTransport,
   type YouTrackUser,
 } from "@nitpick/core"
+import type { Admission } from "./device/deviceHubProxy.ts"
 import {
   Reviewer,
   type ReviewerDependencies,
@@ -127,9 +128,15 @@ export class Reviewers {
     return { status: "signedIn", id, signedIn: this.#signedIn(signIn) }
   }
 
-  /** Whether a request's headers carry a live sign-in. */
-  admits(header: (name: string) => string | undefined): boolean {
-    return this.authenticate(header("cookie")).status === "signedIn"
+  /**
+   * The live sign-in a request's headers carry, for the device hub proxy,
+   * which ends the request's stream or socket when the sign-in ends.
+   */
+  admit(header: (name: string) => string | undefined): Admission | undefined {
+    const authentication = this.authenticate(header("cookie"))
+    if (authentication.status === "signedOut") return undefined
+    const { signIn } = authentication.signedIn
+    return { onEnd: (end) => this.#signIns.onEnd(signIn, end) }
   }
 
   /** The sliding expiry: whether the sign-in's end moved, for its cookie. */

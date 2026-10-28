@@ -83,6 +83,17 @@ describe("Triage — Priority", () => {
     expect(schema.priorities).toEqual([])
   })
 
+  // Not in the Swift suite: on the web app a rejected token ends the
+  // Reviewer's sign-in, so it's the one failure that isn't swallowed.
+  test("a token YouTrack rejects (401) throws tokenRejected; a 403 stays a missing permission", async () => {
+    const rejected = new FakeHTTPTransport()
+    rejected.enqueue(`{"error":"Unauthorized"}`, 401)
+
+    await expect(
+      loadProjectSchema(fixtures.youTrack(rejected), fixtures.session.project)
+    ).rejects.toMatchObject({ failure: { kind: "tokenRejected" } })
+  })
+
   // Not in the Swift suite: the other failures its doc comment names.
   test("an offline or unreadable schema read is non-fatal too", async () => {
     const offline = new FakeHTTPTransport()

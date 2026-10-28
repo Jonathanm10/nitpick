@@ -11,7 +11,11 @@ import {
   payloadObject,
   type PayloadObject,
 } from "./youTrackPayload.ts"
-import type { YouTrackClient, YouTrackProject } from "./youtrack.ts"
+import {
+  YouTrackError,
+  type YouTrackClient,
+  type YouTrackProject,
+} from "./youtrack.ts"
 
 export interface ProjectSchema {
   /**
@@ -24,10 +28,14 @@ export interface ProjectSchema {
 }
 
 /**
- * Reads the project's Priority scale and assignable users. Never fails:
- * offline, no permission, no Priority field or no assignable users all give
- * an empty schema, so the Review Session still starts and the Editor hides
- * the control. Type is nitpick's own and never read here.
+ * Reads the project's Priority scale and assignable users. Offline, no
+ * permission, no Priority field or no assignable users all give an empty
+ * schema, so the Review Session still starts and the Editor hides the
+ * control. Type is nitpick's own and never read here.
+ *
+ * Unlike Swift's, a token YouTrack rejects (401) throws tokenRejected: on
+ * the web app it ends the Reviewer's sign-in. A 403 stays a missing
+ * permission, which the empty schema covers.
  */
 export async function loadProjectSchema(
   youTrack: YouTrackClient,
@@ -38,6 +46,7 @@ export async function loadProjectSchema(
       path: `api/admin/projects/${project.id}/customFields`,
       query:
         "fields=field(name),bundle(values(name),aggregatedUsers(login,fullName))&$top=100",
+      deniedAction: "read the project's fields",
       decode: (json) => payloadArray(json).map(customField),
     })
     const named = (name: string) =>
@@ -52,7 +61,13 @@ export async function loadProjectSchema(
           : [{ login: user.login, fullName: user.fullName ?? user.login }]
       ),
     }
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof YouTrackError &&
+      error.failure.kind === "tokenRejected"
+    ) {
+      throw error
+    }
     return { priorities: [], assignees: [] }
   }
 }

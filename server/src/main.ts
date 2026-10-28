@@ -74,7 +74,7 @@ const server = serve(
 // The device's input socket goes through the proxy as well.
 server.on(
   "upgrade",
-  hubUpgradeHandler((header) => reviewers.admits(header), deviceHub)
+  hubUpgradeHandler((header) => reviewers.admit(header), deviceHub)
 )
 
 // The hub is the server's child: it stops with the server.

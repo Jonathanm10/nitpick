@@ -69,6 +69,8 @@ export class SignInStore {
     { signIn: SignIn; stored: StoredSignIn }
   >()
   readonly #endings = new Map<string, string>()
+  /** What runs when a live sign-in ends: its proxied streams closing. */
+  readonly #endListeners = new Map<string, Set<() => void>>()
   /**
    * File writes and deletions run in turn, so a renewal still writing can't
    * bring back the file of a sign-in that ended meanwhile.
@@ -174,9 +176,30 @@ export class SignInStore {
     return true
   }
 
+  /**
+   * Calls `listener` once the sign-in ends, or at once if it already has;
+   * answers the function that stops it.
+   */
+  onEnd(signIn: SignIn, listener: () => void): () => void {
+    if (!this.#signIns.has(signIn.key)) {
+      listener()
+      return () => {}
+    }
+    const listeners = this.#endListeners.get(signIn.key) ?? new Set()
+    listeners.add(listener)
+    this.#endListeners.set(signIn.key, listeners)
+    return () => {
+      listeners.delete(listener)
+      if (listeners.size === 0) this.#endListeners.delete(signIn.key)
+    }
+  }
+
   /** Ends a sign-in: its file, with the token, is deleted. */
   async end(signIn: SignIn, reason?: string): Promise<void> {
     this.#signIns.delete(signIn.key)
+    const listeners = this.#endListeners.get(signIn.key)
+    this.#endListeners.delete(signIn.key)
+    for (const listener of listeners ?? []) listener()
     if (reason !== undefined) {
       this.#endings.set(signIn.key, reason)
       if (this.#endings.size > rememberedEndings) {

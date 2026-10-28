@@ -114,7 +114,7 @@ export function createApp({
         isUpgrade: false,
         header: (name) => c.req.header(name),
       },
-      (header) => reviewers.admits(header),
+      (header) => reviewers.admit(header),
       deviceStream
     )
     return "status" in route
