@@ -394,14 +394,15 @@ status() {
 	fi
 	say "Booted devices: $booted (cap: $(value maxBootedDevices | sed 's/^$/none/'))"
 	android=$(android_health) || android="failed: the server's Android check didn't run."
-	case $android in
-	ready:*) say "Android: ready. ${android#ready: }" ;;
-	sdkMissing:*) say "Android: not set up, so iOS only. host.sh android sets it up." ;;
-	*)
+	# No SDK folder at all is a host set up for iOS only; a part of one isn't.
+	if [ "${android%%:*}" = ready ]; then
+		say "Android: ready. ${android#ready: }"
+	elif [ "${android%%:*}" = sdkMissing ] && [ ! -d "$android_sdk" ]; then
+		say "Android: not set up, so iOS only. host.sh android sets it up."
+	else
 		say "Android: NOT READY. ${android#*: }"
 		problems=$((problems + 1))
-		;;
-	esac
+	fi
 	say "Memory: $(memory_pressure -Q 2>/dev/null | sed -n 's/^System-wide memory free percentage: /free /p')"
 	say "Disk: $(df -h "$(value dataDirectory)" 2>/dev/null | awk 'NR == 2 { print $4 " free" }')"
 
