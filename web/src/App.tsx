@@ -328,7 +328,7 @@ function ReviewApp({
             onOpenCommands={() => setPaletteOpen(true)}
           />
         ) : filingResult !== undefined ? (
-          <div className="flex min-h-0 flex-1 flex-col canvas-dots">
+          <div className="flex min-h-0 flex-1 thin-scroll flex-col overflow-y-auto canvas-dots">
             <FilingResult
               entry={filingResult}
               disabled={isBusy}
@@ -520,7 +520,8 @@ function paletteCommands({
       disabled: studio.refusal !== undefined,
       run: inReview(() => void studio.capture()),
     })
-    if (editor.item !== undefined) {
+    // Not from History: the device isn't on the page there to take focus.
+    if (editor.item !== undefined && !showsHistory) {
       commands.push({
         id: "back-to-live",
         group,

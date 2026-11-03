@@ -25,7 +25,7 @@ export function FilingResult({
   return (
     <section
       aria-label="Filing result"
-      className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-5 px-8"
+      className="mx-auto flex w-full max-w-2xl flex-1 shrink-0 flex-col justify-center gap-5 px-8 py-10"
     >
       <div className="flex animate-in items-start gap-3 duration-300 fade-in slide-in-from-top-1 motion-reduce:animate-none">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-green/15 text-green ring-1 ring-green/30">
