@@ -13,12 +13,7 @@ import {
   type SentFeedback,
   type TrayItem,
 } from "@nitpick/core"
-import {
-  CircleCheckIcon,
-  ImageIcon,
-  MessageSquareIcon,
-  TriangleAlertIcon,
-} from "lucide-react"
+import { CircleCheckIcon, ImageIcon, TriangleAlertIcon } from "lucide-react"
 import { AnnotationSurface } from "@/components/annotation-surface"
 import {
   annotationTools,
@@ -68,46 +63,15 @@ const kindLabels: Record<FeedbackKind, string> = {
 }
 
 /**
- * "Send feedback" in the page header and its dialog, after
+ * Send feedback, from the rail, the account menu or ⌘K, after
  * Sources/Nitpick/FeedbackSheet.swift: kind, title and description, the
  * read-only Environment, an image attached by paste or file pick and
  * annotated with the Editor's own surface and toolbar, the discard
- * confirmation, and the sent state. Every opening starts blank. Sending is
- * not a run: the review behind the dialog never freezes.
+ * confirmation, and the sent state. Mount it afresh for every opening, so
+ * each starts blank. Sending is not a run: the review behind the dialog
+ * never freezes.
  */
-export function FeedbackButton({
-  review,
-}: {
-  /** The open Review Session's Build and device, for the Environment. */
-  readonly review: FeedbackReviewContext | undefined
-}) {
-  const [opening, setOpening] = useState(0)
-  const [open, setOpen] = useState(false)
-  return (
-    <>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => {
-          setOpening((count) => count + 1)
-          setOpen(true)
-        }}
-      >
-        <MessageSquareIcon />
-        Send feedback
-      </Button>
-      {open && (
-        <FeedbackDialog
-          key={opening}
-          review={review}
-          onClose={() => setOpen(false)}
-        />
-      )}
-    </>
-  )
-}
-
-function FeedbackDialog({
+export function FeedbackDialog({
   review,
   onClose,
 }: {

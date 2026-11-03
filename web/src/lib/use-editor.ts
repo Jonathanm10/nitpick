@@ -96,6 +96,16 @@ export function useEditor({
     setEditor(new EditorState(itemID))
   }
 
+  /**
+   * Back to live: no Finding open, so the device takes the stage again.
+   * Refused while a label draft pins the Editor, as a retarget is.
+   */
+  function close(): boolean {
+    if (editor.hasPendingLabelDraft) return false
+    if (editor.target !== undefined) setEditor(new EditorState())
+    return true
+  }
+
   function step(direction: TrayStep) {
     const next = stepEditor(editor, direction, session)
     if (next !== undefined) setEditor(next)
@@ -303,6 +313,7 @@ export function useEditor({
     canDiscard: editor.allowsDiscard({ isBusy }),
     select,
     open,
+    close,
     step,
     canStep,
     setPendingLabelDraft,

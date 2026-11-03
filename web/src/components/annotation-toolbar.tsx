@@ -14,7 +14,6 @@ import {
 } from "lucide-react"
 import type { ComponentType } from "react"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Tooltip,
@@ -81,7 +80,7 @@ function colorName(color: AnnotationColor): string {
 export function AnnotationToolbar({ editor }: { readonly editor: Editor }) {
   const disabled = !editor.canEdit
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-2 py-1.5 shadow-xs">
+    <div className="flex items-center gap-2 rounded-[12px] px-1.5 py-1.5 float-surface">
       <ToggleGroup
         aria-label="Tool"
         value={[editor.tool]}
@@ -111,7 +110,8 @@ export function AnnotationToolbar({ editor }: { readonly editor: Editor }) {
           </Tooltip>
         ))}
       </ToggleGroup>
-      <div role="radiogroup" aria-label="Colour" className="flex gap-1.5">
+      <span className="h-5 w-px bg-line-strong" />
+      <div role="radiogroup" aria-label="Colour" className="flex gap-1.5 px-1">
         {annotationColors.map((color) => {
           const selected = editor.color === color
           return (
@@ -130,8 +130,7 @@ export function AnnotationToolbar({ editor }: { readonly editor: Editor }) {
           )
         })}
       </div>
-      <Separator orientation="vertical" className="h-5" />
-      <span className="flex-1" />
+      <span className="h-5 w-px bg-line-strong" />
       <Tooltip>
         <TooltipTrigger
           render={

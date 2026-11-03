@@ -1,21 +1,43 @@
 import { useEffect, useRef, useState, type DragEvent } from "react"
-import { unfiledFindingCount, type YouTrackUser } from "@nitpick/core"
-import { HistoryIcon } from "lucide-react"
+import {
+  trimWhitespaceAndNewlines,
+  unfiledFindingCount,
+  filedIssueOf,
+  type YouTrackUser,
+} from "@nitpick/core"
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  CameraIcon,
+  FileUpIcon,
+  HistoryIcon,
+  KeyboardIcon,
+  LogOutIcon,
+  Maximize2Icon,
+  MessageSquareWarningIcon,
+  PlayIcon,
+  SendIcon,
+  SquareIcon,
+  UploadIcon,
+} from "lucide-react"
 import { toast } from "sonner"
-import { BuildDropZone } from "@/components/build-drop-zone"
-import { DevicePicker } from "@/components/device-picker"
-import { focusDeviceStream } from "@/components/device-stream"
-import { FeedbackButton } from "@/components/feedback-dialog"
+import {
+  CommandPalette,
+  type PaletteCommand,
+} from "@/components/command-palette"
+import { FeedbackDialog } from "@/components/feedback-dialog"
 import { FilingResult } from "@/components/filing-result"
 import { HistoryPage } from "@/components/history-page"
-import { HistoryTraceLine } from "@/components/history-trace-line"
-import { HostNotReady } from "@/components/host-not-ready"
-import { ProjectPicker } from "@/components/project-picker"
-import { SessionScreen } from "@/components/session-screen"
+import { HomeScreen } from "@/components/home-screen"
+import { Rail } from "@/components/rail"
+import {
+  refusalHints,
+  SessionScreen,
+  useStudioSession,
+  type StudioSession,
+} from "@/components/session-screen"
 import { ShortcutsDialog } from "@/components/shortcuts-dialog"
 import { SignInPage } from "@/components/sign-in-page"
-import { StartReviewButton } from "@/components/start-review-button"
-import { UserMenu } from "@/components/user-menu"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,11 +48,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
 import { Toaster } from "@/components/ui/sonner"
 import { Spinner } from "@/components/ui/spinner"
 import { api, APIError, onSignedOut } from "@/lib/api"
-import { chords } from "@/lib/chords"
+import { chords, isTextEntry } from "@/lib/chords"
 import { useReview } from "@/lib/use-review"
 
 /** The History page's address; a hash, so the server serves one page. */
@@ -90,7 +111,7 @@ export function App() {
     case "checking":
       return (
         <div className="flex min-h-svh items-center justify-center">
-          <Spinner aria-label="Loading" />
+          <Spinner aria-label="Loading" className="text-text-3" />
         </div>
       )
     case "signedOut":
@@ -112,6 +133,11 @@ export function App() {
   }
 }
 
+/**
+ * The signed-in page: the rail, then home, the open session, the filing
+ * result or History. ⌘K, ? and Send feedback reach their dialogs from
+ * anywhere.
+ */
 function ReviewApp({
   reviewer,
   onSignedOut,
@@ -120,17 +146,27 @@ function ReviewApp({
   readonly onSignedOut: () => void
 }) {
   const model = useReview()
-  const { review, host, projects, isBusy, errorMessage } = model
+  const studio = useStudioSession(model)
+  const { review, isBusy, errorMessage } = model
   const state = review.status === "loaded" ? review : undefined
   const session = state?.session
   const [route, navigate] = useRoute()
   const showsHistory = route === historyRoute
   const filingResult =
     model.filing.status === "filed" ? model.filing.result : undefined
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  /** Counts openings, so every Send feedback starts blank. */
+  const [feedbackOpening, setFeedbackOpening] = useState<number>()
+  // State, not a ref: ⌘K's Choose Build… is built while rendering.
+  const [buildInput, setBuildInput] = useState<HTMLInputElement | null>(null)
 
   function openHistory() {
     navigate(historyRoute)
     void model.refreshHistory()
+  }
+  function openFeedback() {
+    setFeedbackOpening((count) => (count ?? 0) + 1)
   }
   const [isDragging, setIsDragging] = useState(false)
   // A Build dropped while the open session holds unfiled Findings waits for
@@ -202,57 +238,135 @@ function ReviewApp({
   }
 
   // Start review and Resume review: ⌘⏎ / Ctrl+Enter, since ⌘R reloads the
-  // page. While the Build runs, the chord returns to the Build: focus moves
-  // to the device, so typing goes to it.
-  const startChord = useRef(() => {})
+  // page. While the Build runs, the chord returns to the Build: the device
+  // takes the stage and focus, so typing goes to it. ⌘K opens the commands
+  // from anywhere, a text field included; ? the shortcuts, outside fields.
+  const latest = useRef({ model, studio })
   useEffect(() => {
-    startChord.current = () => {
-      if (model.run === undefined) void model.startReview()
-      else focusDeviceStream()
-    }
+    latest.current = { model, studio }
   })
   useEffect(() => {
     function keyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || !chords.startReview.matches(event)) return
-      event.preventDefault()
-      startChord.current()
+      if (event.defaultPrevented) return
+      if (chords.commands.matches(event)) {
+        event.preventDefault()
+        setPaletteOpen((open) => !open)
+        return
+      }
+      if (chords.startReview.matches(event)) {
+        event.preventDefault()
+        const { model, studio } = latest.current
+        if (model.run === undefined) void model.startReview()
+        else studio.backToLive()
+        return
+      }
+      if (
+        event.key === "?" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !isTextEntry(event.target) &&
+        document.querySelector("[role=dialog],[role=alertdialog]") === null
+      ) {
+        event.preventDefault()
+        setShortcutsOpen(true)
+      }
     }
     document.addEventListener("keydown", keyDown)
     return () => document.removeEventListener("keydown", keyDown)
   }, [])
 
+  const commands = paletteCommands({
+    model,
+    studio,
+    showsHistory,
+    hasFilingResult: filingResult !== undefined,
+    navigate,
+    openHistory,
+    chooseBuild: () => buildInput?.click(),
+    requestEndReview,
+    openFeedback,
+    openShortcuts: () => setShortcutsOpen(true),
+    signOut,
+  })
+
   return (
     <div
-      className="flex min-h-svh flex-col"
+      className="flex h-svh min-w-[1024px] overflow-hidden"
       onDragOver={dragOver}
       onDragLeave={(event) => {
         if (event.currentTarget === event.target) setIsDragging(false)
       }}
       onDrop={drop}
     >
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-6">
-        <span className="font-medium">nitpick</span>
-        {state?.build && session && (
-          <span className="truncate text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">
-              {state.build.name}
-            </span>{" "}
-            {state.build.identity.version} ({state.build.identity.buildNumber})
-            · {session.project.name}
-          </span>
+      <Rail
+        reviewer={reviewer}
+        page={showsHistory ? "history" : "review"}
+        session={session === undefined ? "none" : model.run ? "live" : "paused"}
+        onReview={() => navigate("")}
+        onHistory={openHistory}
+        onSendFeedback={openFeedback}
+        onCommands={() => setPaletteOpen(true)}
+        onShortcuts={() => setShortcutsOpen(true)}
+        onSignOut={signOut}
+      />
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {showsHistory ? (
+          <HistoryPage
+            history={model.history}
+            backLabel={session ? "Back to review" : "Back"}
+            onBack={() => navigate("")}
+            onImported={() => void model.refreshHistory()}
+          />
+        ) : state?.build && session ? (
+          <SessionScreen
+            session={session}
+            build={state.build}
+            model={model}
+            studio={studio}
+            onEndReview={requestEndReview}
+            onOpenCommands={() => setPaletteOpen(true)}
+          />
+        ) : filingResult !== undefined ? (
+          <div className="flex min-h-0 flex-1 thin-scroll flex-col overflow-y-auto canvas-dots">
+            <FilingResult
+              entry={filingResult}
+              disabled={isBusy}
+              onDone={() => void model.dismissFilingResult()}
+              onOpenHistory={openHistory}
+            />
+            {errorMessage !== undefined && (
+              <p
+                role="alert"
+                className="mx-auto mb-8 w-full max-w-2xl px-8 text-[13px] text-red select-text"
+              >
+                {errorMessage}
+              </p>
+            )}
+          </div>
+        ) : (
+          <HomeScreen
+            model={model}
+            isDragging={isDragging}
+            onChooseBuild={takeBuild}
+            onOpenHistory={openHistory}
+            onOpenCommands={() => setPaletteOpen(true)}
+          />
         )}
-        <span className="flex-1" />
-        {isBusy && <Spinner aria-label="Working" />}
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-current={showsHistory ? "page" : undefined}
-          onClick={openHistory}
-        >
-          <HistoryIcon />
-          History
-        </Button>
-        <FeedbackButton
+      </main>
+      {isDragging && !showsHistory && state !== undefined && (
+        <DropOverlay unfiled={session === undefined ? undefined : unfiled} />
+      )}
+      <Toaster position="bottom-right" />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        commands={commands}
+      />
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      {feedbackOpening !== undefined && (
+        <FeedbackDialog
+          key={feedbackOpening}
           review={
             state?.build && session
               ? {
@@ -262,91 +376,20 @@ function ReviewApp({
                 }
               : undefined
           }
+          onClose={() => setFeedbackOpening(undefined)}
         />
-        <ShortcutsDialog />
-        <UserMenu reviewer={reviewer} onSignOut={signOut} />
-      </header>
-      <main
-        className={
-          state?.build && session && !showsHistory
-            ? "flex h-[calc(100svh-3rem)] min-h-[40rem] flex-col gap-4 p-4"
-            : "mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 p-6"
-        }
-      >
-        {review.status === "failed" && <ErrorLine message={review.error} />}
-        {showsHistory ? (
-          <HistoryPage
-            history={model.history}
-            onBack={() => navigate("")}
-            onImported={() => void model.refreshHistory()}
-          />
-        ) : state?.build && session ? (
-          <SessionScreen
-            session={session}
-            model={model}
-            onEndReview={requestEndReview}
-          />
-        ) : filingResult !== undefined ? (
-          <>
-            <FilingResult
-              entry={filingResult}
-              disabled={isBusy}
-              onDone={() => void model.dismissFilingResult()}
-            />
-            {errorMessage !== undefined && <ErrorLine message={errorMessage} />}
-          </>
-        ) : (
-          <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center gap-4">
-            <BuildDropZone
-              build={state?.build}
-              isDragging={isDragging}
-              disabled={isBusy || state === undefined}
-              onChoose={takeBuild}
-            />
-            {host.status === "notReady" ? (
-              <HostNotReady
-                reason={host.reason}
-                disabled={isBusy}
-                onCheckAgain={model.checkHostAgain}
-              />
-            ) : (
-              <DevicePicker
-                variant="field"
-                devices={model.devices}
-                recentDeviceUDIDs={model.recentDeviceUDIDs}
-                selected={model.selectedDevice}
-                onSelect={model.selectDevice}
-                disabled={isBusy || host.status === "loading"}
-                androidProblem={model.androidProblem}
-              />
-            )}
-            {projects.status === "failed" ? (
-              <p className="text-sm text-muted-foreground">{projects.error}</p>
-            ) : (
-              <ProjectPicker
-                projects={projects.status === "loaded" ? projects.projects : []}
-                selectedID={model.selectedProjectID}
-                onSelect={model.setSelectedProjectID}
-              />
-            )}
-            <div className="flex justify-end">
-              <StartReviewButton
-                title={model.startTitle}
-                missing={model.missingForStart}
-                onStart={model.startReview}
-              />
-            </div>
-            {errorMessage !== undefined && <ErrorLine message={errorMessage} />}
-          </div>
-        )}
-        {!showsHistory &&
-          !session &&
-          filingResult === undefined &&
-          model.trace !== undefined && (
-            <HistoryTraceLine trace={model.trace} onOpenHistory={openHistory} />
-          )}
-      </main>
-      <Toaster position="bottom-center" />
+      )}
+      <input
+        ref={setBuildInput}
+        type="file"
+        accept=".zip,application/zip,.apk,application/vnd.android.package-archive"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ""
+          if (file !== undefined) takeBuild(file)
+        }}
+      />
 
       <AlertDialog
         open={pendingBuild !== undefined}
@@ -404,13 +447,221 @@ function ReviewApp({
   )
 }
 
-/** Ingest, launch and host failures, under the area where the Reviewer acted. */
-function ErrorLine({ message }: { readonly message: string }) {
+/** The page under a dragged file: a drop anywhere loads the Build. */
+function DropOverlay({ unfiled }: { readonly unfiled: number | undefined }) {
   return (
-    <p role="alert" className="text-sm text-destructive select-text">
-      {message}
-    </p>
+    <div className="pointer-events-none fixed inset-0 z-40 flex animate-in items-center justify-center bg-[#07080a]/80 p-10 backdrop-blur-sm duration-150 fade-in motion-reduce:animate-none">
+      <div className="flex h-full max-h-[520px] w-full max-w-[820px] flex-col items-center justify-center rounded-[22px] border-[1.5px] border-dashed border-white/25 bg-white/[0.02] text-center">
+        <span className="mb-4 flex size-14 items-center justify-center rounded-[14px] bg-white/[0.06] ring-1 ring-white/15">
+          <UploadIcon className="size-6" strokeWidth={1.75} />
+        </span>
+        <p className="text-[20px] font-semibold tracking-[-0.01em]">
+          Drop to load the Build
+        </p>
+        <p className="mt-1.5 text-[13px] text-text-2">
+          A .zip with a simulator .app inside, or an Android .apk
+        </p>
+        {unfiled !== undefined && (
+          <p className="mt-4 rounded-full bg-amber/10 px-3 py-1 text-[12px] text-amber ring-1 ring-amber/25">
+            A new Build ends this review
+            {unfiled > 0 ? ` — you'll confirm first (${unfiled} unfiled)` : ""}
+          </p>
+        )}
+      </div>
+    </div>
   )
+}
+
+/** What ⌘K offers now: the review's actions, the Tray, then nitpick's own. */
+function paletteCommands({
+  model,
+  studio,
+  showsHistory,
+  hasFilingResult,
+  navigate,
+  openHistory,
+  chooseBuild,
+  requestEndReview,
+  openFeedback,
+  openShortcuts,
+  signOut,
+}: {
+  readonly model: ReturnType<typeof useReview>
+  readonly studio: StudioSession
+  readonly showsHistory: boolean
+  readonly hasFilingResult: boolean
+  readonly navigate: (route: string) => void
+  readonly openHistory: () => void
+  readonly chooseBuild: () => void
+  readonly requestEndReview: () => void
+  readonly openFeedback: () => void
+  readonly openShortcuts: () => void
+  readonly signOut: () => void
+}): PaletteCommand[] {
+  const { session, editor } = studio
+  const commands: PaletteCommand[] = []
+  /** A review command first leaves History for the review. */
+  const inReview = (run: () => void) => () => {
+    if (showsHistory) navigate("")
+    run()
+  }
+  const startReview = inReview(() => void model.startReview())
+
+  if (session !== undefined) {
+    const group = "Review"
+    commands.push({
+      id: "capture",
+      group,
+      label: "Capture",
+      icon: CameraIcon,
+      keys: chords.capture.label,
+      hint:
+        studio.refusal === undefined ? undefined : refusalHints[studio.refusal],
+      disabled: studio.refusal !== undefined,
+      run: inReview(() => void studio.capture()),
+    })
+    // Not from History: the device isn't on the page there to take focus.
+    if (editor.item !== undefined && !showsHistory) {
+      commands.push({
+        id: "back-to-live",
+        group,
+        label: "Back to live",
+        icon: Maximize2Icon,
+        keys: "Esc",
+        run: inReview(studio.backToLive),
+      })
+    }
+    if (model.run === undefined) {
+      commands.push({
+        id: "resume",
+        group,
+        label: model.startTitle,
+        icon: PlayIcon,
+        keys: chords.startReview.label,
+        hint: model.missingForStart,
+        disabled: model.missingForStart !== undefined,
+        run: startReview,
+      })
+    }
+    commands.push(
+      {
+        id: "previous",
+        group,
+        label: "Previous Finding",
+        icon: ArrowUpIcon,
+        keys: chords.previousFinding.label,
+        disabled: !editor.canStep("previous"),
+        run: inReview(() => editor.step("previous")),
+      },
+      {
+        id: "next",
+        group,
+        label: "Next Finding",
+        icon: ArrowDownIcon,
+        keys: chords.nextFinding.label,
+        disabled: !editor.canStep("next"),
+        run: inReview(() => editor.step("next")),
+      },
+      {
+        id: "file-all",
+        group,
+        label:
+          model.filingPhase?.phase === "remaining"
+            ? `File ${model.filingPhase.unfiled} remaining`
+            : "File all",
+        icon: SendIcon,
+        keys: chords.fileAll.label,
+        hint:
+          model.needingSummary.length === 0
+            ? undefined
+            : model.needingSummary.length === 1
+              ? "1 Finding needs a summary"
+              : `${model.needingSummary.length} Findings need a summary`,
+        disabled: !studio.canFileAll,
+        run: inReview(studio.fileAll),
+      },
+      {
+        id: "end-review",
+        group,
+        label: "End review…",
+        icon: SquareIcon,
+        disabled: model.isBusy,
+        run: inReview(requestEndReview),
+      }
+    )
+    for (const item of session.tray.toReversed()) {
+      const summary = trimWhitespaceAndNewlines(item.finding.summary)
+      commands.push({
+        id: `finding-${item.id}`,
+        group: "Tray",
+        label: summary === "" ? "Untitled Finding" : summary,
+        hint:
+          filedIssueOf(item)?.idReadable ??
+          item.finding.deviceContext.deviceModel,
+        run: inReview(() => editor.select(item.id)),
+      })
+    }
+  } else if (!hasFilingResult) {
+    commands.push({
+      id: "start",
+      group: "Review",
+      label: model.startTitle,
+      icon: PlayIcon,
+      keys: chords.startReview.label,
+      hint: model.missingForStart,
+      disabled: model.missingForStart !== undefined,
+      run: startReview,
+    })
+  }
+  commands.push({
+    id: "choose-build",
+    group: "Build",
+    label: session === undefined ? "Choose Build…" : "Load another Build…",
+    icon: FileUpIcon,
+    disabled: model.review.status !== "loaded" || model.isBusy,
+    run: inReview(chooseBuild),
+  })
+  const group = "nitpick"
+  commands.push(
+    showsHistory
+      ? {
+          id: "review",
+          group,
+          label: session === undefined ? "Back to home" : "Back to review",
+          icon: HistoryIcon,
+          run: () => navigate(""),
+        }
+      : {
+          id: "history",
+          group,
+          label: "Open History",
+          icon: HistoryIcon,
+          run: openHistory,
+        },
+    {
+      id: "feedback",
+      group,
+      label: "Send feedback…",
+      icon: MessageSquareWarningIcon,
+      run: openFeedback,
+    },
+    {
+      id: "shortcuts",
+      group,
+      label: "Keyboard shortcuts",
+      icon: KeyboardIcon,
+      keys: "?",
+      run: openShortcuts,
+    },
+    {
+      id: "sign-out",
+      group,
+      label: "Sign out",
+      icon: LogOutIcon,
+      run: signOut,
+    }
+  )
+  return commands
 }
 
 export default App

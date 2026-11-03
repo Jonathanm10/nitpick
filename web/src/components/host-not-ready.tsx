@@ -1,10 +1,4 @@
 import { ServerCrashIcon } from "lucide-react"
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 
 /**
@@ -22,20 +16,25 @@ export function HostNotReady({
   readonly onCheckAgain: () => void
 }) {
   return (
-    <Alert>
-      <ServerCrashIcon />
-      <AlertTitle>Device Host not ready</AlertTitle>
-      <AlertDescription>{reason}</AlertDescription>
-      <AlertAction>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={disabled}
-          onClick={onCheckAgain}
-        >
-          Check again
-        </Button>
-      </AlertAction>
-    </Alert>
+    <div
+      role="status"
+      className="flex items-start gap-3 rounded-[10px] bg-amber/[0.07] p-3 ring-1 ring-amber/20"
+    >
+      <ServerCrashIcon className="mt-0.5 size-4 shrink-0 text-amber" />
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-medium text-amber">
+          Device Host not ready
+        </p>
+        <p className="text-[12.5px] text-text-2 select-text">{reason}</p>
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={disabled}
+        onClick={onCheckAgain}
+      >
+        Check again
+      </Button>
+    </div>
   )
 }

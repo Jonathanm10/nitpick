@@ -41,6 +41,8 @@ function chord(
 }
 
 export const chords = {
+  // Every action, from anywhere, as Linear and Raycast have it.
+  commands: chord("k", { apple: "⌘K", other: "Ctrl+K" }, { command: true }),
   capture: chord("s", { apple: "⌘S", other: "Ctrl+S" }, { command: true }),
   undo: chord("z", { apple: "⌘Z", other: "Ctrl+Z" }, { command: true }),
   redo: chord(
@@ -89,12 +91,20 @@ export const shortcutGroups: ReadonlyArray<{
   }>
 }> = [
   {
+    title: "Anywhere",
+    shortcuts: [
+      { action: "Commands", keys: chords.commands.label },
+      { action: "Keyboard shortcuts", keys: "?" },
+    ],
+  },
+  {
     title: "Review",
     shortcuts: [
       {
         action: "Start or resume review, or return to the Build",
         keys: chords.startReview.label,
       },
+      { action: "Back to live, from an open Finding", keys: "Esc" },
       { action: "Capture", keys: chords.capture.label },
       { action: "Previous Finding", keys: chords.previousFinding.label },
       { action: "Next Finding", keys: chords.nextFinding.label },
