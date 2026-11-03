@@ -1,0 +1,26 @@
+{
+  "viewport": "1280×800",
+  "homeOverflowPx": 0,
+  "startToFirstFrameMs": 3574,
+  "stageDevice": {
+    "x": 516,
+    "y": 94,
+    "w": 252,
+    "h": 548
+  },
+  "sessionOverflowPx": 0,
+  "pipDevice": {
+    "x": 776,
+    "y": 359,
+    "w": 144,
+    "h": 313
+  },
+  "captureOnStage": {
+    "x": 411,
+    "y": 116,
+    "w": 291,
+    "h": 632
+  },
+  "sameStreamAfterBackToLive": true,
+  "deviceStreamRequests": 1
+}
