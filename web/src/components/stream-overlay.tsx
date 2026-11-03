@@ -17,7 +17,7 @@ export function StreamOverlay({
 }) {
   if (status.kind === "streaming") return null
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70 p-4 text-center text-sm text-white">
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/75 p-4 text-center text-xs text-white/80">
       {status.kind === "connecting" ? (
         <>
           <Spinner />

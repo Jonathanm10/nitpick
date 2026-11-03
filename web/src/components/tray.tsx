@@ -9,6 +9,7 @@ import {
 } from "@nitpick/core"
 import type { FilingStatus, SessionSummary } from "@nitpick/server/api"
 import {
+  CameraIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
@@ -26,18 +27,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { typeDotClass } from "@/components/finding-fields"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { api } from "@/lib/api"
 import { chords } from "@/lib/chords"
 import type { Editor } from "@/lib/use-editor"
 
 /**
- * The Tray, after Sources/Nitpick/TrayView.swift: rows newest first, the
- * needs-a-summary mark, Discard × on hover or selection behind a
+ * The Tray, after Sources/Nitpick/TrayView.swift: rows newest first, each
+ * with its capture's thumbnail, the needs-a-summary mark, Discard × on hover or selection behind a
  * confirmation (ADR-0010), filed and partly filed rows, and Previous and
  * Next Finding as visible controls.
  */
@@ -68,12 +72,10 @@ export function Tray({
   )
 
   return (
-    <section aria-label="Tray" className="flex shrink-0 flex-col gap-1.5">
-      <div className="flex items-center gap-1">
-        <h2 className="text-xs font-medium text-muted-foreground uppercase">
-          Tray
-        </h2>
-        <span className="ml-2 text-xs text-muted-foreground">
+    <section aria-label="Tray" className="flex min-h-0 flex-1 flex-col">
+      <div className="flex h-11 shrink-0 items-center gap-1 border-b pr-2 pl-4">
+        <h2 className="studio-label">Tray</h2>
+        <span className="ml-2 text-[11.5px] text-text-3">
           {unfiledFindingCount(session)} unfiled
         </span>
         <span className="flex-1" />
@@ -94,40 +96,72 @@ export function Tray({
           <ChevronDownIcon />
         </StepButton>
       </div>
-      <ul className="max-h-64 overflow-y-auto">
-        {session.tray.toReversed().map((item) => {
-          const isSelected = item.id === selectedID
-          return (
-            <li
-              key={item.id}
-              ref={isSelected ? selectedRow : undefined}
-              className={cn(
-                "group/row flex h-8 animate-in items-center gap-2 rounded-md px-2.5 duration-200 fade-in slide-in-from-top-1 motion-reduce:animate-none",
-                isSelected
-                  ? "bg-accent ring-1 ring-foreground/10"
-                  : "hover:bg-muted"
-              )}
-            >
-              <button
-                type="button"
-                aria-current={isSelected ? "true" : undefined}
-                onClick={() => editor.select(item.id)}
-                className="@container flex min-w-0 flex-1 items-center gap-2 text-left text-sm outline-none focus-visible:underline"
+      {session.tray.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+          <CameraIcon className="size-5 text-text-3" aria-hidden />
+          <p className="text-[13px] font-medium">No Findings yet</p>
+          <p className="text-[12px] text-text-3">
+            Capture what&rsquo;s off on the device with {chords.capture.label}.
+            Each capture lands here.
+          </p>
+        </div>
+      ) : (
+        <ul className="flex min-h-0 flex-1 thin-scroll flex-col gap-1 overflow-y-auto p-2">
+          {session.tray.toReversed().map((item) => {
+            const isSelected = item.id === selectedID
+            return (
+              <li
+                key={item.id}
+                ref={isSelected ? selectedRow : undefined}
+                className={cn(
+                  "group/row relative flex animate-in items-stretch gap-2.5 rounded-[9px] p-1.5 duration-200 fade-in slide-in-from-top-1 motion-reduce:animate-none",
+                  isSelected
+                    ? "bg-white/[0.07] shadow-[inset_0_0_0_1px_rgb(255_255_255/0.08)]"
+                    : "hover:bg-white/[0.035]"
+                )}
               >
-                <RowTitle item={item} isSelected={isSelected} />
-              </button>
-              <RowStatus
-                item={item}
-                filing={filing}
-                needsSummary={needingSummary.has(item.id)}
-                showsDiscard={isSelected}
-                canDiscard={editor.canDiscard}
-                onDiscard={() => setPendingDiscard(item)}
-              />
-            </li>
-          )
-        })}
-      </ul>
+                <button
+                  type="button"
+                  aria-current={isSelected ? "true" : undefined}
+                  onClick={() => editor.select(item.id)}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 rounded-[7px] text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <img
+                    src={api.captureURL(item.id)}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    draggable={false}
+                    className="h-[60px] w-[28px] shrink-0 rounded-[5px] bg-black object-cover object-top ring-1 ring-white/10"
+                  />
+                  <span className="flex min-w-0 flex-1 flex-col gap-1">
+                    <RowTitle item={item} isSelected={isSelected} />
+                    <span className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-text-3">
+                      <span
+                        className={cn(
+                          "size-[6px] shrink-0 rounded-full",
+                          typeDotClass[item.finding.type]
+                        )}
+                      />
+                      <span className="truncate">
+                        {item.finding.deviceContext.deviceModel}
+                      </span>
+                    </span>
+                  </span>
+                </button>
+                <RowStatus
+                  item={item}
+                  filing={filing}
+                  needsSummary={needingSummary.has(item.id)}
+                  showsDiscard={isSelected}
+                  canDiscard={editor.canDiscard}
+                  onDiscard={() => setPendingDiscard(item)}
+                />
+              </li>
+            )
+          })}
+        </ul>
+      )}
 
       <AlertDialog
         open={pendingDiscard !== undefined}
@@ -162,12 +196,7 @@ export function Tray({
   )
 }
 
-/**
- * The summary, then the device model only when the row has room beside its
- * status: a model cut to "iPho…" says nothing, while a cut summary still
- * reads. CSS can't ask whether both fit whole, as ViewThatFits did, so the
- * title area's width decides.
- */
+/** The summary, or "Untitled Finding" until it has one. */
 function RowTitle({
   item,
   isSelected,
@@ -177,14 +206,15 @@ function RowTitle({
 }) {
   const summary = trimWhitespaceAndNewlines(item.finding.summary)
   return (
-    <>
-      <span className={cn("truncate", isSelected && "font-medium")}>
-        {summary === "" ? "Untitled Finding" : summary}
-      </span>
-      <span className="hidden shrink-0 text-muted-foreground @[16rem]:inline">
-        {item.finding.deviceContext.deviceModel}
-      </span>
-    </>
+    <span
+      className={cn(
+        "truncate text-[13px] leading-[17px]",
+        isSelected && "font-medium",
+        summary === "" && "text-text-2 italic"
+      )}
+    >
+      {summary === "" ? "Untitled Finding" : summary}
+    </span>
   )
 }
 
@@ -206,8 +236,8 @@ function RowStatus({
   const filed = filedIssueOf(item)
   if (filed !== undefined) {
     return (
-      <span className="flex shrink-0 animate-in items-center gap-1 text-sm duration-200 zoom-in-50 motion-reduce:animate-none">
-        <CheckIcon className="size-3.5 text-green-600" aria-hidden />
+      <span className="flex shrink-0 animate-in items-center gap-1 self-center pr-1 font-mono text-[11.5px] text-green duration-200 zoom-in-50 motion-reduce:animate-none">
+        <CheckIcon className="size-3.5" aria-hidden />
         <a
           href={filed.url}
           target="_blank"
@@ -224,7 +254,12 @@ function RowStatus({
     // finishes it without re-creating anything. After a failed run this
     // row is where the failure lives, so it carries the error itself.
     if (filing.status === "running") {
-      return <span className="shrink-0 text-sm text-amber-600">Filing…</span>
+      return (
+        <span className="flex shrink-0 items-center gap-1.5 self-center pr-1 text-[11.5px] text-amber">
+          <Spinner className="size-3" />
+          Filing…
+        </span>
+      )
     }
     if (filing.status === "failed") {
       // The one status allowed to truncate: it splits the row with the
@@ -232,20 +267,20 @@ function RowStatus({
       return (
         <span
           title={filing.error}
-          className="min-w-0 flex-1 truncate text-sm text-destructive"
+          className="w-20 shrink-0 self-center truncate pr-1 text-[11.5px] text-red"
         >
           {filing.error}
         </span>
       )
     }
     return (
-      <span className="shrink-0 text-sm text-amber-600">
+      <span className="w-20 shrink-0 self-center pr-1 text-[11.5px] leading-tight text-amber">
         Filing interrupted — retry
       </span>
     )
   }
   return (
-    <span className="flex shrink-0 items-center gap-1.5">
+    <span className="flex shrink-0 flex-col items-end justify-between self-stretch">
       {needsSummary && (
         <Tooltip>
           <TooltipTrigger
@@ -253,7 +288,7 @@ function RowStatus({
               <CircleAlertIcon
                 role="img"
                 aria-label="Needs a summary"
-                className="size-4 fill-amber-500 text-background"
+                className="order-2 m-0.5 size-4 fill-amber text-background"
               />
             }
           />
@@ -270,7 +305,7 @@ function RowStatus({
         disabled={!canDiscard}
         onClick={onDiscard}
         className={cn(
-          "rounded-full text-muted-foreground",
+          "order-1 rounded-full text-text-3",
           !showsDiscard &&
             "opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100"
         )}

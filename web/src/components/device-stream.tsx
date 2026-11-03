@@ -29,6 +29,33 @@ export function focusDeviceStream(): boolean {
   return stream !== null
 }
 
+export interface ScreenSize {
+  readonly width: number
+  readonly height: number
+}
+
+/** What the page draws around the screen alone, such as a phone's bezel. */
+export interface StreamFrame {
+  readonly className?: string
+  readonly style?: React.CSSProperties
+}
+
+/** The screen inside the page's frame, when it gives one. */
+export function Framed({
+  frame,
+  children,
+}: {
+  readonly frame: StreamFrame | undefined
+  readonly children: React.ReactNode
+}) {
+  if (frame === undefined) return children
+  return (
+    <div className={frame.className} style={frame.style}>
+      {children}
+    </div>
+  )
+}
+
 type Attachment =
   | { readonly kind: "attaching" }
   | { readonly kind: "attached"; readonly hubDevice: string }
@@ -39,7 +66,16 @@ type Attachment =
  * starts streaming it; then the stream shows here, reached with the sign-in
  * cookie, and taps, scrolling and typing go back to it.
  */
-export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
+export function DeviceStream({
+  device,
+  onScreen,
+  frame,
+}: {
+  readonly device: SimulatorDevice
+  /** The stream's pixel size, once known, so the page can fit the device. */
+  readonly onScreen?: (screen: ScreenSize) => void
+  readonly frame?: StreamFrame
+}) {
   const [attachment, setAttachment] = useState<Attachment>({
     kind: "attaching",
   })
@@ -75,14 +111,14 @@ export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
   switch (attachment.kind) {
     case "attaching":
       return (
-        <DeviceFrame>
+        <DeviceFrame frame={frame}>
           <Spinner />
           Starting the device stream…
         </DeviceFrame>
       )
     case "failed":
       return (
-        <DeviceFrame>
+        <DeviceFrame frame={frame}>
           <p role="alert" className="text-destructive select-text">
             {attachment.message}
           </p>
@@ -109,6 +145,8 @@ export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
           serial={attachment.hubDevice}
           onUnauthorized={onUnauthorized}
           onReconnect={retry}
+          onScreen={onScreen}
+          frame={frame}
         />
       ) : (
         <LiveDevice
@@ -116,6 +154,8 @@ export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
           device={device}
           onUnauthorized={onUnauthorized}
           onReconnect={retry}
+          onScreen={onScreen}
+          frame={frame}
         />
       )
     }
@@ -123,11 +163,19 @@ export function DeviceStream({ device }: { readonly device: SimulatorDevice }) {
 }
 
 /** The empty device-shaped slot, with a message in it. */
-function DeviceFrame({ children }: { readonly children: React.ReactNode }) {
+function DeviceFrame({
+  frame,
+  children,
+}: {
+  readonly frame: StreamFrame | undefined
+  readonly children: React.ReactNode
+}) {
   return (
-    <div className="flex aspect-[9/19.5] max-h-full min-h-0 flex-col items-center justify-center gap-3 rounded-[2rem] border bg-muted/30 p-6 text-center text-sm text-muted-foreground">
-      {children}
-    </div>
+    <Framed frame={frame}>
+      <div className="flex aspect-[9/19.5] max-h-full min-h-0 w-full flex-col items-center justify-center gap-3 rounded-[var(--screen-radius,1.75rem)] bg-black/60 p-4 text-center text-xs text-text-2">
+        {children}
+      </div>
+    </Framed>
   )
 }
 
@@ -144,10 +192,14 @@ function LiveDevice({
   device,
   onUnauthorized,
   onReconnect,
+  onScreen,
+  frame,
 }: {
   readonly device: SimulatorDevice
   readonly onUnauthorized: () => void
   readonly onReconnect: () => void
+  readonly onScreen?: (screen: ScreenSize) => void
+  readonly frame?: StreamFrame
 }) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const surface = useRef<HTMLDivElement>(null)
@@ -155,9 +207,9 @@ function LiveDevice({
   const [status, setStatus] = useState<ShownStatus>({ kind: "connecting" })
   const [screen, setScreen] = useState({ width: 1206, height: 2622 })
   const [mjpegURL, setMjpegURL] = useState<string>()
-  const latest = useRef({ onUnauthorized })
+  const latest = useRef({ onUnauthorized, onScreen })
   useEffect(() => {
-    latest.current = { onUnauthorized }
+    latest.current = { onUnauthorized, onScreen }
   })
 
   useEffect(() => {
@@ -166,7 +218,10 @@ function LiveDevice({
         if (next.kind === "unauthorized") latest.current.onUnauthorized()
         else setStatus(next)
       },
-      onScreen: (width, height) => setScreen({ width, height }),
+      onScreen: (width, height) => {
+        setScreen({ width, height })
+        latest.current.onScreen?.({ width, height })
+      },
       onMjpeg: setMjpegURL,
     })
     setClient(started)
@@ -279,47 +334,49 @@ function LiveDevice({
   }
 
   return (
-    <div className="flex min-h-0 flex-col gap-2">
-      <div
-        ref={surface}
-        {...{ [streamAttribute]: "" }}
-        data-status={status.kind}
-        data-transport={mjpegURL === undefined ? "h264" : "mjpeg"}
-        tabIndex={0}
-        role="application"
-        aria-label={`${device.name} on the Device Host. Esc leaves the device.`}
-        className="relative min-h-0 w-full shrink touch-none overflow-hidden rounded-[1.75rem] border bg-black outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50"
-        style={{ aspectRatio: `${screen.width} / ${screen.height}` }}
-        onPointerDown={touch("begin")}
-        onPointerMove={touch("move")}
-        onPointerUp={touch("end")}
-        onPointerCancel={touch("end")}
-        onKeyDown={(event) => key("down", event)}
-        onKeyUp={(event) => key("up", event)}
-        onBlur={releaseAll}
-      >
-        <canvas
-          ref={canvas}
-          className={`size-full object-contain ${mjpegURL === undefined ? "" : "hidden"}`}
-        />
-        {mjpegURL !== undefined && (
-          <img
-            ref={watchImage}
-            alt=""
-            draggable={false}
-            className="size-full object-contain"
+    <div className="flex min-h-0 w-full flex-col gap-1.5">
+      <Framed frame={frame}>
+        <div
+          ref={surface}
+          {...{ [streamAttribute]: "" }}
+          data-status={status.kind}
+          data-transport={mjpegURL === undefined ? "h264" : "mjpeg"}
+          tabIndex={0}
+          role="application"
+          aria-label={`${device.name} on the Device Host. Esc leaves the device.`}
+          className="relative min-h-0 w-full shrink touch-none overflow-hidden rounded-[var(--screen-radius,1.75rem)] bg-black outline-none select-none focus-visible:ring-2 focus-visible:ring-ring"
+          style={{ aspectRatio: `${screen.width} / ${screen.height}` }}
+          onPointerDown={touch("begin")}
+          onPointerMove={touch("move")}
+          onPointerUp={touch("end")}
+          onPointerCancel={touch("end")}
+          onKeyDown={(event) => key("down", event)}
+          onKeyUp={(event) => key("up", event)}
+          onBlur={releaseAll}
+        >
+          <canvas
+            ref={canvas}
+            className={`size-full object-contain ${mjpegURL === undefined ? "" : "hidden"}`}
           />
-        )}
-        <StreamOverlay
-          status={status}
-          device={device}
-          onReconnect={onReconnect}
-        />
-      </div>
+          {mjpegURL !== undefined && (
+            <img
+              ref={watchImage}
+              alt=""
+              draggable={false}
+              className="size-full object-contain"
+            />
+          )}
+          <StreamOverlay
+            status={status}
+            device={device}
+            onReconnect={onReconnect}
+          />
+        </div>
+      </Framed>
       <Button
-        size="sm"
+        size="xs"
         variant="ghost"
-        className="self-center text-muted-foreground"
+        className="self-center text-text-3"
         disabled={status.kind !== "streaming"}
         onClick={() => client?.pressHome()}
       >

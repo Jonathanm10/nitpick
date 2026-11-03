@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from "react"
 import type { SimulatorDevice } from "@nitpick/server/api"
 import { ArrowLeftIcon, CircleIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  Framed,
+  type ScreenSize,
+  type StreamFrame,
+} from "@/components/device-stream"
 import { StreamOverlay, type ShownStatus } from "@/components/stream-overlay"
 import {
   androidKeycodes,
@@ -28,21 +33,25 @@ export function LiveEmulator({
   serial,
   onUnauthorized,
   onReconnect,
+  onScreen,
+  frame,
 }: {
   readonly device: SimulatorDevice
   /** serve-emu's name for the running emulator. */
   readonly serial: string
   readonly onUnauthorized: () => void
   readonly onReconnect: () => void
+  readonly onScreen?: (screen: ScreenSize) => void
+  readonly frame?: StreamFrame
 }) {
   const video = useRef<HTMLVideoElement>(null)
   const surface = useRef<HTMLDivElement>(null)
   const [client, setClient] = useState<EmulatorStreamClient>()
   const [status, setStatus] = useState<ShownStatus>({ kind: "connecting" })
   const [screen, setScreen] = useState({ width: 1080, height: 2424 })
-  const latest = useRef({ onUnauthorized })
+  const latest = useRef({ onUnauthorized, onScreen })
   useEffect(() => {
-    latest.current = { onUnauthorized }
+    latest.current = { onUnauthorized, onScreen }
   })
 
   useEffect(() => {
@@ -51,7 +60,10 @@ export function LiveEmulator({
         if (next.kind === "unauthorized") latest.current.onUnauthorized()
         else setStatus(next)
       },
-      onScreen: (width, height) => setScreen({ width, height }),
+      onScreen: (width, height) => {
+        setScreen({ width, height })
+        latest.current.onScreen?.({ width, height })
+      },
     })
     setClient(started)
     started.start()
@@ -129,41 +141,43 @@ export function LiveEmulator({
 
   const ready = status.kind === "streaming"
   return (
-    <div className="flex min-h-0 flex-col gap-2">
-      <div
-        ref={surface}
-        {...{ [streamAttribute]: "" }}
-        data-status={status.kind}
-        data-transport="webrtc"
-        tabIndex={0}
-        role="application"
-        aria-label={`${device.name} on the Device Host. Esc leaves the device.`}
-        className="relative min-h-0 w-full shrink touch-none overflow-hidden rounded-[1.75rem] border bg-black outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50"
-        style={{ aspectRatio: `${screen.width} / ${screen.height}` }}
-        onPointerDown={touch("down")}
-        onPointerMove={touch("move")}
-        onPointerUp={touch("up")}
-        onPointerCancel={touch("up")}
-        onKeyDown={keyDown}
-      >
-        <video
-          ref={video}
-          muted
-          playsInline
-          disablePictureInPicture
-          className="pointer-events-none size-full object-contain"
-        />
-        <StreamOverlay
-          status={status}
-          device={device}
-          onReconnect={onReconnect}
-        />
-      </div>
+    <div className="flex min-h-0 w-full flex-col gap-1.5">
+      <Framed frame={frame}>
+        <div
+          ref={surface}
+          {...{ [streamAttribute]: "" }}
+          data-status={status.kind}
+          data-transport="webrtc"
+          tabIndex={0}
+          role="application"
+          aria-label={`${device.name} on the Device Host. Esc leaves the device.`}
+          className="relative min-h-0 w-full shrink touch-none overflow-hidden rounded-[var(--screen-radius,1.75rem)] bg-black outline-none select-none focus-visible:ring-2 focus-visible:ring-ring"
+          style={{ aspectRatio: `${screen.width} / ${screen.height}` }}
+          onPointerDown={touch("down")}
+          onPointerMove={touch("move")}
+          onPointerUp={touch("up")}
+          onPointerCancel={touch("up")}
+          onKeyDown={keyDown}
+        >
+          <video
+            ref={video}
+            muted
+            playsInline
+            disablePictureInPicture
+            className="pointer-events-none size-full object-contain"
+          />
+          <StreamOverlay
+            status={status}
+            device={device}
+            onReconnect={onReconnect}
+          />
+        </div>
+      </Framed>
       <div className="flex justify-center gap-1">
         <Button
-          size="sm"
+          size="xs"
           variant="ghost"
-          className="text-muted-foreground"
+          className="text-text-3"
           disabled={!ready}
           onClick={() => client?.press("back")}
         >
@@ -171,9 +185,9 @@ export function LiveEmulator({
           Back
         </Button>
         <Button
-          size="sm"
+          size="xs"
           variant="ghost"
-          className="text-muted-foreground"
+          className="text-text-3"
           disabled={!ready}
           onClick={() => client?.press("home")}
         >

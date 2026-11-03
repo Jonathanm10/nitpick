@@ -235,9 +235,7 @@ export function DesignSnapshotsSection({
       )}
     >
       <div className="flex items-center gap-1">
-        <h3 className="text-xs font-medium text-muted-foreground uppercase">
-          Design Snapshots
-        </h3>
+        <h3 className="studio-label">Design Snapshots</h3>
         <span className="flex-1" />
         <Button
           variant="ghost"

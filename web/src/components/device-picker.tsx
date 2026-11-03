@@ -6,6 +6,8 @@ import {
   ChevronsUpDownIcon,
   SmartphoneIcon,
 } from "lucide-react"
+import { cn } from "cn"
+import { PlatformTag } from "@/components/studio"
 import { Button } from "@/components/ui/button"
 import {
   Command,
@@ -33,6 +35,8 @@ interface DevicePickerProps {
    * Context at the start of the session's top bar. Both open the same list.
    */
   readonly variant: "field" | "chip"
+  /** The chip's status: the Build runs on the device now. */
+  readonly isLive?: boolean
 }
 
 /**
@@ -49,6 +53,7 @@ export function DevicePicker({
   disabled = false,
   variant,
   androidProblem,
+  isLive = false,
 }: DevicePickerProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -76,7 +81,8 @@ export function DevicePicker({
         data-checked={device.udid === selected?.udid}
         onSelect={() => choose(device)}
       >
-        {deviceLabel(device)}
+        <PlatformTag device={device} />
+        <span className="truncate">{deviceLabel(device)}</span>
       </CommandItem>
     ))
   }
@@ -92,36 +98,62 @@ export function DevicePicker({
         }
         render={
           variant === "chip" ? (
-            <Button variant="ghost" size="sm" className="gap-1.5" />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-2 rounded-[9px] bg-white/[0.03] px-2.5"
+            />
           ) : (
             <Button
               variant="outline"
-              className="w-full max-w-80 justify-between font-normal"
+              className="h-9 w-full justify-between font-normal"
             />
           )
         }
       >
         {variant === "chip" ? (
           <>
-            <SmartphoneIcon className="text-muted-foreground" />
+            {selected === undefined ? (
+              <SmartphoneIcon className="text-text-3" />
+            ) : (
+              <PlatformTag device={selected} />
+            )}
             <span className="font-medium">
               {selected?.name ?? "No device selected"}
             </span>
-            <span className="text-muted-foreground">
-              · {selected?.osName ?? "runtime unknown"}
+            <span className="font-mono text-[11.5px] text-text-2">
+              {selected?.osName ?? "runtime unknown"}
             </span>
-            <ChevronDownIcon className="text-muted-foreground" />
+            <span className="h-3.5 w-px bg-line-strong" />
+            <span className="flex items-center gap-1.5 text-[12px]">
+              {isLive ? (
+                <span className="live-dot" />
+              ) : (
+                <span className="size-[7px] rounded-full bg-amber" />
+              )}
+              {isLive ? "Live" : "Paused"}
+            </span>
+            <ChevronDownIcon className="text-text-3" />
           </>
         ) : (
           <>
             <span
-              className={selected === undefined ? "text-muted-foreground" : ""}
+              className={cn(
+                "flex min-w-0 items-center gap-2",
+                selected === undefined && "text-text-3"
+              )}
             >
-              {selected === undefined
-                ? "No device selected"
-                : `${selected.name} — ${selected.osName}`}
+              {selected !== undefined && <PlatformTag device={selected} />}
+              <span className="truncate">
+                {selected === undefined ? "No device selected" : selected.name}
+              </span>
+              {selected !== undefined && (
+                <span className="font-mono text-[11.5px] text-text-2">
+                  {selected.osName}
+                </span>
+              )}
             </span>
-            <ChevronsUpDownIcon className="text-muted-foreground" />
+            <ChevronsUpDownIcon className="text-text-3" />
           </>
         )}
       </PopoverTrigger>

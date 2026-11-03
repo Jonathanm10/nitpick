@@ -3,13 +3,7 @@ import type { YouTrackUser } from "@nitpick/core"
 import type { SignInMethodResponse } from "@nitpick/server/api"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { LogoMark } from "@/components/studio"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
@@ -107,18 +101,23 @@ export function SignInPage({
   )
 
   return (
-    <main className="flex min-h-svh items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Sign in to nitpick</CardTitle>
-          <CardDescription>
-            {method === "youTrack"
-              ? "Use your YouTrack account."
-              : "Use your YouTrack permanent token."}{" "}
-            Your Issues and Feedback are filed as you.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+    <main className="flex min-h-svh flex-col items-center justify-center gap-6 canvas-dots p-6">
+      <div className="flex w-full max-w-[360px] flex-col gap-5">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <LogoMark size={44} />
+          <div>
+            <h1 className="text-[17px] font-semibold tracking-[-0.01em]">
+              Sign in to nitpick
+            </h1>
+            <p className="mt-1 text-[12.5px] text-text-2">
+              {method === "youTrack"
+                ? "Use your YouTrack account."
+                : "Use your YouTrack permanent token."}{" "}
+              Your Issues and Feedback are filed as you.
+            </p>
+          </div>
+        </div>
+        <div className="rounded-[14px] p-4 studio-card">
           {method === undefined ? (
             <div className="flex justify-center py-2">
               <Spinner aria-label="Loading" />
@@ -127,7 +126,10 @@ export function SignInPage({
             <div className="flex flex-col gap-3">
               {notices}
               {/* A link: the server sends the browser on to YouTrack. */}
-              <a href="/api/sign-in/youtrack" className={buttonVariants()}>
+              <a
+                href="/api/sign-in/youtrack"
+                className={buttonVariants({ className: "h-9 w-full" })}
+              >
                 Sign in with YouTrack
               </a>
             </div>
@@ -145,7 +147,9 @@ export function SignInPage({
                 </Alert>
               )}
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="youtrack-token">Permanent token</Label>
+                <Label htmlFor="youtrack-token" className="studio-label">
+                  Permanent token
+                </Label>
                 <Input
                   id="youtrack-token"
                   type="password"
@@ -159,7 +163,7 @@ export function SignInPage({
                 />
                 <p
                   id="youtrack-token-hint"
-                  className="text-xs text-muted-foreground"
+                  className="text-[11.5px] text-text-3"
                 >
                   Create one in YouTrack: your profile, Account Security, New
                   token.
@@ -173,14 +177,21 @@ export function SignInPage({
                   {error}
                 </p>
               )}
-              <Button type="submit" disabled={isEmpty || isSigningIn}>
+              <Button
+                type="submit"
+                className="h-9"
+                disabled={isEmpty || isSigningIn}
+              >
                 {isSigningIn && <Spinner />}
                 Sign in
               </Button>
             </form>
           )}
-        </CardContent>
-      </Card>
+        </div>
+        <p className="text-center font-mono text-[10.5px] text-text-3">
+          nitpick {__NITPICK_VERSION__}
+        </p>
+      </div>
     </main>
   )
 }

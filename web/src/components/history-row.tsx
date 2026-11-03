@@ -4,6 +4,8 @@ import {
   type HistoryEntry,
   type ReferenceDate,
 } from "@nitpick/core"
+import { ArrowUpRightIcon } from "lucide-react"
+import { Avatar, ProjectKey } from "@/components/studio"
 
 const sessionStartFormat = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -25,36 +27,50 @@ export function formatSessionStart(startedAt: ReferenceDate): string {
 export function HistoryRow({ entry }: { readonly entry: HistoryEntry }) {
   const { build } = entry
   return (
-    <article className="flex min-w-0 flex-col gap-1">
-      <header className="flex flex-wrap items-baseline gap-x-2 text-sm">
-        <span className="font-medium">{entry.project.name}</span>
-        <span className="font-mono text-xs text-muted-foreground">
-          {build.bundleID} {build.version} ({build.buildNumber})
-        </span>
+    <article className="flex min-w-0 flex-col gap-3">
+      <header className="flex min-w-0 items-center gap-2.5">
+        {entry.filedBy !== undefined && (
+          <Avatar user={entry.filedBy} size={24} />
+        )}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="flex items-center gap-2 text-[13px]">
+            <ProjectKey project={entry.project} />
+            <span className="truncate font-medium">{entry.project.name}</span>
+            {entry.filedBy !== undefined && (
+              <span className="truncate text-text-3">
+                filed by {entry.filedBy.fullName}
+              </span>
+            )}
+          </span>
+          <span className="truncate font-mono text-[11.5px] text-text-2 select-text">
+            {build.bundleID} {build.version} ({build.buildNumber})
+          </span>
+        </div>
         <time
           dateTime={dateFromReference(entry.startedAt).toISOString()}
-          className="text-muted-foreground"
+          className="shrink-0 font-mono text-[11.5px] text-text-3"
         >
           {formatSessionStart(entry.startedAt)}
         </time>
       </header>
-      <ul className="flex flex-col gap-0.5">
+      <ul className="flex flex-col">
         {entry.findings.map((finding) => {
           const summary = trimWhitespaceAndNewlines(finding.summary)
           return (
             <li
               key={finding.issue.idReadable}
-              className="flex min-w-0 items-baseline gap-2 text-sm"
+              className="flex h-8 min-w-0 items-center gap-3 border-t border-line text-[13px]"
             >
               <a
                 href={finding.issue.url}
                 target="_blank"
                 rel="noreferrer"
-                className="shrink-0 font-medium text-primary underline-offset-4 hover:underline"
+                className="flex w-20 shrink-0 items-center gap-1 font-mono text-[12px] text-foreground underline-offset-4 hover:underline"
               >
                 {finding.issue.idReadable}
+                <ArrowUpRightIcon className="size-3 text-text-3" />
               </a>
-              <span className="truncate text-muted-foreground">
+              <span className="truncate text-text-2">
                 {summary === "" ? "Untitled Finding" : summary}
               </span>
             </li>

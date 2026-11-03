@@ -33,7 +33,7 @@ export function ProjectPicker({
         if (id !== null) onSelect(id)
       }}
     >
-      <SelectTrigger aria-label="Project" className="w-full max-w-80">
+      <SelectTrigger aria-label="Project" className="h-9 w-full">
         <SelectValue placeholder="Pick a YouTrack project" />
       </SelectTrigger>
       <SelectContent>
