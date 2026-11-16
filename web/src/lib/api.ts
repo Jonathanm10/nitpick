@@ -13,6 +13,7 @@ import type {
   HistoryImportResponse,
   HistoryResponse,
   HostResponse,
+  LayoutResponse,
   ProjectsResponse,
   ReviewStateResponse,
   SessionPatch,
@@ -115,6 +116,7 @@ export const api = {
       "/api/session/captures",
       json("POST", { deviceUDID })
     ),
+  layout: () => call<LayoutResponse>("/api/session/layout"),
   editFinding: (itemID: string, patch: FindingPatch) =>
     call<void>(findingPath(itemID), json("PATCH", patch)),
   discardFinding: (itemID: string) =>

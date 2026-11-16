@@ -29,6 +29,7 @@ import type {
   FindingPatch,
   HistoryResponse,
   HostResponse,
+  LayoutResponse,
   ReviewStateResponse,
   SessionSummary,
   SimulatorDevice,
@@ -447,6 +448,23 @@ export function useReview() {
   }
 
   /**
+   * Inspect's read of what the device shows now. Not a run: it never holds
+   * up a capture. A device that stopped pauses the review, as a capture's
+   * does.
+   */
+  async function readLayout(): Promise<LayoutResponse> {
+    try {
+      return await api.layout()
+    } catch (error) {
+      if (error instanceof APIError && error.code === "deviceNotRunning") {
+        setRun(undefined)
+        setErrorMessage(error.message)
+      }
+      throw error
+    }
+  }
+
+  /**
    * Sets Finding fields in the page at once and saves them: typing once it
    * pauses, anything else now. Frozen Findings refuse, as in the core.
    */
@@ -561,6 +579,8 @@ export function useReview() {
       host.status === "ready" && buildPlatform !== "ios"
         ? host.androidProblem
         : undefined,
+    /** Why iOS Builds launch without Inspect on this host, when they do. */
+    inspectProblem: host.status === "ready" ? host.inspectProblem : undefined,
     selectedDevice,
     selectedProjectID,
     setSelectedProjectID,
@@ -580,6 +600,7 @@ export function useReview() {
     checkHostAgain,
     reportBusyDrop,
     capture,
+    readLayout,
     editFinding,
     editSessionDesignReference,
     discard,

@@ -70,11 +70,17 @@ export function DeviceStream({
   device,
   onScreen,
   frame,
+  overlay,
 }: {
   readonly device: SimulatorDevice
   /** The stream's pixel size, once known, so the page can fit the device. */
   readonly onScreen?: (screen: ScreenSize) => void
   readonly frame?: StreamFrame
+  /**
+   * Drawn over a simulator's screen, such as Inspect's; while it is, the
+   * device takes no pointer, wheel or key input.
+   */
+  readonly overlay?: React.ReactElement
 }) {
   const [attachment, setAttachment] = useState<Attachment>({
     kind: "attaching",
@@ -156,6 +162,7 @@ export function DeviceStream({
           onReconnect={retry}
           onScreen={onScreen}
           frame={frame}
+          overlay={overlay}
         />
       )
     }
@@ -186,7 +193,8 @@ const shiftKeys = [hidUsage("ShiftLeft")!, hidUsage("ShiftRight")!]
  * The stream itself. A pointer drag is a touch; the wheel or a trackpad
  * scrolls by dragging the screen as a finger would. While it has focus,
  * keys go to the device, except chords with ⌘ or Ctrl, which stay the
- * page's, and Esc, which hands focus back to the page.
+ * page's, and Esc, which hands focus back to the page. An overlay takes
+ * all of that from the device; a touch already down still ends.
  */
 function LiveDevice({
   device,
@@ -194,13 +202,16 @@ function LiveDevice({
   onReconnect,
   onScreen,
   frame,
+  overlay,
 }: {
   readonly device: SimulatorDevice
   readonly onUnauthorized: () => void
   readonly onReconnect: () => void
   readonly onScreen?: (screen: ScreenSize) => void
   readonly frame?: StreamFrame
+  readonly overlay?: React.ReactElement
 }) {
+  const blocked = overlay !== undefined
   const canvas = useRef<HTMLCanvasElement>(null)
   const surface = useRef<HTMLDivElement>(null)
   const [client, setClient] = useState<DeviceStreamClient>()
@@ -237,7 +248,7 @@ function LiveDevice({
   // React's wheel listener is passive, so the page would scroll too.
   useEffect(() => {
     const element = surface.current
-    if (element === null || client === undefined) return
+    if (element === null || client === undefined || blocked) return
     let gesture: { x: number; y: number } | undefined
     let release: ReturnType<typeof setTimeout> | undefined
     function wheel(event: WheelEvent) {
@@ -264,14 +275,14 @@ function LiveDevice({
       element.removeEventListener("wheel", wheel)
       clearTimeout(release)
     }
-  }, [client, screen])
+  }, [client, screen, blocked])
 
   const pointerDown = useRef(false)
   const touch =
     (phase: "begin" | "move" | "end") =>
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (phase === "begin") {
-        if (event.button !== 0) return
+        if (event.button !== 0 || blocked) return
         event.currentTarget.setPointerCapture(event.pointerId)
         // Scrolling the page now would move the screen under the finger.
         event.currentTarget.focus({ preventScroll: true })
@@ -309,7 +320,7 @@ function LiveDevice({
       }
       return
     }
-    if (event.metaKey || event.ctrlKey) return
+    if (event.metaKey || event.ctrlKey || blocked) return
     if (event.key === "Escape") {
       event.preventDefault()
       event.currentTarget.blur()
@@ -366,6 +377,7 @@ function LiveDevice({
               className="size-full object-contain"
             />
           )}
+          {overlay}
           <StreamOverlay
             status={status}
             device={device}

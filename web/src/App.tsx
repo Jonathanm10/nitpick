@@ -16,7 +16,9 @@ import {
   Maximize2Icon,
   MessageSquareWarningIcon,
   PlayIcon,
+  RefreshCwIcon,
   SendIcon,
+  SquareDashedMousePointerIcon,
   SquareIcon,
   UploadIcon,
 } from "lucide-react"
@@ -146,12 +148,12 @@ function ReviewApp({
   readonly onSignedOut: () => void
 }) {
   const model = useReview()
-  const studio = useStudioSession(model)
+  const [route, navigate] = useRoute()
+  const showsHistory = route === historyRoute
+  const studio = useStudioSession(model, !showsHistory)
   const { review, isBusy, errorMessage } = model
   const state = review.status === "loaded" ? review : undefined
   const session = state?.session
-  const [route, navigate] = useRoute()
-  const showsHistory = route === historyRoute
   const filingResult =
     model.filing.status === "filed" ? model.filing.result : undefined
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -520,6 +522,32 @@ function paletteCommands({
       disabled: studio.refusal !== undefined,
       run: inReview(() => void studio.capture()),
     })
+    // Not from History: the device isn't on the page there to inspect.
+    if (!showsHistory && model.run !== undefined) {
+      const { inspect } = studio
+      commands.push({
+        id: "inspect",
+        group,
+        label: inspect.isOn ? "Leave Inspect" : "Inspect",
+        icon: SquareDashedMousePointerIcon,
+        keys: chords.inspect.label,
+        hint:
+          inspect.unavailableReason ??
+          (editor.item === undefined ? undefined : "Back to live to inspect."),
+        disabled: !inspect.isOn && !inspect.canInspect,
+        run: inspect.toggle,
+      })
+      if (inspect.isOn) {
+        commands.push({
+          id: "read-layout-again",
+          group,
+          label: "Read the layout again",
+          icon: RefreshCwIcon,
+          keys: chords.readLayoutAgain.label,
+          run: inspect.refresh,
+        })
+      }
+    }
     // Not from History: the device isn't on the page there to take focus.
     if (editor.item !== undefined && !showsHistory) {
       commands.push({

@@ -80,6 +80,10 @@ export const chords = {
         { command: true, option: true }
       )
     : chord("ArrowDown", { apple: "", other: "Alt+↓" }, { option: true }),
+  // Bare letters, outside text fields and while the device hasn't focus,
+  // where typing goes to the Build.
+  inspect: chord("i", { apple: "I", other: "I" }, {}),
+  readLayoutAgain: chord("r", { apple: "R", other: "R" }, {}),
 } as const
 
 /** What the shortcuts dialog lists, grouped as the page is. */
@@ -109,6 +113,14 @@ export const shortcutGroups: ReadonlyArray<{
       { action: "Previous Finding", keys: chords.previousFinding.label },
       { action: "Next Finding", keys: chords.nextFinding.label },
       { action: "File all", keys: chords.fileAll.label },
+    ],
+  },
+  {
+    title: "Inspect, while the live device is on the stage",
+    shortcuts: [
+      { action: "Inspect, or leave Inspect", keys: chords.inspect.label },
+      { action: "Read the layout again", keys: chords.readLayoutAgain.label },
+      { action: "Leave Inspect", keys: "Esc" },
     ],
   },
   {
