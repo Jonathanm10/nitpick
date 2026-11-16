@@ -94,6 +94,8 @@ interface Draft {
   hasChildren: boolean
   /** It lies under an `allowsHitTesting(false)`, so it takes no touches. */
   passive: boolean
+  /** What its ancestors' clips show of the screen, if any clips it. */
+  readonly clip: LayoutFrame | undefined
 }
 
 interface Context {
@@ -113,6 +115,14 @@ interface Context {
    * node holds the frame, and its modifier comes as its child.
    */
   readonly madeByParent: Draft | undefined
+  /** What the clips above show of the screen, if any clips. */
+  readonly clip: LayoutFrame | undefined
+  /**
+   * One of a stack's children, until a node with a frame of its own: that
+   * node is an element of its own, though it fills the stack, so siblings
+   * that do never merge.
+   */
+  readonly isBranch: boolean
 }
 
 /**
@@ -146,6 +156,8 @@ export function layoutSnapshot(layout: unknown): LayoutSnapshot {
         resolved,
         passive: false,
         madeByParent: undefined,
+        clip: undefined,
+        isBranch: false,
       })
     )
   })
@@ -197,7 +209,9 @@ function read(node: unknown, drafts: Draft[], context: Context): void {
   if (
     ownFrame !== undefined &&
     !nestedPadding &&
-    (element === undefined || !sameFrame(ownFrame, element.frame))
+    (element === undefined ||
+      context.isBranch ||
+      !sameFrame(ownFrame, element.frame))
   ) {
     if (element !== undefined) element.hasChildren = true
     element = {
@@ -206,6 +220,7 @@ function read(node: unknown, drafts: Draft[], context: Context): void {
       frame: ownFrame,
       hasChildren: false,
       passive,
+      clip: context.clip,
     }
     drafts.push(element)
   }
@@ -224,8 +239,13 @@ function read(node: unknown, drafts: Draft[], context: Context): void {
   const children = Array.isArray(node.children) ? node.children : []
   // A stack's tree lists its children last first; read them as the source
   // has them, the order a ZStack draws in. Their paths keep the tree's order.
+  const isStack = readableType.startsWith("_VariadicView.Tree<")
   const inOrder = children.map((child: unknown, index) => ({ child, index }))
-  if (readableType.startsWith("_VariadicView.Tree<")) inOrder.reverse()
+  if (isStack) inOrder.reverse()
+  // `.clipShape` or `.clipped()`: what it holds shows inside its element.
+  const clip = readableType.startsWith("_ClipEffect<")
+    ? overlap(context.clip ?? element.frame, element.frame)
+    : context.clip
   inOrder.forEach(({ child, index }) =>
     read(child, drafts, {
       transform,
@@ -239,6 +259,10 @@ function read(node: unknown, drafts: Draft[], context: Context): void {
       resolved: context.resolved,
       passive,
       madeByParent: made,
+      clip,
+      isBranch:
+        (isStack && children.length > 1) ||
+        (ownFrame === undefined && context.isBranch),
     })
   )
 }
@@ -784,9 +808,9 @@ function hexColor(
 
 /**
  * The drafts as the page gets them: an element that says nothing a designer
- * reads, a wrapper SwiftUI adds, gives way to its children; one off screen
- * or without area goes, and so does decoration that spills; values are
- * rounded to a hundredth of a point.
+ * reads, a wrapper SwiftUI adds, gives way to its children; one off screen,
+ * clipped away or without area goes, and so does decoration that spills;
+ * values are rounded to a hundredth of a point.
  */
 function elementsOf(
   drafts: ReadonlyArray<Draft>,
@@ -799,6 +823,7 @@ function elementsOf(
         draft.frame.width > 0 &&
         draft.frame.height > 0 &&
         intersects(draft.frame, screen) &&
+        (draft.clip === undefined || intersects(draft.frame, draft.clip)) &&
         !spills(draft) &&
         (nameOf(draft) !== "View" ||
           draft.padding !== undefined ||
@@ -821,12 +846,11 @@ function elementsOf(
         id: draft.id,
         ...(parent !== undefined && { parent: parent.id }),
         name: nameOf(draft),
-        frame: {
-          x: rounded(draft.frame.x),
-          y: rounded(draft.frame.y),
-          width: rounded(draft.frame.width),
-          height: rounded(draft.frame.height),
-        },
+        frame: roundedFrame(draft.frame),
+        ...(draft.clip !== undefined &&
+          !within(draft.frame, draft.clip) && {
+            clip: roundedFrame(draft.clip),
+          }),
         ...(padding !== undefined && {
           padding: {
             top: rounded(padding.top),
@@ -936,8 +960,29 @@ function intersects(a: LayoutFrame, b: LayoutFrame): boolean {
   )
 }
 
+/** Where `a` and `b` meet; no area when they don't. */
+function overlap(a: LayoutFrame, b: LayoutFrame): LayoutFrame {
+  const x = Math.max(a.x, b.x)
+  const y = Math.max(a.y, b.y)
+  return {
+    x,
+    y,
+    width: Math.max(Math.min(a.x + a.width, b.x + b.width) - x, 0),
+    height: Math.max(Math.min(a.y + a.height, b.y + b.height) - y, 0),
+  }
+}
+
 function rounded(value: number): number {
   return Math.round(value * 100) / 100 || 0
+}
+
+function roundedFrame({ x, y, width, height }: LayoutFrame): LayoutFrame {
+  return {
+    x: rounded(x),
+    y: rounded(y),
+    width: rounded(width),
+    height: rounded(height),
+  }
 }
 
 /**

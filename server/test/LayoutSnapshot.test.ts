@@ -389,11 +389,19 @@ describe("a Layout Snapshot under a sheet and a full-screen cover", () => {
 describe("reading the tree", () => {
   const node = (
     type: string,
-    geometry: { position?: number[]; size?: number[]; transform?: unknown },
+    geometry: {
+      position?: number[]
+      size?: number[]
+      transform?: unknown
+      value?: unknown
+    },
     children: unknown[] = []
   ) => ({
     properties: [
       { id: 0, attribute: { type: `SwiftUI.${type}`, readableType: type } },
+      ...(geometry.value === undefined
+        ? []
+        : [{ id: 1, attribute: geometry.value }]),
       ...(geometry.transform === undefined
         ? []
         : [{ id: 2, attribute: { value: geometry.transform } }]),
@@ -449,6 +457,79 @@ describe("reading the tree", () => {
     })
 
     expect(elements[0].frame).toEqual({ x: 58, y: 430, width: 100, height: 10 })
+  })
+
+  test("a ZStack's children that fill it stay apart, the one drawn last on top", () => {
+    const box = { position: [100, 100], size: [80, 40] }
+    const filled = (color: number[]) =>
+      node("_ShapeView<Rectangle, Color>", {
+        ...box,
+        value: {
+          subattributes: [
+            {
+              name: "style",
+              subattributes: [
+                {
+                  name: "provider",
+                  subattributes: [
+                    {
+                      name: "base",
+                      subattributes: [{ name: "color", value: { color } }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      })
+    // ZStack { back; front }: the tree lists its children last first.
+    const tree = node("ZStack<TupleView<(Rectangle, Rectangle)>>", box, [
+      node(
+        "_VariadicView.Tree<_ZStackLayout, TupleView<(Rectangle, Rectangle)>>",
+        {},
+        [filled([1, 0, 0, 1]), filled([0, 0, 1, 1])]
+      ),
+    ])
+
+    const snapshot = layoutSnapshot({
+      screen,
+      hostingViews: [{ frame: {}, texts: {}, fonts: {}, tree: [tree] }],
+    })
+
+    expect(snapshot.elements.map((element) => element.fill)).toEqual([
+      undefined,
+      "#0000FF",
+      "#FF0000",
+    ])
+    expect(layoutElementAt(snapshot, { x: 140, y: 120 })?.fill).toBe("#FF0000")
+  })
+
+  test("a clip trims what it holds: what lies wholly outside it is left out, and the pointer finds the rest only inside it", () => {
+    const clipped = (y: number, content: unknown) =>
+      node("_FrameLayout", { position: [100, y], size: [100, 100] }, [
+        node("_ClipEffect<Rectangle>", {}, [content]),
+      ])
+    // An image filling its frame and clipped to it, then one moved below.
+    const tree = [
+      clipped(100, node("Image", { position: [50, 100], size: [200, 100] })),
+      clipped(300, node("Image", { position: [100, 450], size: [50, 50] })),
+    ]
+
+    const snapshot = layoutSnapshot({
+      screen,
+      hostingViews: [{ frame: {}, texts: {}, fonts: {}, tree }],
+    })
+
+    expect(snapshot.elements.map((element) => element.name)).toEqual([
+      "Frame",
+      "Image",
+      "Frame",
+    ])
+    const image = snapshot.elements[1]
+    expect(image.frame).toEqual({ x: 50, y: 100, width: 200, height: 100 })
+    expect(layoutElementAt(snapshot, { x: 150, y: 150 })).toBe(image)
+    expect(layoutElementAt(snapshot, { x: 75, y: 150 })).toBeUndefined()
   })
 
   test("an answer that isn't a layout is refused, and odd parts of one read as absent", () => {

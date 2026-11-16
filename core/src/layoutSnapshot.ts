@@ -61,6 +61,11 @@ export interface LayoutElement {
    */
   readonly name: string
   readonly frame: LayoutFrame
+  /**
+   * The part of the screen it shows in, when an ancestor's clip, as
+   * `.clipShape` or `.clipped()`, trims it; the pointer finds it only there.
+   */
+  readonly clip?: LayoutFrame
   /** Its padding, between its frame and its content. */
   readonly padding?: LayoutInsets
   /** A stack's spacing between its children, as the app declares it. */

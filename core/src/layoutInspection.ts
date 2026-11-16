@@ -12,12 +12,18 @@ import type {
 /** Below this, two edges are the same edge: frames carry 1/3 pt roundings. */
 const sameEdge = 0.01
 
-/** The element under `point`: the last, frontmost, whose frame holds it. */
+/**
+ * The element under `point`: the last, frontmost, whose frame holds it where
+ * no clip trims it.
+ */
 export function layoutElementAt(
   snapshot: LayoutSnapshot,
   point: Point
 ): LayoutElement | undefined {
-  return snapshot.elements.findLast(({ frame }) => holds(frame, point))
+  return snapshot.elements.findLast(
+    ({ frame, clip }) =>
+      holds(frame, point) && (clip === undefined || holds(clip, point))
+  )
 }
 
 function holds(frame: LayoutFrame, { x, y }: Point): boolean {
