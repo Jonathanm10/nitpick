@@ -4,11 +4,14 @@
 # loaded, and keeps the library's answers, gzipped, as the fixtures
 # server/test/LayoutSnapshot.test.ts reads. Needs Xcode and a simulator; the
 # tests need neither. Boots the simulator if it isn't, and leaves it booted.
+# Names after the UDID record only those screens.
 #
-#   scripts/inspect-sample/fixtures.sh <simulator UDID>
+#   scripts/inspect-sample/fixtures.sh <simulator UDID> [screen…]
 set -eu
 cd "$(dirname "$0")/../.."
 udid=$1
+shift
+screens=${*:-shop scrolled browse sheet cover picks}
 bundle=dev.nitpick.fixture.acmestore
 build=scripts/inspect-sample/.build
 fixtures=server/test/fixtures/layout
@@ -38,7 +41,7 @@ secret=$(openssl rand -hex 32)
 xcrun simctl boot "$udid" 2>/dev/null || true
 xcrun simctl bootstatus "$udid" -b >/dev/null
 xcrun simctl install "$udid" "$build/AcmeStore.app"
-for screen in shop scrolled browse sheet cover; do
+for screen in $screens; do
     SIMCTL_CHILD_DYLD_INSERT_LIBRARIES="$library" \
     SIMCTL_CHILD_NITPICK_INSPECT_PORT="$port" \
     SIMCTL_CHILD_NITPICK_INSPECT_SECRET="$secret" \

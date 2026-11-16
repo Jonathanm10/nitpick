@@ -8,6 +8,9 @@
 //   browse     a LazyVGrid of category tiles
 //   sheet      a medium-height sheet over the tab bar
 //   cover      a full-screen cover over the tab bar
+//   picks      a grid of frosted cards, rounded by a clip shape, whose
+//              surface draws a glow larger than the card and keeps it from
+//              touches, as many apps' glass does
 //
 // ACME_SCREEN picks the screen at launch; shop when unset. The tests assert
 // the values written here, so changing one means regenerating the fixtures.
@@ -269,12 +272,85 @@ struct WelcomeCover: View {
     }
 }
 
+struct Pick: Identifiable {
+    let id: String
+    let symbol: String
+    let tint: FrostedSurface.Tint
+}
+
+let picks = [
+    Pick(id: "Trail Runner 3", symbol: "figure.run", tint: .warm),
+    Pick(id: "Studio Headphones", symbol: "headphones", tint: .cool),
+    Pick(id: "Pocket Camera", symbol: "camera.fill", tint: .cool),
+    Pick(id: "City Bike", symbol: "bicycle", tint: .warm),
+]
+
+/**
+ * The design system's frosted surface. Its glow is larger than the card
+ * it sits behind, which the card's clip trims, and takes no touches.
+ */
+struct FrostedSurface: View {
+    enum Tint { case warm, cool }
+
+    let tint: Tint
+
+    var body: some View {
+        Palette.card
+            .overlay {
+                Circle()
+                    .fill(tint == .warm ? Palette.tile : Palette.accent)
+                    .frame(width: 320, height: 320)
+                    .blur(radius: 50)
+                    .opacity(0.3)
+                    .allowsHitTesting(false)
+            }
+    }
+}
+
+struct PickCard: View {
+    let pick: Pick
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: pick.symbol)
+                .font(.system(size: 34))
+                .foregroundStyle(Palette.ink)
+                .frame(maxWidth: .infinity, minHeight: 96)
+            Text(pick.id)
+                .acmeType(.headline)
+        }
+        .padding(16)
+        .background(FrostedSurface(tint: pick.tint))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+}
+
+struct PicksView: View {
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(
+                    columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                    spacing: 14
+                ) {
+                    ForEach(picks) { pick in
+                        PickCard(pick: pick)
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle("Staff picks")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
 enum Screen: String {
-    case shop, scrolled, browse, sheet, cover
+    case shop, scrolled, browse, sheet, cover, picks
 }
 
 enum Tab {
-    case shop, browse
+    case shop, browse, picks
 }
 
 struct RootView: View {
@@ -285,7 +361,7 @@ struct RootView: View {
 
     init(screen: Screen) {
         self.screen = screen
-        _tab = State(initialValue: screen == .browse ? .browse : .shop)
+        _tab = State(initialValue: screen == .browse ? .browse : screen == .picks ? .picks : .shop)
     }
 
     var body: some View {
@@ -295,6 +371,9 @@ struct RootView: View {
             }
             SwiftUI.Tab("Browse", systemImage: "square.grid.2x2", value: Tab.browse) {
                 BrowseView()
+            }
+            SwiftUI.Tab("Picks", systemImage: "star", value: Tab.picks) {
+                PicksView()
             }
         }
         .sheet(isPresented: $showsSheet) { CartSheet() }

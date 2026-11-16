@@ -92,6 +92,8 @@ interface Draft {
   fill?: string
   properties?: Map<string, string>
   hasChildren: boolean
+  /** It lies under an `allowsHitTesting(false)`, so it takes no touches. */
+  passive: boolean
 }
 
 interface Context {
@@ -104,6 +106,13 @@ interface Context {
   readonly paddedElement: Draft | undefined
   readonly path: string
   readonly resolved: Resolved
+  /** Under an `allowsHitTesting(false)`. */
+  readonly passive: boolean
+  /**
+   * The element the parent node made, if it made one: a ModifiedContent
+   * node holds the frame, and its modifier comes as its child.
+   */
+  readonly madeByParent: Draft | undefined
 }
 
 /**
@@ -135,6 +144,8 @@ export function layoutSnapshot(layout: unknown): LayoutSnapshot {
         paddedElement: undefined,
         path: `${index}/${position}`,
         resolved,
+        passive: false,
+        madeByParent: undefined,
       })
     )
   })
@@ -168,6 +179,17 @@ function read(node: unknown, drafts: Draft[], context: Context): void {
   const ownFrame =
     position && size ? frameThrough(transform, position, size) : undefined
   const isPadding = readableType === "_PaddingLayout"
+  const passive =
+    context.passive ||
+    (readableType === "_AllowsHitTestingModifier" &&
+      values.some(
+        (leaf) => leaf.name === "allowsHitTesting" && leaf.value === false
+      ))
+  // The modifier applies to the element its ModifiedContent made, not to
+  // one further up whose frame it shares.
+  if (passive && context.madeByParent !== undefined) {
+    context.madeByParent.passive = true
+  }
 
   let element = context.element
   const nestedPadding =
@@ -183,10 +205,12 @@ function read(node: unknown, drafts: Draft[], context: Context): void {
       parent: element,
       frame: ownFrame,
       hasChildren: false,
+      passive,
     }
     drafts.push(element)
   }
   if (element === undefined) return
+  const made = element !== context.element ? element : undefined
 
   merge(element, node, {
     readableType,
@@ -213,6 +237,8 @@ function read(node: unknown, drafts: Draft[], context: Context): void {
           : undefined,
       path: `${context.path}.${index}`,
       resolved: context.resolved,
+      passive,
+      madeByParent: made,
     })
   )
 }
@@ -326,16 +352,20 @@ function merge(
   }
 
   const shape = /^_ShapeView<(\w+)/.exec(readableType)?.[1]
+  // A clip shape, as `.clipShape(RoundedRectangle(…))`, rounds its element
+  // as a shape it is filled with does.
+  const clipShape = /^_ClipEffect<(\w+)/.exec(readableType)?.[1]
   if (shape !== undefined || base === "_BackgroundStyleModifier") {
     element.fill ??= fillColor(values)
   }
-  if (shape !== undefined) {
-    element.shape ??= shape
+  if (shape !== undefined) element.shape ??= shape
+  const outline = shape ?? clipShape
+  if (outline !== undefined) {
     const corner = pair(
       values.find((leaf) => leaf.path === "shape.cornerSize")?.value
     )
     if (corner !== undefined) element.cornerRadius ??= corner[0]
-    else if (shape === "Capsule" || shape === "Circle") {
+    else if (outline === "Capsule" || outline === "Circle") {
       element.cornerRadius ??=
         Math.min(element.frame.width, element.frame.height) / 2
     }
@@ -361,6 +391,7 @@ function merge(
  */
 function addAppProperties(element: Draft, values: ReadonlyArray<Leaf>): void {
   const found = new Map<string, string>()
+  const owners = new Map<string, string>()
   const ambiguous = new Set<string>()
   for (const leaf of values) {
     if (typeof leaf.value !== "string" || !isAppType(leaf.type)) continue
@@ -370,10 +401,16 @@ function addAppProperties(element: Draft, values: ReadonlyArray<Leaf>): void {
     found.set(leaf.name, leaf.value)
     // AcmeButton.Style: the type it is declared in names the component.
     const owner = /^(\w+)\.\w+$/.exec(leaf.readableType)?.[1]
-    if (owner !== undefined) element.component ??= owner
+    if (owner !== undefined && !owners.has(leaf.name)) {
+      owners.set(leaf.name, owner)
+    }
   }
   for (const name of ambiguous) found.delete(name)
   if (found.size === 0) return
+  // Only a value of its own names it: a ForEach's items, each with its
+  // own, name nothing.
+  const owner = [...found.keys()].find((name) => owners.has(name))
+  if (owner !== undefined) element.component ??= owners.get(owner)
   element.properties ??= new Map()
   for (const [name, value] of found) element.properties.set(name, value)
 }
@@ -748,7 +785,8 @@ function hexColor(
 /**
  * The drafts as the page gets them: an element that says nothing a designer
  * reads, a wrapper SwiftUI adds, gives way to its children; one off screen
- * or without area goes; values are rounded to a hundredth of a point.
+ * or without area goes, and so does decoration that spills; values are
+ * rounded to a hundredth of a point.
  */
 function elementsOf(
   drafts: ReadonlyArray<Draft>,
@@ -761,6 +799,7 @@ function elementsOf(
         draft.frame.width > 0 &&
         draft.frame.height > 0 &&
         intersects(draft.frame, screen) &&
+        !spills(draft) &&
         (nameOf(draft) !== "View" ||
           draft.padding !== undefined ||
           draft.fill !== undefined ||
@@ -861,6 +900,30 @@ function nameOf(draft: Draft): string {
       ? draft.shape
       : undefined) ??
     (draft.hasFrameLayout ? "Frame" : "View")
+  )
+}
+
+/**
+ * Decoration the app keeps from touches and lets reach past the element it
+ * decorates, as a glass surface's backdrop or a glow that a card's clip
+ * trims: what shows of it lies inside that element, so its frame isn't a box
+ * a designer sees, and it would take the pointer from everything it covers.
+ */
+function spills(draft: Draft): boolean {
+  if (!draft.passive) return false
+  let host = draft.parent
+  while (host?.passive) host = host.parent
+  return host !== undefined && !within(draft.frame, host.frame)
+}
+
+/** `inner` lies in `outer`, give or take a third of a point. */
+function within(inner: LayoutFrame, outer: LayoutFrame): boolean {
+  const slack = 0.34
+  return (
+    inner.x >= outer.x - slack &&
+    inner.y >= outer.y - slack &&
+    inner.x + inner.width <= outer.x + outer.width + slack &&
+    inner.y + inner.height <= outer.y + outer.height + slack
   )
 }
 

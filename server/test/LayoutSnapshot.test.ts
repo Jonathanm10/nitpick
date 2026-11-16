@@ -5,14 +5,18 @@
 // value asserted here is one that app's source writes.
 import { readFileSync } from "node:fs"
 import { gunzipSync } from "node:zlib"
-import type { LayoutElement, LayoutSnapshot } from "@nitpick/core"
+import {
+  layoutElementAt,
+  type LayoutElement,
+  type LayoutSnapshot,
+} from "@nitpick/core"
 import { describe, expect, test } from "vitest"
 import {
   layoutSnapshot,
   MalformedLayout,
 } from "../src/device/layoutSnapshot.ts"
 
-type Screen = "shop" | "scrolled" | "browse" | "sheet" | "cover"
+type Screen = "shop" | "scrolled" | "browse" | "sheet" | "cover" | "picks"
 
 function answer(screen: Screen): unknown {
   const fixture = new URL(`fixtures/layout/${screen}.json.gz`, import.meta.url)
@@ -270,6 +274,63 @@ describe("a Layout Snapshot of the browse grid", () => {
       16,
       2
     )
+  })
+})
+
+describe("a Layout Snapshot of the frosted picks", () => {
+  const picks = () => snapshot("picks")
+  // Row by row: a row's cards share their middle, not their top.
+  const middle = ({ frame }: LayoutElement) => frame.y + frame.height / 2
+  const pickCards = () =>
+    named(picks(), "FrostedSurface").sort(
+      (a, b) => middle(a) - middle(b) || a.frame.x - b.frame.x
+    )
+
+  test("rounds a card by its clip shape, and names it by its surface's value", () => {
+    expect(pickCards()).toHaveLength(4)
+    for (const card of pickCards()) {
+      expect(card).toMatchObject({
+        padding: { top: 16, leading: 16, bottom: 16, trailing: 16 },
+        cornerRadius: 22,
+      })
+    }
+    expect(pickCards().map((card) => card.properties?.tint)).toEqual([
+      "warm",
+      "cool",
+      "cool",
+      "warm",
+    ])
+  })
+
+  test("leaves out the glow the surface keeps from touches, which reaches past its card", () => {
+    // Circle().frame(width: 320, height: 320) … .allowsHitTesting(false)
+    expect(
+      picks().elements.some(
+        (element) => element.name === "Circle" || element.frame.width === 320
+      )
+    ).toBe(false)
+    const [card] = pickCards()
+    expect(
+      layoutElementAt(picks(), { x: card.frame.x + 4, y: card.frame.y + 4 })
+    ).toBe(card)
+  })
+
+  test("names the grid by what it is, though each of its items has a value", () => {
+    const [grid] = named(picks(), "LazyVGrid")
+    expect(grid).toMatchObject({
+      gridSpacing: { horizontal: 12, vertical: 14 },
+    })
+    expect(grid.properties).toBeUndefined()
+    const [first, second] = pickCards()
+    const between = {
+      x: (first.frame.x + first.frame.width + second.frame.x) / 2,
+      y: first.frame.y + 10,
+    }
+    expect(second.frame.x - (first.frame.x + first.frame.width)).toBeCloseTo(
+      12,
+      2
+    )
+    expect(layoutElementAt(picks(), between)).toBe(grid)
   })
 })
 
