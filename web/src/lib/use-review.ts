@@ -85,6 +85,8 @@ export function useReview() {
   // page's own, and a File all run on the server.
   const performing = useRef(false)
   const filingRuns = useRef(false)
+  /** The device the review runs on, for a read that outlives a switch. */
+  const runningDevice = useRef<string>(undefined)
   const [busy] = useState(() => ({
     get current() {
       return performing.current || filingRuns.current
@@ -103,6 +105,7 @@ export function useReview() {
   const filing = state?.filing ?? idle
   const isFiling = filing.status === "running"
   filingRuns.current = isFiling
+  runningDevice.current = run?.device.udid
   /** Busy while the page acts or File all runs, as ShellActivity has it. */
   const isBusy = isPerforming || isFiling
 
@@ -450,13 +453,18 @@ export function useReview() {
   /**
    * Inspect's read of what the device shows now. Not a run: it never holds
    * up a capture. A device that stopped pauses the review, as a capture's
-   * does.
+   * does, unless the review moved to another device while it read.
    */
   async function readLayout(): Promise<LayoutResponse> {
+    const deviceUDID = run?.device.udid
     try {
       return await api.layout()
     } catch (error) {
-      if (error instanceof APIError && error.code === "deviceNotRunning") {
+      if (
+        error instanceof APIError &&
+        error.code === "deviceNotRunning" &&
+        runningDevice.current === deviceUDID
+      ) {
         setRun(undefined)
         setErrorMessage(error.message)
       }

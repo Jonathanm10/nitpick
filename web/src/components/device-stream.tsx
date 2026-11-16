@@ -274,6 +274,8 @@ function LiveDevice({
     return () => {
       element.removeEventListener("wheel", wheel)
       clearTimeout(release)
+      // A scroll still going, as when an overlay comes, lifts its finger.
+      if (gesture !== undefined) client.touch("end", gesture.x, gesture.y)
     }
   }, [client, screen, blocked])
 
@@ -389,7 +391,7 @@ function LiveDevice({
         size="xs"
         variant="ghost"
         className="self-center text-text-3"
-        disabled={status.kind !== "streaming"}
+        disabled={status.kind !== "streaming" || blocked}
         onClick={() => client?.pressHome()}
       >
         <CircleIcon />
