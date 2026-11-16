@@ -171,6 +171,9 @@ export function makeLocalDeviceHost({
       )
     },
     inspectLayout: async (deviceUDID) => {
+      // The launch the Reviewer's claim names now, before anything yields: a
+      // later launch on the device, another Reviewer's, has its own secret.
+      const endpoint = inspectEndpoints.get(deviceUDID)
       const device = (await listSimulatorDevices(runner)).find(
         (candidate) => candidate.udid === deviceUDID
       )
@@ -186,7 +189,6 @@ export function makeLocalDeviceHost({
           "it can't be inspected"
         )
       }
-      const endpoint = inspectEndpoints.get(deviceUDID)
       if (endpoint === undefined) {
         const built = await inspectLibrary()
         return {

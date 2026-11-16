@@ -200,6 +200,8 @@ describe("launching with the library", () => {
     readonly commands: SubprocessCommand[] = []
     booted = false
     buildFails = false
+    /** `simctl list` answers once this settles. */
+    listing: Promise<void> = Promise.resolve()
 
     async run(command: SubprocessCommand): Promise<SubprocessResult> {
       this.commands.push(command)
@@ -215,6 +217,7 @@ describe("launching with the library", () => {
         return ok()
       }
       if (first === "simctl" && command.arguments[1] === "list") {
+        await this.listing
         return ok(
           JSON.stringify({
             devices: {
@@ -296,6 +299,28 @@ describe("launching with the library", () => {
           (element) => element.text?.content === "New this week"
         )
     ).toBe(true)
+  })
+
+  test("an Inspect still under way when the device is relaunched asks the launch it began on, never the next one", async () => {
+    const runner = new HostRunner()
+    const host = localHost(runner)
+    await host.launchBuild(build, device)
+    let listed!: () => void
+    runner.listing = new Promise((resolve) => (listed = resolve))
+
+    const pending = host.inspectLayout(device.udid)
+    // Meanwhile another Reviewer takes the device and launches on it.
+    await host.launchBuild(build, device)
+    const next = runner.launches()[1].environment!
+    await libraryServer(
+      Number(next.SIMCTL_CHILD_NITPICK_INSPECT_PORT),
+      next.SIMCTL_CHILD_NITPICK_INSPECT_SECRET,
+      shopAnswer()
+    )
+    listed()
+
+    // The first launch's Build is gone, so nothing answers its secret.
+    await expect(pending).rejects.toThrow(InspectFailed)
   })
 
   test("a host that can't build the library launches iOS Builds without it, and says why", async () => {
