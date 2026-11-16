@@ -15,6 +15,7 @@ import {
   type AndroidSDK,
 } from "./android.ts"
 import type { DeviceHost, SimulatorDevice } from "./DeviceHost.ts"
+import { freeLoopbackPort } from "./deviceHub.ts"
 import {
   AndroidUnavailable,
   checkHostHealth,
@@ -22,7 +23,17 @@ import {
   xcodeVersion,
 } from "./hostHealth.ts"
 import {
+  buildInspectLibrary,
+  fetchLayout,
+  inspectLaunchEnvironment,
+  newInspectSecret,
+  type InspectEndpoint,
+  type InspectLibrary,
+} from "./inspect.ts"
+import { layoutSnapshot } from "./layoutSnapshot.ts"
+import {
   captureScreen,
+  DeviceNotRunning,
   launchBuild,
   listSimulatorDevices,
   shutDownDevice,
@@ -40,6 +51,8 @@ export interface LocalDeviceHostOptions {
   readonly android: AndroidSDK
   /** The ffmpeg the hub streams emulators with, if the host has one. */
   readonly ffmpeg: string | undefined
+  /** Where the Inspect library is built and kept. */
+  readonly inspectDirectory: string
 }
 
 /**
@@ -47,7 +60,8 @@ export interface LocalDeviceHostOptions {
  * simulators through simctl, and its Android emulators through adb and the
  * emulator. iOS needs Xcode, so a host without it isn't ready at all; a host
  * without what Android needs still reviews iOS, and says why it lists no
- * emulator.
+ * emulator. One whose Xcode can't build the Inspect library launches iOS
+ * Builds without it, and says why.
  */
 export function makeLocalDeviceHost({
   runner,
@@ -55,6 +69,7 @@ export function makeLocalDeviceHost({
   captureDirectory,
   android,
   ffmpeg,
+  inspectDirectory,
 }: LocalDeviceHostOptions): DeviceHost {
   const listEmulators = () =>
     listAndroidDevices(runner, android).catch((): SimulatorDevice[] => [])
@@ -71,6 +86,13 @@ export function makeLocalDeviceHost({
     ])
     return [...simulators, ...emulators]
   }
+  // Built, or found built, once per server start; a host whose Xcode
+  // couldn't build it is fixed, then restarted.
+  let library: Promise<InspectLibrary> | undefined
+  const inspectLibrary = () =>
+    (library ??= buildInspectLibrary(runner, inspectDirectory))
+  /** Where each simulator's running Build answers Inspect, by UDID. */
+  const inspectEndpoints = new Map<string, InspectEndpoint>()
   return {
     id: "local",
     label: "This machine",
@@ -81,20 +103,36 @@ export function makeLocalDeviceHost({
         checkAndroidHealth(runner, android, ffmpegReady),
       ])
       if (ios.status === "notReady") return ios
-      return androidHealth.status === "ready"
-        ? {
-            status: "ready",
-            devices: [...ios.devices, ...androidHealth.devices],
-          }
-        : {
-            status: "ready",
-            devices: ios.devices,
-            androidProblem: androidHealth.problem,
-          }
+      const built = await inspectLibrary()
+      return {
+        status: "ready",
+        ...(androidHealth.status === "ready"
+          ? { devices: [...ios.devices, ...androidHealth.devices] }
+          : { devices: ios.devices, androidProblem: androidHealth.problem }),
+        ...(built.status === "unbuilt" && { inspectProblem: built.reason }),
+      }
     },
+    // A new port and secret for every launch, so two simulators, which
+    // share the host's loopback, never answer for each other.
     launchBuild: async (build, device) => {
       if (device.platform !== "android") {
-        await launchBuild(runner, build, device)
+        inspectEndpoints.delete(device.udid)
+        const built = await inspectLibrary()
+        if (built.status === "unbuilt") {
+          await launchBuild(runner, build, device)
+          return device
+        }
+        const endpoint = {
+          port: await freeLoopbackPort(),
+          secret: newInspectSecret(),
+        }
+        await launchBuild(
+          runner,
+          build,
+          device,
+          inspectLaunchEnvironment(built.path, endpoint)
+        )
+        inspectEndpoints.set(device.udid, endpoint)
         return device
       }
       const serial = await bootEmulator(runner, starter, android, device)
@@ -132,9 +170,47 @@ export function makeLocalDeviceHost({
         join(captureDirectory, `${newUUID()}.png`)
       )
     },
+    inspectLayout: async (deviceUDID) => {
+      // The launch the Reviewer's claim names now, before anything yields: a
+      // later launch on the device, another Reviewer's, has its own secret.
+      const endpoint = inspectEndpoints.get(deviceUDID)
+      const device = (await listSimulatorDevices(runner)).find(
+        (candidate) => candidate.udid === deviceUDID
+      )
+      if (
+        device === undefined &&
+        (await listEmulators()).some((emulator) => emulator.udid === deviceUDID)
+      ) {
+        return { status: "unavailable", reason: inspectAndroidReason }
+      }
+      if (!device?.isBooted) {
+        throw new DeviceNotRunning(
+          device?.name ?? "The device",
+          "it can't be inspected"
+        )
+      }
+      if (endpoint === undefined) {
+        const built = await inspectLibrary()
+        return {
+          status: "unavailable",
+          reason:
+            built.status === "unbuilt" ? built.reason : launchedWithoutInspect,
+        }
+      }
+      return {
+        status: "ready",
+        snapshot: layoutSnapshot(await fetchLayout(endpoint)),
+      }
+    },
     versions: async () => ({
       macOS: await macOSVersion(runner),
       xcode: await xcodeVersion(runner),
     }),
   }
 }
+
+const inspectAndroidReason =
+  "Inspect reads SwiftUI layouts on iOS simulators, so it isn't available on Android emulators."
+
+const launchedWithoutInspect =
+  "This Build was launched without Inspect. Resume review to relaunch it with Inspect."

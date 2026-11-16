@@ -6,6 +6,7 @@ import type {
   AndroidDeviceSettings,
   Build,
   DeviceSettings,
+  LayoutSnapshot,
 } from "@nitpick/core"
 
 /**
@@ -69,6 +70,12 @@ export interface DeviceHost {
    * state it was taken under. Refuses a device that isn't booted.
    */
   readonly captureScreen: (deviceUDID: string) => Promise<ScreenCapture>
+  /**
+   * The layout of what the Build shows on the device now, for Inspect
+   * (ADR-0015), or why the device can't be inspected. Refuses a device
+   * that isn't booted.
+   */
+  readonly inspectLayout: (deviceUDID: string) => Promise<Inspection>
   /** The host's macOS and Xcode, for a Feedback's Environment. */
   readonly versions: () => Promise<HostVersions>
 }
@@ -80,6 +87,11 @@ export interface HostVersions {
   /** "26.1 (17B55)" */
   readonly xcode?: string
 }
+
+/** What Inspect finds on a device: its layout, or why it has none. */
+export type Inspection =
+  | { readonly status: "ready"; readonly snapshot: LayoutSnapshot }
+  | { readonly status: "unavailable"; readonly reason: string }
 
 /** One capture: the device as it is now, its screenshot and its settings. */
 export interface ScreenCapture {
@@ -122,5 +134,7 @@ export type HostHealth =
       readonly devices: SimulatorDevice[]
       /** Why no Android emulator is listed, when none can run. */
       readonly androidProblem?: AndroidProblem
+      /** Why iOS Builds launch without Inspect, when they do. */
+      readonly inspectProblem?: string
     }
   | { readonly status: "notReady"; readonly problem: HostProblem }

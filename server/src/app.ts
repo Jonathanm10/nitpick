@@ -32,6 +32,7 @@ import type {
   HistoryImportResponse,
   HistoryResponse,
   HostResponse,
+  LayoutResponse,
   ProjectsResponse,
   SignedInResponse,
   SignInMethodResponse,
@@ -64,6 +65,8 @@ import {
   routeHubRequest,
 } from "./device/deviceHubProxy.ts"
 import { EmulatorBootTimedOut, NoLauncherActivity } from "./device/android.ts"
+import { InspectFailed } from "./device/inspect.ts"
+import { MalformedLayout } from "./device/layoutSnapshot.ts"
 import {
   AndroidUnavailable,
   androidProblemReason,
@@ -425,6 +428,12 @@ export function createApp({
     return c.body(null, 204)
   })
 
+  // Inspect: what the Reviewer's device shows now, laid out (ADR-0015).
+  // Each request reads the running Build afresh.
+  app.get("/api/session/layout", async (c) =>
+    c.json((await reviewerOf(c).inspect()) satisfies LayoutResponse)
+  )
+
   app.get(`${finding}/capture`, async (c) => {
     const png = await reviewerOf(c).capturePNG(c.req.param("itemID"))
     return imageResponse(png, "image/png")
@@ -614,7 +623,14 @@ function errorStatus(error: unknown): ContentfulStatusCode {
     return 409
   }
   if (error instanceof EmulatorBootTimedOut) return 504
-  if (error instanceof YouTrackError || error instanceof HubRefused) return 502
+  if (
+    error instanceof YouTrackError ||
+    error instanceof HubRefused ||
+    error instanceof InspectFailed ||
+    error instanceof MalformedLayout
+  ) {
+    return 502
+  }
   if (error instanceof DeviceStreamUnavailable) return 503
   return 500
 }
@@ -700,10 +716,12 @@ function readyHost({
   devices,
   recentDevices,
   androidProblem,
+  inspectProblem,
 }: {
   readonly devices: ReadonlyArray<SimulatorDevice>
   readonly recentDevices: RecentDevices
   readonly androidProblem?: AndroidProblem
+  readonly inspectProblem?: string
 }): ReadyHost {
   return {
     status: "ready",
@@ -712,5 +730,6 @@ function readyHost({
     ...(androidProblem !== undefined && {
       androidProblem: androidProblemReason(androidProblem),
     }),
+    ...(inspectProblem !== undefined && { inspectProblem }),
   }
 }

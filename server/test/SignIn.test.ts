@@ -214,6 +214,7 @@ const registeredRoutes = [
   "DELETE /api/session",
   "PATCH /api/session",
   "POST /api/session/captures",
+  "GET /api/session/layout",
   "PATCH /api/session/findings/:itemID",
   "DELETE /api/session/findings/:itemID",
   "GET /api/session/findings/:itemID/capture",

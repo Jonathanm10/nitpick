@@ -102,6 +102,11 @@ export class DeviceClaims {
     return this.#inTurn(() => this.#claim(claimant, device))
   }
 
+  /** The device the Reviewer runs their review on, if they hold one. */
+  held(login: string): string | undefined {
+    return this.#claims.get(login)?.udid
+  }
+
   /** The Reviewer's review ended: their device is free for others. */
   release(login: string): void {
     this.#claims.delete(login)

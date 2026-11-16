@@ -72,6 +72,14 @@ _Avoid_: mockup, design spec
 An optional named static image from the design, attached to a Finding as visual reference alongside its captured app screenshot and independently of any Design Reference. A Finding may carry several Design Snapshots; each has a default name the Reviewer may refine, and supports inspection rather than visual diffing or image editing.
 _Avoid_: attachment, Figma capture, comparison image
 
+**Inspect**:
+Reading the real layout values of what the Build shows on the live device by hovering it, as a design tool's developer mode shows them for a design: size, padding, spacing, font, colour, corner radius, and the app's own component values. iOS SwiftUI Builds on a simulator only (ADR-0015).
+_Avoid_: dev mode, inspector (the library loaded into the Build is the inspector), debug view
+
+**Layout Snapshot**:
+What Inspect reads at one moment: the elements SwiftUI laid out on the device's screen, back to front, each with its frame in points and its layout values. Read afresh from the running Build on each request, and never stored.
+_Avoid_: view tree, dump (the raw tree it is read from)
+
 **Feedback**:
 A Reviewer's report about nitpick itself — a Bug (nitpick misbehaves) or an Improvement (a change worth making to nitpick) — with a title, a description, the versions in play, and optionally an image of nitpick carrying Annotations. Sent as exactly one Issue to the nitpick project; never part of a Review Session or History.
 _Avoid_: bug report, ticket, finding (a Finding is about the Build under review, not about nitpick)

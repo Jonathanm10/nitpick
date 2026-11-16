@@ -9,7 +9,13 @@ import {
   type TrayItem,
 } from "@nitpick/core"
 import type { BuildSummary, SessionSummary } from "@nitpick/server/api"
-import { CameraIcon, CommandIcon, LinkIcon, Maximize2Icon } from "lucide-react"
+import {
+  CameraIcon,
+  CommandIcon,
+  LinkIcon,
+  Maximize2Icon,
+  SquareDashedMousePointerIcon,
+} from "lucide-react"
 import { cn } from "cn"
 import { AnnotationSurface } from "@/components/annotation-surface"
 import {
@@ -25,6 +31,8 @@ import {
 import { FileAll } from "@/components/file-all"
 import { FindingInspector } from "@/components/finding-fields"
 import { HostNotReady } from "@/components/host-not-ready"
+import { InspectOverlay, inspectColors } from "@/components/inspect-overlay"
+import { InspectPanel } from "@/components/inspect-panel"
 import { StartReviewButton } from "@/components/start-review-button"
 import { InspectorSection, ProjectKey, Tip } from "@/components/studio"
 import { Tray } from "@/components/tray"
@@ -49,16 +57,18 @@ import {
 } from "@/lib/stage-layout"
 import { useCaptureImage } from "@/lib/use-capture-image"
 import { useEditor, type Editor } from "@/lib/use-editor"
+import { useInspect, type Inspect } from "@/lib/use-inspect"
 import type { useReview } from "@/lib/use-review"
 
 type Review = ReturnType<typeof useReview>
 
 /**
  * The open session's Editor and the actions the stage, the shortcuts and
- * the command palette share: capture, File all and back to live. It lives
- * with the page, so ⌘K reaches it from anywhere.
+ * the command palette share: capture, File all, back to live and Inspect.
+ * It lives with the page, so ⌘K reaches it from anywhere; `showsStage` is
+ * false while another page, such as History, hides the session.
  */
-export function useStudioSession(model: Review) {
+export function useStudioSession(model: Review, showsStage: boolean) {
   const session =
     model.review.status === "loaded" ? model.review.session : undefined
   const { run, isBusy } = model
@@ -68,6 +78,12 @@ export function useStudioSession(model: Review) {
     onAnnotations: (itemID, annotations) =>
       model.editFinding(itemID, { annotations }),
     onDiscard: (itemID) => void model.discard(itemID),
+  })
+  const inspect = useInspect({
+    device: run?.device,
+    isLive: showsStage && editor.item === undefined,
+    hostProblem: model.inspectProblem,
+    readLayout: model.readLayout,
   })
   const refusal = captureRefusal({
     isReviewing: run !== undefined,
@@ -116,6 +132,7 @@ export function useStudioSession(model: Review) {
   return {
     session,
     editor,
+    inspect,
     refusal,
     shutter,
     capture,
@@ -265,7 +282,9 @@ export function SessionScreen({
           aria-label="Inspector"
           className="flex min-h-0 thin-scroll flex-col overflow-y-auto border-l bg-panel"
         >
-          {item === undefined ? (
+          {item === undefined && studio.inspect.isOn ? (
+            <InspectPanel inspect={studio.inspect} />
+          ) : item === undefined ? (
             <SessionInspector session={session} build={build} model={model} />
           ) : (
             <FindingInspector
@@ -301,7 +320,7 @@ function Stage({
   readonly studio: StudioSession
 }) {
   const { run } = model
-  const { editor } = studio
+  const { editor, inspect } = studio
   const item = editor.item
   const stageRef = useRef<HTMLDivElement>(null)
   const stage = useElementSize(stageRef)
@@ -353,9 +372,22 @@ function Stage({
               )}
               {run === undefined ? "Paused" : `Live · ${run.device.name}`}
             </span>
+            {inspect.isOn && <InspectStatus inspect={inspect} />}
             <span className="flex-1" />
-            <Hint keys={chords.capture.label}>capture</Hint>
-            <Hint keys={chords.commands.label}>commands</Hint>
+            {inspect.isOn ? (
+              <>
+                <Hint keys={chords.readLayoutAgain.label}>read again</Hint>
+                <Hint keys="Esc">leave Inspect</Hint>
+              </>
+            ) : (
+              <>
+                {inspect.canInspect && (
+                  <Hint keys={chords.inspect.label}>inspect</Hint>
+                )}
+                <Hint keys={chords.capture.label}>capture</Hint>
+                <Hint keys={chords.commands.label}>commands</Hint>
+              </>
+            )}
           </>
         ) : (
           <>
@@ -386,6 +418,26 @@ function Stage({
         )}
       </footer>
     </section>
+  )
+}
+
+/** The stage foot's word on Inspect: reading, or what it read and how fast. */
+function InspectStatus({ inspect }: { readonly inspect: Inspect }) {
+  const { reading } = inspect
+  return (
+    <span className="flex items-center gap-1.5 text-text-2">
+      <span className="h-3 w-px bg-line-strong" />
+      <SquareDashedMousePointerIcon
+        className="size-3.5"
+        style={{ color: inspectColors.outline }}
+      />
+      Inspect
+      {reading?.status === "reading" && " · reading the layout…"}
+      {reading?.status === "ready" &&
+        ` · ${reading.snapshot.elements.length} elements, read in ${(reading.duration / 1000).toFixed(1)} s`}
+      {reading?.status === "unavailable" && " · not available"}
+      {reading?.status === "failed" && " · no layout"}
+    </span>
   )
 }
 
@@ -453,7 +505,7 @@ function LiveSlot({
   const captureButton = (
     <Button
       className={cn(
-        "w-full border-0 font-semibold btn-red",
+        "min-w-0 flex-1 border-0 font-semibold btn-red",
         isPip ? "h-8 rounded-[9px]" : "h-10 rounded-[10px] text-[14px]"
       )}
       disabled={refusal !== undefined}
@@ -521,6 +573,11 @@ function LiveSlot({
               onScreen={(next) =>
                 setReported({ udid: device.udid, screen: next })
               }
+              overlay={
+                studio.inspect.isOn && !isPip ? (
+                  <InspectOverlay inspect={studio.inspect} />
+                ) : undefined
+              }
             />
           )}
           {studio.shutter > 0 && (
@@ -532,19 +589,73 @@ function LiveSlot({
             />
           )}
         </div>
-        {device !== undefined &&
-          (refusal === undefined ? (
-            captureButton
-          ) : (
-            <Tooltip>
-              <TooltipTrigger render={<span tabIndex={0} className="flex" />}>
-                {captureButton}
-              </TooltipTrigger>
-              <TooltipContent>{refusalHints[refusal]}</TooltipContent>
-            </Tooltip>
-          ))}
+        {device !== undefined && (
+          <div className="flex gap-2">
+            {refusal === undefined ? (
+              captureButton
+            ) : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={<span tabIndex={0} className="flex min-w-0 flex-1" />}
+                >
+                  {captureButton}
+                </TooltipTrigger>
+                <TooltipContent>{refusalHints[refusal]}</TooltipContent>
+              </Tooltip>
+            )}
+            {!isPip && <InspectButton inspect={studio.inspect} />}
+          </div>
+        )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Inspect's switch, beside Capture. Off for an Android review, or on a host
+ * that can't build Inspect's library, with the reason in its tooltip.
+ */
+function InspectButton({ inspect }: { readonly inspect: Inspect }) {
+  const button = (
+    <Button
+      variant="outline"
+      aria-pressed={inspect.isOn}
+      disabled={!inspect.isOn && !inspect.canInspect}
+      onClick={inspect.toggle}
+      className={cn(
+        "h-10 rounded-[10px] px-3 text-[13px]",
+        inspect.isOn &&
+          "border-[#0d99ff]/60 bg-[#0d99ff]/15 text-[#7cc6ff] hover:bg-[#0d99ff]/20 hover:text-[#7cc6ff] dark:border-[#0d99ff]/60 dark:bg-[#0d99ff]/15 dark:hover:bg-[#0d99ff]/20"
+      )}
+    >
+      <SquareDashedMousePointerIcon />
+      Inspect
+      <Kbd>{chords.inspect.label}</Kbd>
+    </Button>
+  )
+  if (inspect.unavailableReason !== undefined) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={<span tabIndex={0} className="flex" />}>
+          {button}
+        </TooltipTrigger>
+        <TooltipContent className="max-w-64">
+          {inspect.unavailableReason}
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+  return (
+    <Tip
+      label={
+        inspect.isOn
+          ? "Leave Inspect"
+          : "Inspect: hover the device to read its layout"
+      }
+      side="top"
+    >
+      {button}
+    </Tip>
   )
 }
 
@@ -661,6 +772,10 @@ function SessionInspector({
           <dd>
             <Kbd>{chords.capture.label}</Kbd>
           </dd>
+          <dt>Inspect the live device</dt>
+          <dd>
+            <Kbd>{chords.inspect.label}</Kbd>
+          </dd>
           <dt>Previous / next Finding</dt>
           <dd className="flex gap-1">
             <Kbd>{chords.previousFinding.label}</Kbd>
@@ -728,7 +843,7 @@ function useSessionChords(studio: StudioSession) {
   useEffect(() => {
     function keyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) return
-      const { editor, capture, fileAll, backToLive } = latest.current
+      const { editor, inspect, capture, fileAll, backToLive } = latest.current
       const inField = isTextEntry(event.target)
       // Dialogs and popups render outside the page's root.
       const inPopup =
@@ -752,6 +867,24 @@ function useSessionChords(studio: StudioSession) {
         event.preventDefault()
         if (chords.undo.matches(event)) editor.undo()
         else editor.redo()
+        return
+      }
+      if (!inField && inspect.isOn) {
+        if (event.key === "Escape" || chords.inspect.matches(event)) {
+          event.preventDefault()
+          inspect.leave()
+          return
+        }
+        if (chords.readLayoutAgain.matches(event)) {
+          event.preventDefault()
+          inspect.refresh()
+          return
+        }
+      } else if (!inField && chords.inspect.matches(event)) {
+        if (inspect.canInspect) {
+          event.preventDefault()
+          inspect.enter()
+        }
         return
       }
       if (chords.previousFinding.matches(event)) {

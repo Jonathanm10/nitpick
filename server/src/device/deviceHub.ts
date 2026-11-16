@@ -285,8 +285,11 @@ function hubCLIPath(): string {
   return join(dirname(packageJSON), bin["expo-device-hub"]!)
 }
 
-/** A port nothing on loopback listens on now, for the hub to take. */
-function freeLoopbackPort(): Promise<number> {
+/**
+ * A port nothing on loopback listens on now, for the hub or a Build's
+ * Inspect library to take.
+ */
+export function freeLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer()
     server.once("error", reject)

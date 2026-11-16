@@ -18,6 +18,7 @@ import {
   newFinding,
   newReviewSession,
   type Build,
+  type LayoutSnapshot,
 } from "@nitpick/core"
 import { beforeEach, describe, expect, test, vi } from "vitest"
 import { FakeHTTPTransport } from "../../core/test/FakeHTTPTransport.ts"
@@ -31,6 +32,7 @@ import type {
 import type { SimulatorDevice } from "../src/device/DeviceHost.ts"
 import { BuildIngestError } from "../src/buildIngestion.ts"
 import { claimIdleAfter, DeviceClaims } from "../src/device/deviceClaims.ts"
+import { InspectFailed, inspectUnbuiltReason } from "../src/device/inspect.ts"
 import { RuntimeUnavailable } from "../src/device/simctl.ts"
 import {
   simulatorInfoPlist,
@@ -700,6 +702,156 @@ describe("In the session", () => {
     expect(await review(h)).toEqual({
       build: reviewMe,
       filing: { status: "idle" },
+    })
+  })
+})
+
+describe("Inspect", () => {
+  let h: Harness
+
+  beforeEach(() => {
+    h = harness()
+  })
+
+  async function startOn(deviceUDID: string) {
+    enqueueExtraction(h)
+    await upload(h)
+    enqueueProjectsAndSchema(h)
+    await startReview(h, { deviceUDID, projectID: "0-12" })
+  }
+
+  function inspect() {
+    return h.app.request("/api/session/layout")
+  }
+
+  const snapshot: LayoutSnapshot = {
+    screen: { width: 402, height: 874, scale: 3 },
+    elements: [
+      {
+        id: "1a",
+        name: "Text",
+        frame: { x: 20, y: 116, width: 182, height: 35.67 },
+        text: {
+          content: "New this week",
+          font: "AvenirNext-DemiBold",
+          family: "Avenir Next",
+          size: 26,
+        },
+      },
+    ],
+  }
+
+  test("reads the layout of the device the Reviewer's session runs on, afresh each time", async () => {
+    await startOn(iPhone.udid)
+    h.deviceHost.inspection = { status: "ready", snapshot }
+
+    const first = await inspect()
+    await inspect()
+
+    expect(first.status).toBe(200)
+    expect(await first.json()).toEqual({ status: "ready", snapshot })
+    expect(h.deviceHost.inspected).toEqual([iPhone.udid, iPhone.udid])
+  })
+
+  test("follows a device switch", async () => {
+    await startOn(iPhone.udid)
+    await h.app.request("/api/session/device", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceUDID: iPad.udid }),
+    })
+
+    await inspect()
+
+    expect(h.deviceHost.inspected).toEqual([iPad.udid])
+  })
+
+  test("a device Inspect can't read answers why, for the page to show", async () => {
+    await startOn(iPhone.udid)
+    h.deviceHost.inspection = {
+      status: "unavailable",
+      reason: "This Build was launched without Inspect.",
+    }
+
+    const response = await inspect()
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(h.deviceHost.inspection)
+  })
+
+  test("without an open session, or once it ended, nothing is inspected", async () => {
+    const before = await inspect()
+    await startOn(iPhone.udid)
+    await h.app.request("/api/session", { method: "DELETE" })
+    const after = await inspect()
+
+    for (const response of [before, after]) {
+      expect(response.status).toBe(409)
+      expect(await response.json()).toEqual({
+        error: "There is no open review.",
+      })
+    }
+    expect(h.deviceHost.inspected).toEqual([])
+  })
+
+  test("a session whose device another Reviewer took over is told to resume", async () => {
+    const now = { time: 0 }
+    h = harness({ now: () => now.time })
+    await startOn(iPhone.udid)
+    now.time = claimIdleAfter + 1
+    await h.deviceClaims.claim(
+      { login: "noor", fullName: "Noor Haddad" },
+      iPhone
+    )
+
+    const response = await inspect()
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({
+      error:
+        "Your review has no device running on the Device Host. Resume review to relaunch the Build.",
+    })
+    expect(h.deviceHost.inspected).toEqual([])
+  })
+
+  test("a device that stopped pauses the review, and a Build that doesn't answer is a 502", async () => {
+    await startOn(iPhone.udid)
+    h.deviceHost.inspection = new InspectFailed(
+      "The Build isn't answering Inspect: it may have quit or still be starting. Try again, or resume review to relaunch it."
+    )
+
+    const silent = await inspect()
+    await h.deviceHost.shutDown(iPhone.udid)
+    const stopped = await inspect()
+
+    expect(silent.status).toBe(502)
+    expect(await silent.json()).toEqual({
+      error:
+        "The Build isn't answering Inspect: it may have quit or still be starting. Try again, or resume review to relaunch it.",
+    })
+    expect(stopped.status).toBe(409)
+    expect(await stopped.json()).toEqual({
+      error:
+        "iPhone 17 Pro is no longer running on the Device Host, so it can't be inspected. Resume review to relaunch the Build.",
+      code: "deviceNotRunning",
+    })
+  })
+
+  test("the host check says why Inspect is off on a host that can't build its library", async () => {
+    h.deviceHost.health = {
+      status: "ready",
+      devices: [iPhone],
+      inspectProblem: inspectUnbuiltReason,
+    }
+
+    const body = await (await h.app.request("/api/host")).json()
+
+    expect(body).toEqual({
+      status: "ready",
+      devices: [iPhone],
+      recentDeviceUDIDs: [],
+      inspectProblem:
+        "Inspect isn't available on the Device Host: Xcode couldn't build its library.",
     })
   })
 })
