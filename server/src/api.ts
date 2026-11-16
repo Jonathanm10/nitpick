@@ -19,7 +19,11 @@ import type {
   YouTrackProject,
   YouTrackUser,
 } from "@nitpick/core"
-import type { HostVersions, SimulatorDevice } from "./device/DeviceHost.ts"
+import type {
+  HostVersions,
+  Inspection,
+  SimulatorDevice,
+} from "./device/DeviceHost.ts"
 
 export type { HostVersions, SimulatorDevice }
 
@@ -32,8 +36,8 @@ export interface DevicesResponse {
 export interface ErrorResponse {
   readonly error: string
   /**
-   * `deviceNotRunning`: the capture found its device stopped on the host, so
-   * the page pauses the review. `signIn` (401): the request has no live
+   * `deviceNotRunning`: a capture or Inspect found its device stopped on the
+   * host, so the page pauses the review. `signIn` (401): the request has no live
    * sign-in, so the page shows sign-in with the error, which says why when
    * the sign-in ended by itself.
    */
@@ -201,6 +205,11 @@ export interface ReadyHost {
   readonly recentDeviceUDIDs: ReadonlyArray<string>
   /** Why no Android emulator is listed, when the host can't run one. */
   readonly androidProblem?: string
+  /**
+   * Why iOS Builds launch without Inspect, when the host can't build its
+   * library; `GET /api/session/layout` then answers `unavailable`.
+   */
+  readonly inspectProblem?: string
 }
 
 /** The Device Host can't run a review; `reason` says why. */
@@ -317,6 +326,25 @@ export interface DeviceStreamResponse {
   /** What the hub names the device by: a UDID, or an emulator's serial. */
   readonly hubDevice: string
 }
+
+/**
+ * `GET /api/session/layout`: Inspect (ADR-0015), the layout of what the
+ * Reviewer's device shows at the moment of the request, read from the
+ * running Build each time; nothing is cached. The device is the one the
+ * Reviewer's open session runs on, so the request names none. A first
+ * request after a launch can take seconds, later ones well under one.
+ *
+ * - `ready`: the snapshot, in screen points (`LayoutSnapshot` in core).
+ * - `unavailable`: Inspect can't read this device, and `reason` says why in
+ *   the Reviewer's words: an Android emulator, a Device Host that can't build
+ *   the library, or a Build launched without it.
+ *
+ * Refusals, with `error` in the Reviewer's words: 409 without an open
+ * session or a device it runs on; 409 with `deviceNotRunning` when the
+ * device stopped; 502 when the Build doesn't answer, as when it quit, is
+ * still starting, or isn't SwiftUI's to read.
+ */
+export type LayoutResponse = Inspection
 
 // Through the proxy to the hub, for an iOS simulator:
 // `GET /api/device-hub/vendor/serve-sim/helper/:udid/stream.avcc` (H.264) and

@@ -754,6 +754,7 @@ describe("shutting a device down for room under the host's cap", () => {
       captureDirectory: temporaryDirectory(),
       android: sdkWith([proof]),
       ffmpeg: undefined,
+      inspectDirectory: temporaryDirectory(),
     })
     enqueueListing(runner, "nitpick-proof-13\n", [
       { serial: "emulator-5554", name: "nitpick-proof-13" },
@@ -774,5 +775,33 @@ describe("shutting a device down for room under the host's cap", () => {
       "adb devices",
       "xcrun simctl shutdown AAAA-1111",
     ])
+  })
+})
+
+describe("Inspect on an emulator", () => {
+  test("answers that Inspect reads iOS simulators only", async () => {
+    const runner = new FakeSubprocessRunner()
+    const host = makeLocalDeviceHost({
+      runner,
+      starter: {
+        start: () => {
+          throw new Error("nothing boots here")
+        },
+      },
+      captureDirectory: temporaryDirectory(),
+      android: sdkWith([proof]),
+      ffmpeg: undefined,
+      inspectDirectory: temporaryDirectory(),
+    })
+    runner.enqueue({ exitCode: 0, standardOutput: '{"devices":{}}' })
+    enqueueListing(runner, "nitpick-proof-13\n", [
+      { serial: "emulator-5554", name: "nitpick-proof-13" },
+    ])
+
+    expect(await host.inspectLayout("nitpick-proof-13")).toEqual({
+      status: "unavailable",
+      reason:
+        "Inspect reads SwiftUI layouts on iOS simulators, so it isn't available on Android emulators.",
+    })
   })
 })

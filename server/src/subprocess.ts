@@ -4,6 +4,8 @@ import { spawn } from "node:child_process"
 export interface SubprocessCommand {
   readonly executablePath: string
   readonly arguments: ReadonlyArray<string>
+  /** Variables set on top of the server's own environment. */
+  readonly environment?: Readonly<Record<string, string>>
 }
 
 /** What a finished subprocess left behind. */
@@ -62,6 +64,9 @@ export const nodeSubprocessRunner: SubprocessRunner = {
       const child = spawn(command.executablePath, command.arguments, {
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
+        ...(command.environment !== undefined && {
+          env: { ...process.env, ...command.environment },
+        }),
       })
       const standardOutput: Buffer[] = []
       const standardError: Buffer[] = []

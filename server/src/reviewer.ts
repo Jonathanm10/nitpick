@@ -58,6 +58,7 @@ import type {
   AndroidProblem,
   DeviceHost,
   HostProblem,
+  Inspection,
   SimulatorDevice,
 } from "./device/DeviceHost.ts"
 import type { DeviceClaims } from "./device/deviceClaims.ts"
@@ -104,6 +105,7 @@ export type HostStatus =
       readonly devices: SimulatorDevice[]
       readonly recentDevices: RecentDevices
       readonly androidProblem?: AndroidProblem
+      readonly inspectProblem?: string
     }
   | { readonly status: "notReady"; readonly problem: HostProblem }
 
@@ -116,6 +118,7 @@ export type StartOutcome =
       readonly devices: SimulatorDevice[]
       readonly recentDevices: RecentDevices
       readonly androidProblem?: AndroidProblem
+      readonly inspectProblem?: string
     }
   | { readonly status: "hostNotReady"; readonly problem: HostProblem }
 
@@ -172,6 +175,7 @@ export class Reviewer {
       devices: health.devices,
       recentDevices: await this.#store.recentDevices(),
       androidProblem: health.androidProblem,
+      inspectProblem: health.inspectProblem,
     }
   }
 
@@ -302,6 +306,7 @@ export class Reviewer {
         ),
         recentDevices,
         androidProblem: health.androidProblem,
+        inspectProblem: health.inspectProblem,
       }
     })
   }
@@ -502,6 +507,22 @@ export class Reviewer {
         return { session: added.session, result: item }
       })
     })
+  }
+
+  /**
+   * Inspect: the layout of what the Reviewer's device shows now (ADR-0015).
+   * The device is the one they hold, which runs the open session's Build.
+   * Not a run: hovering never holds up a capture.
+   */
+  async inspect(): Promise<Inspection> {
+    await this.#requireOpenSession()
+    const deviceUDID = this.#dependencies.deviceClaims.held(this.#login)
+    if (deviceUDID === undefined) {
+      throw new ReviewRefused(
+        "Your review has no device running on the Device Host. Resume review to relaunch the Build."
+      )
+    }
+    return this.#dependencies.deviceHost.inspectLayout(deviceUDID)
   }
 
   /** The session's own fields; today only its Design Reference. */

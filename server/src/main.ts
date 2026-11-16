@@ -72,6 +72,7 @@ const deviceHost = makeLocalDeviceHost({
   captureDirectory: join(config.dataDirectory, "captures"),
   android,
   ffmpeg,
+  inspectDirectory: join(config.dataDirectory, "inspect"),
 })
 const history = new HistoryStore(join(config.dataDirectory, "history"))
 const deviceClaims = new DeviceClaims({

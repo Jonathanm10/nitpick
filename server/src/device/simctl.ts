@@ -60,12 +60,15 @@ export class RuntimeUnavailable extends Error {
  * Boots the device, installs the Build and launches it (ADR-0002). Nobody
  * sits at the Device Host, so no Simulator window is brought forward: the
  * page shows the device. nitpick never touches the device's accessibility
- * state (ADR-0009); it reads it back at capture.
+ * state (ADR-0009); it reads it back at capture. `inspect` is the launch
+ * environment that loads the Inspect library (ADR-0015), when the host has
+ * one.
  */
 export async function launchBuild(
   runner: SubprocessRunner,
   build: Build,
-  device: SimulatorDevice
+  device: SimulatorDevice,
+  inspect?: Readonly<Record<string, string>>
 ): Promise<void> {
   // The picker already greys such a device out; refusing here keeps the
   // invariant for a stale selection, with the runtime story instead of an
@@ -82,10 +85,12 @@ export async function launchBuild(
     runner,
     simctl("install", device.udid, appBundlePath(build))
   )
-  await runRequiringSuccess(
-    runner,
-    simctl("launch", device.udid, build.identity.bundleID)
-  )
+  // Installing over the Build ended the copy that ran, so this launch is a
+  // new process, which loads the library afresh.
+  await runRequiringSuccess(runner, {
+    ...simctl("launch", device.udid, build.identity.bundleID),
+    ...(inspect !== undefined && { environment: inspect }),
+  })
 }
 
 /**

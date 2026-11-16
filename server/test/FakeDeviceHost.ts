@@ -4,6 +4,7 @@ import type {
   DeviceHost,
   HostHealth,
   HostVersions,
+  Inspection,
   ScreenCapture,
   SimulatorDevice,
 } from "../src/device/DeviceHost.ts"
@@ -91,6 +92,28 @@ export class FakeDeviceHost implements DeviceHost {
     }
     await this.captureDelay
     return { device, ...this.nextCapture }
+  }
+
+  /** What Inspect finds on any booted device, or the error it throws. */
+  inspection: Inspection | Error = {
+    status: "unavailable",
+    reason: "Nothing is inspected here.",
+  }
+  readonly inspected: string[] = []
+
+  inspectLayout = async (deviceUDID: string): Promise<Inspection> => {
+    const device = (await this.devices.list()).find(
+      (candidate) => candidate.udid === deviceUDID
+    )
+    if (!device?.isBooted) {
+      throw new DeviceNotRunning(
+        device?.name ?? "The device",
+        "it can't be inspected"
+      )
+    }
+    this.inspected.push(deviceUDID)
+    if (this.inspection instanceof Error) throw this.inspection
+    return this.inspection
   }
 
   versions = async () => this.hostVersions
