@@ -23,6 +23,7 @@ account that is logged in at the host's console.
 | For Android: the SDK, its emulator and system image | `~/Library/Android/sdk` |
 | For Android: the AVD Reviewers boot | `~/.android/avd` |
 | For Android: Java for the SDK's tools, and ffmpeg | `~/.nitpick/java` and `~/.nitpick/ffmpeg` |
+| The Inspect library, built by the server | `NITPICK_DATA_DIR/inspect` |
 | The services: LaunchAgents | `~/Library/LaunchAgents/ch.liip.nitpick.server.plist` and `ch.liip.nitpick.backup.plist` |
 
 - **The server** runs as a LaunchAgent in the console login's GUI session,
@@ -355,6 +356,41 @@ no longer boots:
 The page offers every AVD in `~/.android/avd`, so another one made with
 `avdmanager` shows up too.
 
+## Inspect
+
+Inspect ([ADR-0015](adr/0015-inspect-reads-swiftui-debug-tree.md)) loads a
+library into each iOS Build the server launches. The server builds it from
+`server/inspector/Inspector.m` with the host's Xcode at its first health
+check after a start, into `NITPICK_DATA_DIR/inspect/<hash>/`. Later starts
+reuse it until a deploy changes the source; the old build is then deleted.
+Nothing is installed by hand.
+
+- **Ports:** each launch of an iOS Build listens on a free port on loopback,
+  with a secret only the server knows. Nothing to open, and nothing else on
+  the host can read a layout.
+- **When Xcode can't build it,** iOS reviews still run without Inspect. The
+  page's host check says Inspect isn't available, and `server.log` has a
+  "Building the Inspect library failed" line with the compiler's error. Fix
+  Xcode ([updates](#xcode-simulator-runtime-and-macos-updates)), then restart
+  the server: it builds the library once per start.
+- **Cost:** the first layout after a launch takes a few seconds on a real
+  Build, later ones a fraction of a second of the Build's main thread.
+- **Android emulators** answer that Inspect isn't available.
+
+Inspect reads SwiftUI's private debug data, which an iOS release can change.
+After an Xcode or iOS runtime update, check it on a simulator of the new
+runtime, from a checkout with Xcode (`<UDID>` is a simulator you may boot):
+
+```sh
+scripts/inspect-sample/fixtures.sh <UDID>
+pnpm --filter @nitpick/server test LayoutSnapshot
+```
+
+The first records Acme Store's screens with the new runtime; the tests then
+compare what the server reads with the values in Acme Store's source. If
+they fail, the server's reading needs updating before Reviewers rely on
+Inspect there; commit the new fixtures with that change.
+
 ## Xcode, simulator runtime and macOS updates
 
 1. Pick a time when nobody is reviewing. The health check should show 0
@@ -373,6 +409,7 @@ The page offers every AVD in `~/.android/avd`, so another one made with
    `launchctl kickstart -k gui/$(id -u)/ch.liip.nitpick.server`.
 5. Run the health check, then a short review: sign in, start on a device
    with the new runtime, and capture.
+6. Check Inspect on the new runtime ([Inspect](#inspect)).
 
 A macOS update reboots the host. Follow [Reboots](#reboots-and-the-497-day-bug).
 
