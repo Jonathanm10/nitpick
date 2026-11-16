@@ -823,7 +823,10 @@ function elementsOf(
         draft.frame.width > 0 &&
         draft.frame.height > 0 &&
         intersects(draft.frame, screen) &&
-        (draft.clip === undefined || intersects(draft.frame, draft.clip)) &&
+        (draft.clip === undefined ||
+          (draft.clip.width > 0 &&
+            draft.clip.height > 0 &&
+            intersects(draft.frame, draft.clip))) &&
         !spills(draft) &&
         (nameOf(draft) !== "View" ||
           draft.padding !== undefined ||

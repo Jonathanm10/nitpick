@@ -532,6 +532,28 @@ describe("reading the tree", () => {
     expect(layoutElementAt(snapshot, { x: 75, y: 150 })).toBeUndefined()
   })
 
+  test("clips that don't meet show nothing of what they hold", () => {
+    // An outer clip over x 0–100, an inner one over x 150–250, an image across both.
+    const tree = [
+      node("_FrameLayout", { position: [0, 0], size: [100, 100] }, [
+        node("_ClipEffect<Rectangle>", {}, [
+          node("_FrameLayout", { position: [150, 0], size: [100, 100] }, [
+            node("_ClipEffect<Rectangle>", {}, [
+              node("Image", { position: [0, 0], size: [300, 100] }),
+            ]),
+          ]),
+        ]),
+      ]),
+    ]
+
+    const snapshot = layoutSnapshot({
+      screen,
+      hostingViews: [{ frame: {}, texts: {}, fonts: {}, tree }],
+    })
+
+    expect(snapshot.elements.map((element) => element.name)).toEqual(["Frame"])
+  })
+
   test("an answer that isn't a layout is refused, and odd parts of one read as absent", () => {
     expect(() => layoutSnapshot({ hostingViews: [] })).toThrow(MalformedLayout)
     expect(() => layoutSnapshot("<html>")).toThrow(MalformedLayout)
