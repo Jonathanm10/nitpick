@@ -1,0 +1,107 @@
+[
+  {
+    "name": "product card",
+    "drawn": {
+      "x": 20,
+      "y": 248,
+      "width": 362,
+      "height": 80
+    },
+    "native": {
+      "x": 20,
+      "y": 248,
+      "right": 382,
+      "bottom": 328
+    },
+    "error": {
+      "left": 0,
+      "top": 0,
+      "right": 0,
+      "bottom": 0
+    }
+  },
+  {
+    "name": "image tile",
+    "drawn": {
+      "x": 32,
+      "y": 260,
+      "width": 56,
+      "height": 56
+    },
+    "native": {
+      "x": 32,
+      "y": 260,
+      "right": 88,
+      "bottom": 316
+    },
+    "error": {
+      "left": 0,
+      "top": 0,
+      "right": 0,
+      "bottom": 0
+    }
+  },
+  {
+    "name": "banner",
+    "drawn": {
+      "x": 20,
+      "y": 201.67,
+      "width": 362,
+      "height": 30.33
+    },
+    "native": {
+      "x": 20,
+      "y": 201.67,
+      "right": 382,
+      "bottom": 232
+    },
+    "error": {
+      "left": 0,
+      "top": 0,
+      "right": 0,
+      "bottom": 0
+    }
+  },
+  {
+    "name": "Browse tile",
+    "drawn": {
+      "x": 20,
+      "y": 136,
+      "width": 175,
+      "height": 120
+    },
+    "native": {
+      "x": 20,
+      "y": 136,
+      "right": 195,
+      "bottom": 256
+    },
+    "error": {
+      "left": 0,
+      "top": 0,
+      "right": 0,
+      "bottom": 0
+    }
+  },
+  {
+    "name": "Browse tile, right column",
+    "drawn": {
+      "x": 207,
+      "y": 272,
+      "width": 175,
+      "height": 120
+    },
+    "native": {
+      "x": 207,
+      "y": 272,
+      "right": 382,
+      "bottom": 392
+    },
+    "error": {
+      "left": 0,
+      "top": 0,
+      "right": 0,
+      "bottom": 0
+    }
+  }
+]
