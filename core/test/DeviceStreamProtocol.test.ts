@@ -6,9 +6,11 @@ import { describe, expect, test } from "vitest"
 import {
   AvccDemuxer,
   avcCodecString,
+  emulatorTextChunks,
   hidUsage,
   homeButtonMessage,
   keyMessage,
+  pasteMessage,
   simulatorAvcConfig,
   touchMessage,
 } from "../src/deviceStreamProtocol.ts"
@@ -217,8 +219,38 @@ describe("serve-sim input messages", () => {
     expect(hidUsage(code)).toBe(usage)
   })
 
+  test("a paste is tag 0x12 and its request and text, as UTF-8", () => {
+    const message = pasteMessage(7, "Grüße 👋\nline two")
+
+    expect(message[0]).toBe(0x12)
+    expect(JSON.parse(new TextDecoder().decode(message.subarray(1)))).toEqual({
+      requestId: 7,
+      text: "Grüße 👋\nline two",
+    })
+  })
+
   test("a key the simulator's keyboard lacks has no usage", () => {
     expect(hidUsage("F13")).toBeUndefined()
     expect(hidUsage("Numpad5")).toBeUndefined()
+  })
+})
+
+describe("serve-emu text", () => {
+  const utf8 = (text: string) => new TextEncoder().encode(text).length
+
+  test("short text goes whole, empty text not at all", () => {
+    expect(emulatorTextChunks("hello")).toEqual(["hello"])
+    expect(emulatorTextChunks("")).toEqual([])
+  })
+
+  test("long text goes in pieces of at most 300 bytes that join back to it", () => {
+    const pasted = "a".repeat(299) + "é" + "👋".repeat(100) + "z"
+
+    const chunks = emulatorTextChunks(pasted)
+
+    expect(chunks.join("")).toBe(pasted)
+    // é and then a 4-byte 👋 would each cross 300, so they start the next piece.
+    expect(chunks.map(utf8)).toEqual([299, 298, 105])
+    for (const chunk of chunks) expect(chunk).not.toMatch(/\uFFFD/)
   })
 })

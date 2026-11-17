@@ -1,7 +1,9 @@
 // The iOS stream's wire format, ported from T3 Code's
 // packages/client-runtime/src/device/stream.ts and avcConfig.ts (MIT,
-// github.com/pingdotgg/t3code at 36d4d71), iOS only. Pure, so the page's
-// viewer and these tests share it.
+// github.com/pingdotgg/t3code at 36d4d71), iOS only, and the most text
+// serve-emu types at once on Android. Pure, so the page's viewers and these
+// tests share it.
+import { utf8 } from "./bytes.ts"
 
 /** One AVCC envelope from serve-sim's `stream.avcc`. */
 export interface AvccChunk {
@@ -226,6 +228,7 @@ export function simulatorAvcConfig(description: Uint8Array): Uint8Array {
 const touchTag = 0x03
 const buttonTag = 0x04
 const keyTag = 0x06
+const pasteTag = 0x12
 /** The helper's first frame on the socket: input is accepted from here on. */
 export const inputAdmittedTag = 0x83
 /** The helper's screen size and orientation, as JSON after the tag. */
@@ -243,6 +246,14 @@ export function touchMessage(
 /** A key going down or up, by its HID usage. */
 export function keyMessage(phase: "down" | "up", usage: number): Uint8Array {
   return taggedJSON(keyTag, { type: phase, usage })
+}
+
+/**
+ * Text pasted into the device: the helper puts it on the simulator's
+ * clipboard, then presses ⌘V there.
+ */
+export function pasteMessage(requestId: number, text: string): Uint8Array {
+  return taggedJSON(pasteTag, { requestId, text })
 }
 
 /** The Home button: the gesture that leaves the Build for the home screen. */
@@ -298,13 +309,37 @@ function unit(value: number): number {
   return Math.min(1, Math.max(0, value))
 }
 
-/** The payloads are ASCII JSON, so each character is one byte. */
+/** The tag, then the payload as UTF-8 JSON. */
 function taggedJSON(tag: number, payload: unknown): Uint8Array {
-  const json = JSON.stringify(payload)
+  const json = utf8(JSON.stringify(payload))
   const bytes = new Uint8Array(1 + json.length)
   bytes[0] = tag
-  for (let index = 0; index < json.length; index++) {
-    bytes[index + 1] = json.charCodeAt(index)
-  }
+  bytes.set(json, 1)
   return bytes
+}
+
+/** The most serve-emu types from one text message; it drops the rest. */
+const emulatorTextBytes = 300
+
+/**
+ * Text cut into pieces serve-emu types whole, each at most 300 bytes of
+ * UTF-8, never splitting a character.
+ */
+export function emulatorTextChunks(text: string): string[] {
+  const chunks: string[] = []
+  let chunk = ""
+  let size = 0
+  for (const character of text) {
+    const point = character.codePointAt(0)!
+    const bytes = point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4
+    if (size + bytes > emulatorTextBytes) {
+      chunks.push(chunk)
+      chunk = ""
+      size = 0
+    }
+    chunk += character
+    size += bytes
+  }
+  if (chunk !== "") chunks.push(chunk)
+  return chunks
 }

@@ -193,8 +193,9 @@ const shiftKeys = [hidUsage("ShiftLeft")!, hidUsage("ShiftRight")!]
  * The stream itself. A pointer drag is a touch; the wheel or a trackpad
  * scrolls by dragging the screen as a finger would. While it has focus,
  * keys go to the device, except chords with ⌘ or Ctrl, which stay the
- * page's, and Esc, which hands focus back to the page. An overlay takes
- * all of that from the device; a touch already down still ends.
+ * page's, and Esc, which hands focus back to the page; pasted text is
+ * pasted on the device. An overlay takes all of that from the device; a
+ * touch already down still ends.
  */
 function LiveDevice({
   device,
@@ -346,6 +347,15 @@ function LiveDevice({
     press("down", usage)
   }
 
+  function paste(event: React.ClipboardEvent<HTMLDivElement>) {
+    const text = event.clipboardData.getData("text/plain")
+    if (text === "" || blocked) return
+    // The device's paste, not the page's: no Design Snapshot from it.
+    event.preventDefault()
+    event.stopPropagation()
+    client?.paste(text)
+  }
+
   return (
     <div className="flex min-h-0 w-full flex-col gap-1.5">
       <Framed frame={frame}>
@@ -365,6 +375,7 @@ function LiveDevice({
           onPointerCancel={touch("end")}
           onKeyDown={(event) => key("down", event)}
           onKeyUp={(event) => key("up", event)}
+          onPaste={paste}
           onBlur={releaseAll}
         >
           <canvas

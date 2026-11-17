@@ -9,6 +9,7 @@ import {
   homeButtonMessage,
   inputAdmittedTag,
   keyMessage,
+  pasteMessage,
   screenConfigTag,
   simulatorAvcConfig,
   touchMessage,
@@ -44,6 +45,8 @@ export interface DeviceStreamClient {
     y: number
   ) => void
   readonly key: (phase: "down" | "up", usage: number) => void
+  /** Text put on the simulator's clipboard and pasted there with ⌘V. */
+  readonly paste: (text: string) => void
   readonly pressHome: () => void
 }
 
@@ -375,6 +378,7 @@ export function createDeviceStreamClient(
     opened.onerror = () => opened.close()
   }
 
+  let pasteRequest = 0
   const send = (message: Uint8Array) => {
     if (!stopped && inputAdmitted && socket?.readyState === WebSocket.OPEN) {
       socket.send(message as Uint8Array<ArrayBuffer>)
@@ -420,6 +424,7 @@ export function createDeviceStreamClient(
     },
     touch: (phase, x, y) => send(touchMessage(phase, x, y)),
     key: (phase, usage) => send(keyMessage(phase, usage)),
+    paste: (text) => send(pasteMessage(++pasteRequest, text)),
     pressHome: () => send(homeButtonMessage()),
   }
 }
