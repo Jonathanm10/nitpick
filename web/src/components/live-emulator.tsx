@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import type { SimulatorDevice } from "@nitpick/server/api"
+import { emulatorTextChunks } from "@nitpick/core"
 import { ArrowLeftIcon, CircleIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,8 +26,8 @@ import {
  * An Android emulator's stream, as LiveDevice is a simulator's: a pointer
  * drag is a finger, the wheel or a trackpad scrolls by dragging, and while
  * it has focus typing goes to the emulator, except chords with ⌘ or Ctrl,
- * which stay the page's, and Esc, which hands focus back. Android's own
- * Back and Home sit under it.
+ * which stay the page's, and Esc, which hands focus back; pasted text is
+ * typed into the emulator. Android's own Back and Home sit under it.
  */
 export function LiveEmulator({
   device,
@@ -139,6 +140,15 @@ export function LiveEmulator({
     }
   }
 
+  function paste(event: React.ClipboardEvent<HTMLDivElement>) {
+    const text = event.clipboardData.getData("text/plain")
+    if (text === "") return
+    // The emulator's paste, not the page's: no Design Snapshot from it.
+    event.preventDefault()
+    event.stopPropagation()
+    for (const chunk of emulatorTextChunks(text)) client?.text(chunk)
+  }
+
   const ready = status.kind === "streaming"
   return (
     <div className="flex min-h-0 w-full flex-col gap-1.5">
@@ -158,6 +168,7 @@ export function LiveEmulator({
           onPointerUp={touch("up")}
           onPointerCancel={touch("up")}
           onKeyDown={keyDown}
+          onPaste={paste}
         >
           <video
             ref={video}
