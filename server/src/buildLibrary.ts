@@ -281,7 +281,10 @@ export class BuildLibrary {
    * moved to another home has, names its entry by its last `library/<id>/`.
    */
   entryID(build: Build): string | undefined {
-    const path = fileURLToPath(build.appBundleURL)
+    return this.#entryIDAt(fileURLToPath(build.appBundleURL))
+  }
+
+  #entryIDAt(path: string): string | undefined {
     const inside = relative(this.#directory, path).split(sep)
     if (inside[0] !== "..") {
       return inside.length > 1 && parseUUID(inside[0]!) === inside[0]
@@ -313,8 +316,8 @@ export class BuildLibrary {
     return {
       ids: new Set([
         ...leased,
-        ...sessions.builds
-          .map((build) => this.entryID(build))
+        ...sessions.paths
+          .map((path) => this.#entryIDAt(path))
           .filter((id) => id !== undefined),
       ]),
       complete: sessions.complete,

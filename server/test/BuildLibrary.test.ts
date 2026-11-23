@@ -492,6 +492,35 @@ describe("The Build Library", () => {
     }
   })
 
+  test("a review whose session names its Build by no file URL leaves the Library listed, every Build in a review, and refuses every delete", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {})
+    const h = server()
+    const id = await uploaded(h, h.vera)
+    writeOpenSession(h, "noor", "https://example.com/ReviewMe.app/")
+
+    try {
+      const listed = await h.vera.request("/api/library")
+      const refused = await remove(h.vera, id)
+
+      expect(listed.status).toBe(200)
+      expect(
+        ((await listed.json()) as LibraryResponse).builds.map((build) => [
+          build.id,
+          build.inUse,
+        ])
+      ).toEqual([[id, true]])
+      expect(refused.status).toBe(409)
+      expect(await refused.json()).toEqual({
+        error:
+          "A review on the Device Host can't be read, so this Build may be in it and can't be deleted. Ask whoever runs the Device Host to look at server.log.",
+      })
+      expect(readdirSync(h.libraryDirectory)).toEqual([id])
+      expect(errors).toHaveBeenCalled()
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
   test("an entry whose entry.json is damaged leaves the list, and the rest stay listed, across a restart too", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {})
     const h = server()

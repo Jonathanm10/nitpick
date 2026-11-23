@@ -222,14 +222,18 @@ export class ReviewerStore {
   }
 }
 
-/** What every Reviewer's open session runs, read from its Build alone. */
+/** Where every Reviewer's open session runs its Build from. */
 export interface OpenSessionBuilds {
-  readonly builds: ReadonlyArray<Build>
-  /** False when a Reviewer's session couldn't be read: it may run any Build. */
+  /** Each open session's .app or .apk, read from its Build alone. */
+  readonly paths: ReadonlyArray<string>
+  /**
+   * False when a Reviewer's session couldn't be read, or names its Build by
+   * no file URL: it may run any Build.
+   */
   readonly complete: boolean
 }
 
-/** The Build of each Reviewer's open session, for every Reviewer. */
+/** The Build's path of each Reviewer's open session, for every Reviewer. */
 export async function openSessionBuilds(
   reviewersDirectory: string
 ): Promise<OpenSessionBuilds> {
@@ -238,18 +242,19 @@ export async function openSessionBuilds(
     reviewers = await readdir(reviewersDirectory, { withFileTypes: true })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { builds: [], complete: true }
+      return { paths: [], complete: true }
     }
     console.error("The Reviewers' folder can't be read.", error)
-    return { builds: [], complete: false }
+    return { paths: [], complete: false }
   }
   let complete = true
-  const builds = await Promise.all(
+  const paths = await Promise.all(
     reviewers
       .filter((reviewer) => reviewer.isDirectory())
       .map((reviewer) =>
         new ReviewerStore(join(reviewersDirectory, reviewer.name))
           .openSessionBuild()
+          .then((build) => build && fileURLToPath(build.appBundleURL))
           .catch((error: unknown) => {
             console.error(
               `The open session of ${reviewer.name} can't be read, so no Build can be deleted until it can.`,
@@ -260,7 +265,7 @@ export async function openSessionBuilds(
           })
       )
   )
-  return { builds: builds.filter((build) => build !== undefined), complete }
+  return { paths: paths.filter((path) => path !== undefined), complete }
 }
 
 async function exists(path: string): Promise<boolean> {
