@@ -506,12 +506,20 @@ The main host is the 16 GB mini with FileVault off, once its CI use ends.
 4. When nobody is reviewing, stop the old server and take a last backup on
    the old host:
    `launchctl bootout gui/$(id -u)/ch.liip.nitpick.server && ~/nitpick/scripts/deploy/host.sh backup`.
+   - If the new host keeps the data folder at another absolute path, as in
+     another account's home, every open review must be filed or ended
+     first: `ls <data>/reviewers/*/open-session/session.json` names no file.
+   - An open Review Session keeps its Build's absolute path, and Resume
+     review installs the Build from there. After such a move the Build isn't
+     there, so Resume review fails, and the Library keeps that Build in use
+     until the Reviewer files or ends the review.
 5. Copy that backup across, from your own machine:
    `ssh <old host> 'tar -C ~/nitpick-backups -cf - <YYYY-MM-DD>' | ssh <new host> 'mkdir -p ~/nitpick-backups && tar -C ~/nitpick-backups -xf -'`.
 6. On the new host, restore it: `~/nitpick/scripts/deploy/host.sh restore <YYYY-MM-DD>`.
 7. Run the health check and a short review. Then send Reviewers the new
    URL.
-   - Their open Review Sessions and History came along.
+   - Their History came along, and so did their open Review Sessions if
+     the data folder kept its absolute path.
    - Browsers keep sign-in cookies per address, so each Reviewer signs in
      once at the new URL.
    - The new host needs its own certificate ([HTTPS](#https)), so each
