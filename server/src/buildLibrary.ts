@@ -349,19 +349,19 @@ export class BuildLibrary {
         .filter((child) => child.isDirectory())
         .map(async (child) => {
           const folder = join(this.#directory, child.name)
-          const entry = await readIfPresent(join(folder, entryFile)).catch(
-            (error: unknown) => {
-              // Not an unfinished upload: leave it for someone to look at.
-              console.error(
-                `The Build Library's ${child.name} can't be read.`,
-                error
-              )
-              return ""
+          try {
+            if ((await readIfPresent(join(folder, entryFile))) !== undefined) {
+              return
             }
-          )
-          if (entry === undefined) {
-            await rm(folder, { recursive: true, force: true })
+          } catch (error) {
+            // Not an unfinished upload: it stays for someone to look at.
+            console.error(
+              `The Build Library's ${child.name} can't be read.`,
+              error
+            )
+            return
           }
+          await rm(folder, { recursive: true, force: true })
         })
     )
   }

@@ -172,8 +172,9 @@ export class Reviewer {
   }> {
     const filing = this.#filing
     const session = await this.#store.openSession()
-    if (!this.#legacyBuildsRemoved)
+    if (!this.#legacyBuildsRemoved) {
       await this.#removeLegacyBuilds(session?.build)
+    }
     return {
       build: session?.build ?? (await this.#selectedBuild()),
       session,

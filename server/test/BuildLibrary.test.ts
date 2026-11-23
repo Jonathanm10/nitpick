@@ -518,6 +518,8 @@ describe("The Build Library", () => {
       expect((await library(after.vera)).map((build) => build.id)).toEqual([
         good,
       ])
+      // Not an unfinished upload: the sweep leaves it for someone to look at.
+      expect(existsSync(entryFile(unreadable))).toBe(true)
     } finally {
       errors.mockRestore()
     }

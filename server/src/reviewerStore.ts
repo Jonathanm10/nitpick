@@ -243,30 +243,24 @@ export async function openSessionBuilds(
     console.error("The Reviewers' folder can't be read.", error)
     return { builds: [], complete: false }
   }
-  const sessions = await Promise.all(
+  let complete = true
+  const builds = await Promise.all(
     reviewers
       .filter((reviewer) => reviewer.isDirectory())
       .map((reviewer) =>
         new ReviewerStore(join(reviewersDirectory, reviewer.name))
           .openSessionBuild()
-          .then(
-            (build) => ({ build }),
-            (error: unknown) => {
-              console.error(
-                `The open session of ${reviewer.name} can't be read, so no Build can be deleted until it can.`,
-                error
-              )
-              return undefined
-            }
-          )
+          .catch((error: unknown) => {
+            console.error(
+              `The open session of ${reviewer.name} can't be read, so no Build can be deleted until it can.`,
+              error
+            )
+            complete = false
+            return undefined
+          })
       )
   )
-  return {
-    builds: sessions.flatMap((session) =>
-      session?.build === undefined ? [] : [session.build]
-    ),
-    complete: sessions.every((session) => session !== undefined),
-  }
+  return { builds: builds.filter((build) => build !== undefined), complete }
 }
 
 async function exists(path: string): Promise<boolean> {
