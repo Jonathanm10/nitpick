@@ -74,9 +74,11 @@ export function UserMenu({
           Sign out
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel className="font-mono text-[10.5px] font-normal text-text-3">
-          nitpick {__NITPICK_VERSION__}
-        </DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="font-mono text-[10.5px] font-normal text-text-3">
+            nitpick {__NITPICK_VERSION__}
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   )
