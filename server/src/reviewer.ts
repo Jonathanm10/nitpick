@@ -279,15 +279,28 @@ export class Reviewer {
     request: {
       readonly deviceUDID: string
       readonly projectID: string | undefined
+      /** The Build the page shows; undefined for one from before the Library. */
+      readonly buildID: string | undefined
     },
     { user, youTrack }: YouTrackAccount
   ): Promise<StartOutcome> {
     return this.#perform(async () => {
       const open = await this.#store.openSession()
+      const current =
+        open === undefined
+          ? this.#selection
+          : this.#dependencies.library.entryID(open.build)
+      // A page left behind by another tab's pick would start a Build it
+      // doesn't show.
+      if (request.buildID !== current) {
+        throw new ReviewRefused(
+          "Your Build changed since this page showed it, so the review didn't start. Reload the page to see which Build is yours now."
+        )
+      }
       // The open session keeps its Build in use; a new one holds its own.
       const lease: LibraryLease =
         open === undefined
-          ? await this.#leaseSelection()
+          ? await this.#lease(current)
           : { build: open.build, release: () => {} }
       try {
         const build = lease.build
@@ -339,8 +352,7 @@ export class Reviewer {
   }
 
   /** The picked Build, held in use until the start saves its session. */
-  async #leaseSelection(): Promise<LibraryLease> {
-    const id = this.#selection
+  async #lease(id: string | undefined): Promise<LibraryLease> {
     if (id === undefined) {
       throw new ReviewRefused(
         "Pick or upload a Build before starting a review."

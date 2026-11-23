@@ -136,14 +136,16 @@ function upload({ app }: Harness, name = "ReviewMe.zip") {
   })
 }
 
-function startReview(
-  { app }: Harness,
-  body: unknown = { deviceUDID: iPhone.udid, projectID: "0-12" }
+/** Start review from a page that shows the Reviewer's Build, as they load it. */
+async function startReview(
+  h: Harness,
+  body: object = { deviceUDID: iPhone.udid, projectID: "0-12" }
 ) {
-  return app.request("/api/session", {
+  const { build } = await review(h)
+  return h.app.request("/api/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ buildID: build?.id, ...body }),
   })
 }
 

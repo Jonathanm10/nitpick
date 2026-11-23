@@ -274,11 +274,20 @@ export interface StartReviewRequest {
   readonly deviceUDID: string
   /** Ignored when a session is open: it resumes under its pinned project. */
   readonly projectID?: string
+  /**
+   * The Build the page shows, the open session's or the one picked; none
+   * for a session's Build from before the Library. A start whose Build
+   * isn't the Reviewer's any more, picked in another tab or deleted, is
+   * refused before any device is claimed.
+   */
+  readonly buildID?: string
 }
 
 export type StartReviewResponse =
   | {
       readonly status: "started"
+      /** The Build the review runs, for the page to show. */
+      readonly build: BuildSummary
       readonly session: SessionSummary
       /** The device the Build now runs on. */
       readonly device: SimulatorDevice

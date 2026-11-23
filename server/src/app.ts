@@ -405,18 +405,22 @@ export function createApp({
 
   app.post("/api/session", async (c) => {
     const body = await jsonBody(c)
-    const projectID = body.projectID
-    if (projectID !== undefined && typeof projectID !== "string") {
+    const { projectID, buildID } = body
+    if (
+      (projectID !== undefined && typeof projectID !== "string") ||
+      (buildID !== undefined && typeof buildID !== "string")
+    ) {
       throw malformedRequest()
     }
     const outcome = await reviewerOf(c).start(
-      { deviceUDID: deviceUDID(body), projectID },
+      { deviceUDID: deviceUDID(body), projectID, buildID },
       signedInTo(c)
     )
     return c.json(
       (outcome.status === "started"
         ? {
             status: "started",
+            build: buildSummary(outcome.session.build),
             session: sessionSummary(outcome.session),
             device: outcome.device,
             schema: outcome.schema,

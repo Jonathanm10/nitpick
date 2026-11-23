@@ -362,11 +362,17 @@ export function useReview() {
       const outcome = await api.startReview({
         deviceUDID: selectedDevice.udid,
         projectID: start.project.id,
+        buildID: start.build.id,
       })
       if (outcome.status === "notReady") {
         setHost(outcome)
         return
       }
+      setReview((current) =>
+        current.status === "loaded"
+          ? { ...current, build: outcome.build }
+          : current
+      )
       applyHost(outcome.host)
       setSelectedDeviceUDID(outcome.device.udid)
       setRun({ device: outcome.device })

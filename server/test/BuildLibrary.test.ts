@@ -163,11 +163,16 @@ function pick(as: Browser, id: unknown) {
   })
 }
 
-function start(as: Browser, device: SimulatorDevice) {
+/** Start review, from a page that shows the Build `buildID` names. */
+function start(as: Browser, device: SimulatorDevice, buildID?: string) {
   return as.request("/api/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ deviceUDID: device.udid, projectID: "0-12" }),
+    body: JSON.stringify({
+      deviceUDID: device.udid,
+      projectID: "0-12",
+      buildID,
+    }),
   })
 }
 
@@ -264,7 +269,7 @@ describe("The Build Library", () => {
     const [listed] = await library(h.noor)
 
     const picked = await pick(h.noor, listed!.id)
-    const started = await start(h.noor, iPad)
+    const started = await start(h.noor, iPad, id)
 
     expect(picked.status).toBe(200)
     expect(await picked.json()).toEqual({ build: { ...reviewMe, id } })
@@ -286,7 +291,7 @@ describe("The Build Library", () => {
       "NextUp",
       simulatorInfoPlist({ buildNumber: "422" })
     )
-    expect((await start(h.vera, iPhone)).status).toBe(200)
+    expect((await start(h.vera, iPhone, second)).status).toBe(200)
     const opened = storedSession(h, "vera")
 
     const same = await pick(h.vera, second)
@@ -303,7 +308,7 @@ describe("The Build Library", () => {
     })
     // The device went with the review: Noor can review on it now.
     expect((await pick(h.noor, first)).status).toBe(200)
-    expect((await start(h.noor, iPhone)).status).toBe(200)
+    expect((await start(h.noor, iPhone, first)).status).toBe(200)
   })
 
   test("a pick of a Build that isn't in the Library is a 404, and a malformed one a 400", async () => {
@@ -323,7 +328,7 @@ describe("The Build Library", () => {
     const h = server()
     const id = await uploaded(h, h.vera)
     await pick(h.noor, id)
-    await start(h.noor, iPad)
+    await start(h.noor, iPad, id)
 
     const refused = await remove(h.vera, id)
     const listedInUse = await library(h.vera)
@@ -353,7 +358,7 @@ describe("The Build Library", () => {
     const id = await uploaded(h, h.vera)
 
     const deleted = await remove(h.noor, id)
-    const started = await start(h.vera, iPhone)
+    const started = await start(h.vera, iPhone, id)
 
     expect(deleted.status).toBe(204)
     expect(started.status).toBe(409)
@@ -380,6 +385,39 @@ describe("The Build Library", () => {
   })
 })
 
+describe("Start review", () => {
+  test("from a page that shows another Build than the Reviewer's is refused before any device is theirs, and a start answers with its Build", async () => {
+    const h = server()
+    const shown = await uploaded(h, h.vera)
+    // Another tab of Vera's uploads the next Build, which is hers now.
+    const theirs = await uploaded(
+      h,
+      h.vera,
+      "NextUp",
+      simulatorInfoPlist({ buildNumber: "422" })
+    )
+
+    const stale = await start(h.vera, iPhone, shown)
+
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toEqual({
+      error:
+        "Your Build changed since this page showed it, so the review didn't start. Reload the page to see which Build is yours now.",
+    })
+    expect(h.deviceHost.launches).toEqual([])
+    expect(storedSession(h, "vera")).toBeUndefined()
+    // iPhone isn't Vera's: Noor reviews on it.
+    expect((await pick(h.noor, shown)).status).toBe(200)
+    expect((await start(h.noor, iPhone, shown)).status).toBe(200)
+    const started = await start(h.vera, iPad, theirs)
+    expect(started.status).toBe(200)
+    expect(await started.json()).toMatchObject({
+      status: "started",
+      build: { ...nextUp, id: theirs },
+    })
+  })
+})
+
 describe("Across a restart", () => {
   test("the Library stays; a Reviewer's pick, held in memory, doesn't", async () => {
     const before = server()
@@ -391,7 +429,7 @@ describe("Across a restart", () => {
     expect(await library(after.noor)).toEqual(listed)
     expect(await review(after.vera)).toEqual({ filing: { status: "idle" } })
     expect((await pick(after.vera, id)).status).toBe(200)
-    expect((await start(after.vera, iPhone)).status).toBe(200)
+    expect((await start(after.vera, iPhone, id)).status).toBe(200)
     expect(launchedFrom(after)).toEqual([
       `${join(after.libraryDirectory, id, "build", "ReviewMe.app")}/`,
     ])
@@ -426,7 +464,7 @@ describe("A delete racing a pick or an upload", () => {
   test("a pick of the Build being deleted is a 404, and the open review stays", async () => {
     const h = server()
     const reviewing = await uploaded(h, h.vera)
-    expect((await start(h.vera, iPhone)).status).toBe(200)
+    expect((await start(h.vera, iPhone, reviewing)).status).toBe(200)
     const opened = storedSession(h, "vera")
     const doomed = await uploaded(h, h.noor, "NextUp")
     const read = gate()
@@ -454,7 +492,7 @@ describe("A delete racing a pick or an upload", () => {
   test("an upload whose Build is deleted before it is picked is a 404, and the open review stays", async () => {
     const h = server()
     const reviewing = await uploaded(h, h.vera)
-    expect((await start(h.vera, iPhone)).status).toBe(200)
+    expect((await start(h.vera, iPhone, reviewing)).status).toBe(200)
     const opened = storedSession(h, "vera")
     // A delete of the Build under review holds the Library while it reads
     // the open sessions.
@@ -563,7 +601,7 @@ describe("A delete racing a start", () => {
     const h = server()
     const id = await uploaded(h, h.vera)
     const launches = holdLaunches(h)
-    const starting = start(h.vera, iPhone)
+    const starting = start(h.vera, iPhone, id)
     await vi.waitFor(() => expect(launches.held).toEqual([iPhone.udid]))
 
     const duringStart = await remove(h.noor, id)
@@ -585,7 +623,7 @@ describe("A delete racing a start", () => {
     const h = server()
     const id = await uploaded(h, h.vera)
     const launches = holdLaunches(h)
-    const starting = start(h.vera, iPhone)
+    const starting = start(h.vera, iPhone, id)
     await vi.waitFor(() => expect(launches.held).toEqual([iPhone.udid]))
     const read = gate()
     h.sessionReads.after = read.opened
@@ -615,7 +653,7 @@ describe("A delete racing a start", () => {
     const deleting = remove(h.noor, id)
     await vi.waitFor(() => expect(h.sessionReads.held).toBe(1))
 
-    const starting = start(h.vera, iPhone)
+    const starting = start(h.vera, iPhone, id)
     await new Promise((resolve) => setTimeout(resolve, 20))
     const launchedMeanwhile = h.deviceHost.launches.length
     read.open()
