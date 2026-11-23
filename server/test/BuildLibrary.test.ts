@@ -8,6 +8,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs"
 import { join } from "node:path"
@@ -470,6 +471,53 @@ describe("The Build Library", () => {
       })
       expect(readdirSync(h.libraryDirectory)).toEqual([id])
       expect(errors).toHaveBeenCalled()
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  test("an entry whose entry.json is damaged leaves the list, and the rest stay listed, across a restart too", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {})
+    const h = server()
+    const good = await uploaded(h, h.vera)
+    const [undated, absolute, escaping, unreadable] = [
+      await uploaded(h, h.vera),
+      await uploaded(h, h.vera),
+      await uploaded(h, h.vera),
+      await uploaded(h, h.vera),
+    ]
+    const entryFile = (id: string) => join(h.libraryDirectory, id, "entry.json")
+    const damage = (id: string, change: object) =>
+      writeFileSync(
+        entryFile(id),
+        JSON.stringify({
+          ...JSON.parse(readFileSync(entryFile(id), "utf8")),
+          ...change,
+        })
+      )
+    damage(undated, { uploadedAt: "yesterday" })
+    damage(absolute, {
+      bundle: join(h.libraryDirectory, absolute, "build", "ReviewMe.app"),
+    })
+    damage(escaping, { bundle: `../${good}/build/ReviewMe.app` })
+    rmSync(entryFile(unreadable))
+    mkdirSync(entryFile(unreadable))
+
+    try {
+      const listed = await h.vera.request("/api/library")
+      const pickedUndated = await pick(h.vera, undated)
+      const after = server(h.data, h.clock)
+
+      expect(listed.status).toBe(200)
+      expect(
+        ((await listed.json()) as LibraryResponse).builds.map(
+          (build) => build.id
+        )
+      ).toEqual([good])
+      expect(pickedUndated.status).toBe(404)
+      expect((await library(after.vera)).map((build) => build.id)).toEqual([
+        good,
+      ])
     } finally {
       errors.mockRestore()
     }

@@ -12,7 +12,7 @@
 // and deleting it is refused then.
 import { createWriteStream } from "node:fs"
 import { mkdir, readdir, rename, rm } from "node:fs/promises"
-import { basename, join, relative, resolve, sep } from "node:path"
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { ReadableStream } from "node:stream/web"
@@ -143,7 +143,15 @@ export class BuildLibrary {
       readdir(this.#directory).catch(() => []),
       this.#usage(),
     ])
-    const entries = await Promise.all(names.map((name) => this.get(name)))
+    // An entry that can't be read leaves the list, and the rest stay in it.
+    const entries = await Promise.all(
+      names.map((name) =>
+        this.get(name).catch((error: unknown) => {
+          console.error(`The Build Library's ${name} can't be read.`, error)
+          return undefined
+        })
+      )
+    )
     return entries
       .filter((entry) => entry !== undefined)
       .sort((lhs, rhs) => (lhs.uploadedAt < rhs.uploadedAt ? 1 : -1))
@@ -341,7 +349,17 @@ export class BuildLibrary {
         .filter((child) => child.isDirectory())
         .map(async (child) => {
           const folder = join(this.#directory, child.name)
-          if ((await readIfPresent(join(folder, entryFile))) === undefined) {
+          const entry = await readIfPresent(join(folder, entryFile)).catch(
+            (error: unknown) => {
+              // Not an unfinished upload: leave it for someone to look at.
+              console.error(
+                `The Build Library's ${child.name} can't be read.`,
+                error
+              )
+              return ""
+            }
+          )
+          if (entry === undefined) {
             await rm(folder, { recursive: true, force: true })
           }
         })
@@ -369,7 +387,10 @@ function libraryEntry(stored: StoredEntry, folder: string): LibraryEntry {
   }
 }
 
-/** A schema 1 entry of this folder whose bundle lies inside it, or undefined. */
+/**
+ * A schema 1 entry of this folder, uploaded at a date, whose bundle lies
+ * inside it, or undefined.
+ */
 function decodeEntry(
   json: string,
   id: string,
@@ -400,7 +421,9 @@ function decodeEntry(
     return undefined
   }
   const entry = stored as StoredEntry
-  return resolve(folder, entry.bundle).startsWith(folder + sep)
+  return !Number.isNaN(Date.parse(entry.uploadedAt)) &&
+    !isAbsolute(entry.bundle) &&
+    resolve(folder, entry.bundle).startsWith(folder + sep)
     ? libraryEntry(entry, folder)
     : undefined
 }
