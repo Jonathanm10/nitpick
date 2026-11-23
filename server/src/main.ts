@@ -14,6 +14,7 @@ import { hubUpgradeHandler } from "./device/deviceHubProxy.ts"
 import { fetchTransport } from "./fetchTransport.ts"
 import { HistoryStore } from "./historyStore.ts"
 import { Reviewers } from "./reviewers.ts"
+import { openSessionBuilds } from "./reviewerStore.ts"
 import { SignInStore } from "./signInStore.ts"
 import { nodeProcessStarter, nodeSubprocessRunner } from "./subprocess.ts"
 import { readServerVersion } from "./version.ts"
@@ -81,12 +82,14 @@ const deviceClaims = new DeviceClaims({
   list: deviceHost.devices.list,
   shutDown: deviceHost.shutDown,
 })
+const reviewersDirectory = join(config.dataDirectory, "reviewers")
 const library = new BuildLibrary(join(config.dataDirectory, "library"), {
   runner: nodeSubprocessRunner,
   deviceHost,
+  openSessionBuilds: () => openSessionBuilds(reviewersDirectory),
 })
 const reviewers = new Reviewers({
-  directory: join(config.dataDirectory, "reviewers"),
+  directory: reviewersDirectory,
   instanceURL: config.youTrackURL,
   transport: fetchTransport,
   signIns,

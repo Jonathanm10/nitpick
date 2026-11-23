@@ -50,6 +50,7 @@ import type {
 import {
   LibraryBuildNotFound,
   type BuildLibrary,
+  type LibraryLease,
   type Uploader,
 } from "./buildLibrary.ts"
 import { checkDesignSnapshotImage } from "./designSnapshotImage.ts"
@@ -275,51 +276,77 @@ export class Reviewer {
   ): Promise<StartOutcome> {
     return this.#perform(async () => {
       const open = await this.#store.openSession()
-      const build = open?.build ?? (await this.#selectedBuild())
-      if (build === undefined) {
-        throw new ReviewRefused(
-          "Pick or upload a Build before starting a review."
+      // The open session keeps its Build in use; a new one holds its own.
+      const lease: LibraryLease =
+        open === undefined
+          ? await this.#leaseSelection()
+          : { build: open.build, release: () => {} }
+      try {
+        const build = lease.build
+        // A missing Xcode or runtime shows as the host's reason before any boot.
+        const health = await this.#dependencies.deviceHost.checkHealth()
+        if (health.status === "notReady") {
+          return { status: "hostNotReady", problem: health.problem }
+        }
+        const picked = deviceFor(build, request.deviceUDID, health.devices)
+        const project =
+          open?.project ?? (await this.#project(request.projectID, youTrack))
+        const rollback = await this.#dependencies.deviceClaims.claim(
+          user,
+          picked
         )
-      }
-      // A missing Xcode or runtime shows as the host's reason before any boot.
-      const health = await this.#dependencies.deviceHost.checkHealth()
-      if (health.status === "notReady") {
-        return { status: "hostNotReady", problem: health.problem }
-      }
-      const picked = deviceFor(build, request.deviceUDID, health.devices)
-      const project =
-        open?.project ?? (await this.#project(request.projectID, youTrack))
-      const rollback = await this.#dependencies.deviceClaims.claim(user, picked)
-      const device = await this.#dependencies.deviceHost
-        .launchBuild(build, picked)
-        .catch(async (error: unknown) => {
-          await rollback()
-          throw error
-        })
-      const recentDevices = await this.#recordRecentDevice(device)
-      // Non-fatal: an empty schema hides the Editor's controls, and capture
-      // and filing proceed regardless (ADR-0008).
-      const schema = await loadProjectSchema(youTrack, project)
-      const session = open ?? newReviewSession({ build, project })
-      if (open === undefined) {
-        await this.#serialized(() => this.#store.saveOpenSession(session))
-        // A held result never shows beside a live session.
-        this.#filing = { status: "idle" }
-      }
-      return {
-        status: "started",
-        session,
-        device,
-        schema,
-        // The device as it now runs: booted, with an emulator's serial.
-        devices: health.devices.map((listed) =>
-          listed.udid === device.udid ? device : listed
-        ),
-        recentDevices,
-        androidProblem: health.androidProblem,
-        inspectProblem: health.inspectProblem,
+        const device = await this.#dependencies.deviceHost
+          .launchBuild(build, picked)
+          .catch(async (error: unknown) => {
+            await rollback()
+            throw error
+          })
+        const recentDevices = await this.#recordRecentDevice(device)
+        // Non-fatal: an empty schema hides the Editor's controls, and capture
+        // and filing proceed regardless (ADR-0008).
+        const schema = await loadProjectSchema(youTrack, project)
+        const session = open ?? newReviewSession({ build, project })
+        if (open === undefined) {
+          await this.#serialized(() => this.#store.saveOpenSession(session))
+          // A held result never shows beside a live session.
+          this.#filing = { status: "idle" }
+        }
+        return {
+          status: "started",
+          session,
+          device,
+          schema,
+          // The device as it now runs: booted, with an emulator's serial.
+          devices: health.devices.map((listed) =>
+            listed.udid === device.udid ? device : listed
+          ),
+          recentDevices,
+          androidProblem: health.androidProblem,
+          inspectProblem: health.inspectProblem,
+        }
+      } finally {
+        lease.release()
       }
     })
+  }
+
+  /** The picked Build, held in use until the start saves its session. */
+  async #leaseSelection(): Promise<LibraryLease> {
+    const id = this.#selection
+    if (id === undefined) {
+      throw new ReviewRefused(
+        "Pick or upload a Build before starting a review."
+      )
+    }
+    try {
+      return await this.#dependencies.library.lease(id)
+    } catch (error) {
+      if (!(error instanceof LibraryBuildNotFound)) throw error
+      this.#selection = undefined
+      throw new ReviewRefused(
+        "That Build was deleted from the Build Library. Pick another one."
+      )
+    }
   }
 
   /**

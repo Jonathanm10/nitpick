@@ -7,6 +7,7 @@ import { join } from "node:path"
 import {
   YouTrackClient,
   YouTrackCredentials,
+  type Build,
   type HTTPTransport,
   type YouTrackUser,
 } from "@nitpick/core"
@@ -18,6 +19,7 @@ import type { DeviceStream } from "../src/device/deviceHub.ts"
 import { HistoryStore } from "../src/historyStore.ts"
 import type { YouTrackAccount } from "../src/reviewer.ts"
 import { Reviewers, signInCookieName } from "../src/reviewers.ts"
+import { openSessionBuilds } from "../src/reviewerStore.ts"
 import { SignInStore } from "../src/signInStore.ts"
 import type { SubprocessRunner } from "../src/subprocess.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
@@ -45,6 +47,8 @@ export function signedInApp(options: {
   readonly deviceClaims?: DeviceClaims
   /** The Build Library's clock, which stamps each upload. */
   readonly libraryNow?: () => Date
+  /** Stands between the Library and its reads of the open sessions. */
+  readonly openSessionBuilds?: LibraryOptions["openSessionBuilds"]
 }) {
   const {
     data,
@@ -67,6 +71,7 @@ export function signedInApp(options: {
     runner,
     deviceHost,
     now: options.libraryNow,
+    openSessionBuilds: options.openSessionBuilds,
   })
   const reviewers = new Reviewers({
     directory: join(data, "reviewers"),
@@ -131,14 +136,24 @@ interface LibraryOptions {
   readonly runner: SubprocessRunner
   readonly deviceHost: DeviceHost
   readonly now?: () => Date
+  /** Wraps the read of every open session's Build. */
+  readonly openSessionBuilds?: (
+    read: () => Promise<ReadonlyArray<Build>>
+  ) => Promise<ReadonlyArray<Build>>
 }
 
 /** The Build Library of a server over `data`, as main.ts makes it. */
 export function libraryIn(
   data: string,
-  { runner, deviceHost, now }: LibraryOptions
+  { runner, deviceHost, now, openSessionBuilds: wrap }: LibraryOptions
 ): BuildLibrary {
-  return new BuildLibrary(join(data, "library"), { runner, deviceHost, now })
+  const read = () => openSessionBuilds(join(data, "reviewers"))
+  return new BuildLibrary(join(data, "library"), {
+    runner,
+    deviceHost,
+    openSessionBuilds: () => (wrap === undefined ? read() : wrap(read)),
+    now,
+  })
 }
 
 /** `app.request`, with the sign-in cookie on every request. */

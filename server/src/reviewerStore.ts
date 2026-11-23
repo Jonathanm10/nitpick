@@ -24,6 +24,7 @@ import {
   encodeStoredSession,
   newUUID,
   RecentDevices,
+  type Build,
   type DesignSnapshot,
   type ReviewSession,
 } from "@nitpick/core"
@@ -179,6 +180,25 @@ export class ReviewerStore {
   get #recentDevicesFile(): string {
     return join(this.directory, "recent-devices.json")
   }
+}
+
+/** The Build of each Reviewer's open session, for every Reviewer. */
+export async function openSessionBuilds(
+  reviewersDirectory: string
+): Promise<Build[]> {
+  const reviewers = await readdir(reviewersDirectory, {
+    withFileTypes: true,
+  }).catch(() => [])
+  const sessions = await Promise.all(
+    reviewers
+      .filter((reviewer) => reviewer.isDirectory())
+      .map((reviewer) =>
+        new ReviewerStore(join(reviewersDirectory, reviewer.name)).openSession()
+      )
+  )
+  return sessions
+    .filter((session) => session !== undefined)
+    .map((session) => session.build)
 }
 
 export async function readIfPresent(path: string): Promise<string | undefined> {

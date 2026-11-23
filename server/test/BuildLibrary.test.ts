@@ -1,7 +1,7 @@
 // The Build Library end to end, in process (ADR-0016): two Reviewers on one
-// server, where an upload lands for everyone and a pick starts a review on a
-// Build someone else uploaded. The Device Host and YouTrack are fakes; all
-// users and Builds are fictional.
+// server, where an upload lands for everyone, a pick starts a review on a
+// Build someone else uploaded, and a Build in a review can't be deleted. The
+// Device Host and YouTrack are fakes; all users and Builds are fictional.
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -64,6 +64,7 @@ function server(
   const fake = new FakeYouTrack()
   const runner = new FakeSubprocessRunner()
   const deviceHost = new FakeDeviceHost([iPhone, iPad])
+  const sessionReads = { held: 0, gate: undefined as Promise<void> | undefined }
   const signedIn = signedInApp({
     data,
     deviceHost,
@@ -72,12 +73,20 @@ function server(
     instanceURL: fake.instanceURL,
     user: fake.users["perm:vera"],
     libraryNow: () => new Date((clock.now += 60_000)),
+    openSessionBuilds: async (read) => {
+      if (sessionReads.gate !== undefined) {
+        sessionReads.held++
+        await sessionReads.gate
+      }
+      return read()
+    },
   })
   return {
     data,
     clock,
     runner,
     deviceHost,
+    sessionReads,
     vera: signedIn.app,
     noor: signedIn.signedInAs(fake.users["perm:noor"]!),
     libraryDirectory: join(data, "library"),
@@ -139,6 +148,14 @@ function start(as: Browser, device: SimulatorDevice) {
   })
 }
 
+function end(as: Browser) {
+  return as.request("/api/session", { method: "DELETE" })
+}
+
+function remove(as: Browser, id: string) {
+  return as.request(`/api/library/${id}`, { method: "DELETE" })
+}
+
 async function review(as: Browser) {
   const response = await as.request("/api/review")
   return (await response.json()) as ReviewStateResponse
@@ -155,6 +172,22 @@ function launchedFrom(h: Server) {
   return h.deviceHost.launches.map(({ build }) =>
     fileURLToPath(build.appBundleURL)
   )
+}
+
+/** Holds each launch until `release`, as a slow boot would. */
+function holdLaunches(h: Server) {
+  const launch = h.deviceHost.launchBuild
+  let release = () => {}
+  const released = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const held: string[] = []
+  h.deviceHost.launchBuild = async (build, device) => {
+    held.push(device.udid)
+    await released
+    return launch(build, device)
+  }
+  return { held, release }
 }
 
 describe("The Build Library", () => {
@@ -174,12 +207,14 @@ describe("The Build Library", () => {
         id: second,
         uploadedBy: { login: "noor", name: "Noor Haddad" },
         uploadedAt: "2026-11-23T09:02:00.000Z",
+        inUse: false,
       },
       {
         ...reviewMe,
         id: first,
         uploadedBy: { login: "vera", name: "Vera Baumann" },
         uploadedAt: "2026-11-23T09:01:00.000Z",
+        inUse: false,
       },
     ]
     expect(await library(h.vera)).toEqual(listed)
@@ -251,6 +286,66 @@ describe("The Build Library", () => {
     })
     expect(malformed.status).toBe(400)
   })
+
+  test("deleting is refused while a review is open on the Build, and done once it ends", async () => {
+    const h = server()
+    const id = await uploaded(h, h.vera)
+    await pick(h.noor, id)
+    await start(h.noor, iPad)
+
+    const refused = await remove(h.vera, id)
+    const listedInUse = await library(h.vera)
+    await end(h.noor)
+    const listedAfter = await library(h.vera)
+    const deleted = await remove(h.vera, id)
+    const again = await remove(h.vera, id)
+
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toEqual({
+      error:
+        "This Build is in a review, so it can't be deleted. Try again once that review ends.",
+    })
+    expect(listedInUse.map((build) => build.inUse)).toEqual([true])
+    expect(listedAfter.map((build) => build.inUse)).toEqual([false])
+    expect(deleted.status).toBe(204)
+    expect(again.status).toBe(404)
+    expect(await library(h.noor)).toEqual([])
+    expect(readdirSync(h.libraryDirectory)).toEqual([])
+    // Both had it as their Build; now neither has one.
+    expect(await review(h.vera)).toEqual({ filing: { status: "idle" } })
+    expect(await review(h.noor)).toEqual({ filing: { status: "idle" } })
+  })
+
+  test("deleting a Build its Reviewer picked but hasn't started on leaves them with none, and Start review refused", async () => {
+    const h = server()
+    const id = await uploaded(h, h.vera)
+
+    const deleted = await remove(h.noor, id)
+    const started = await start(h.vera, iPhone)
+
+    expect(deleted.status).toBe(204)
+    expect(started.status).toBe(409)
+    expect(await started.json()).toEqual({
+      error: "That Build was deleted from the Build Library. Pick another one.",
+    })
+    expect(h.deviceHost.launches).toEqual([])
+    expect(storedSession(h, "vera")).toBeUndefined()
+    expect(await review(h.vera)).toEqual({ filing: { status: "idle" } })
+    expect(await (await start(h.vera, iPhone)).json()).toEqual({
+      error: "Pick or upload a Build before starting a review.",
+    })
+  })
+
+  test("a Build id that names no entry deletes nothing", async () => {
+    const h = server()
+    const id = await uploaded(h, h.vera)
+
+    const outside = await remove(h.vera, "..%2Freviewers%2Fvera")
+    const unknown = await remove(h.vera, "not-a-build")
+
+    expect([outside.status, unknown.status]).toEqual([404, 404])
+    expect((await library(h.vera)).map((build) => build.id)).toEqual([id])
+  })
 })
 
 describe("Across a restart", () => {
@@ -292,5 +387,55 @@ describe("Across a restart", () => {
 
     expect((await library(after.vera)).map((build) => build.id)).toEqual([id])
     expect(readdirSync(after.libraryDirectory)).toEqual([id])
+  })
+})
+
+describe("A delete racing a start", () => {
+  test("is refused while the start is under way, which then opens its session", async () => {
+    const h = server()
+    const id = await uploaded(h, h.vera)
+    const launches = holdLaunches(h)
+    const starting = start(h.vera, iPhone)
+    await vi.waitFor(() => expect(launches.held).toEqual([iPhone.udid]))
+
+    const duringStart = await remove(h.noor, id)
+    const listed = await library(h.noor)
+    launches.release()
+    const started = await starting
+    const afterStart = await remove(h.noor, id)
+
+    expect(duringStart.status).toBe(409)
+    expect(listed.map((build) => build.inUse)).toEqual([true])
+    expect(started.status).toBe(200)
+    expect(afterStart.status).toBe(409)
+    expect(
+      existsSync(fileURLToPath(storedSession(h, "vera")!.build.appBundleURL))
+    ).toBe(true)
+  })
+
+  test("the Library is held while a delete checks its Build: the start waits, then finds the Build gone", async () => {
+    const h = server()
+    const id = await uploaded(h, h.vera)
+    let release = () => {}
+    h.sessionReads.gate = new Promise((resolve) => {
+      release = resolve
+    })
+    const deleting = remove(h.noor, id)
+    await vi.waitFor(() => expect(h.sessionReads.held).toBe(1))
+
+    const starting = start(h.vera, iPhone)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const launchedMeanwhile = h.deviceHost.launches.length
+    release()
+
+    expect(launchedMeanwhile).toBe(0)
+    expect((await deleting).status).toBe(204)
+    const started = await starting
+    expect(started.status).toBe(409)
+    expect(await started.json()).toEqual({
+      error: "That Build was deleted from the Build Library. Pick another one.",
+    })
+    expect(h.deviceHost.launches).toEqual([])
+    expect(storedSession(h, "vera")).toBeUndefined()
   })
 })

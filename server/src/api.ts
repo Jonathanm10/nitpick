@@ -233,13 +233,15 @@ export interface ProjectsResponse {
 
 /**
  * A Build in the Build Library (ADR-0016), which every signed-in Reviewer
- * sees and starts a review on.
+ * sees, starts a review on and may delete.
  */
 export interface LibraryBuild extends BuildSummary {
   readonly id: string
   readonly uploadedBy: { readonly login: string; readonly name: string }
   /** ISO-8601. */
   readonly uploadedAt: string
+  /** A Review Session is open or starting on it, so it can't be deleted. */
+  readonly inUse: boolean
 }
 
 /** `GET /api/library`: every Build on the Device Host, newest upload first. */
@@ -251,7 +253,7 @@ export interface LibraryResponse {
  * The Reviewer's Build, with its Library id. `POST /api/build?name=<file
  * name>`, with the zip or .apk as the request body, adds it to the Library
  * for everyone and picks it. `PUT /api/build` picks a Library Build, and
- * answers 404 for one that isn't there. A Build that isn't the Reviewer's yet
+ * answers 404 once it was deleted. A Build that isn't the Reviewer's yet
  * ends their open session.
  */
 export interface BuildResponse {
@@ -262,6 +264,10 @@ export interface BuildResponse {
 export interface PickBuildRequest {
   readonly id: string
 }
+
+// `DELETE /api/library/:id` deletes a Build from the Library for everyone:
+// 204. A review open or starting on it answers 409, saying so; a Build no
+// longer there, 404.
 
 /** `POST /api/session`: start a Review Session, or resume the open one. */
 export interface StartReviewRequest {

@@ -50,6 +50,7 @@ import {
 } from "./annotationFlattening.ts"
 import { BuildIngestError, buildName } from "./buildIngestion.ts"
 import {
+  LibraryBuildInUse,
   LibraryBuildNotFound,
   type BuildLibrary,
   type Uploader,
@@ -376,9 +377,15 @@ export function createApp({
         id: entry.id,
         uploadedBy: entry.uploadedBy,
         uploadedAt: entry.uploadedAt,
+        inUse: entry.inUse,
       })),
     } satisfies LibraryResponse)
   )
+
+  app.delete("/api/library/:id", async (c) => {
+    await library.delete(c.req.param("id"))
+    return c.body(null, 204)
+  })
 
   app.post("/api/build", async (c) => {
     const build = await reviewerOf(c).ingest(
@@ -658,7 +665,8 @@ function errorStatus(error: unknown): ContentfulStatusCode {
     error instanceof AndroidUnavailable ||
     error instanceof NoLauncherActivity ||
     error instanceof DeviceInUse ||
-    error instanceof DeviceHostFull
+    error instanceof DeviceHostFull ||
+    error instanceof LibraryBuildInUse
   ) {
     return 409
   }

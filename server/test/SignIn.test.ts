@@ -214,6 +214,7 @@ const registeredRoutes = [
   "POST /api/history/import",
   "GET /api/feedback/environment",
   "GET /api/library",
+  "DELETE /api/library/:id",
   "POST /api/build",
   "PUT /api/build",
   "POST /api/session",

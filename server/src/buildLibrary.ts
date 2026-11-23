@@ -1,13 +1,15 @@
 // The Build Library (ADR-0016): every Build uploaded to the Device Host, which
-// every signed-in Reviewer sees and starts a review on. It alone owns the
-// library folder:
+// every signed-in Reviewer sees and starts a review on, until one of them
+// deletes it. It alone owns the library folder:
 //
 //   library/<id>/entry.json   the entry, written last
 //   library/<id>/upload       the uploaded zip or .apk while it is read
 //   library/<id>/build/…      the extracted zip, or the .apk
 //
 // A folder without entry.json is an upload that never finished, which the
-// first operation after a start removes.
+// first operation after a start removes. A Build is in use while an open
+// Review Session's Build lies in its folder or a start on it is under way,
+// and deleting it is refused then.
 import { createWriteStream } from "node:fs"
 import { mkdir, readdir, rename, rm } from "node:fs/promises"
 import { join, relative, resolve, sep } from "node:path"
@@ -57,6 +59,22 @@ export class LibraryBuildNotFound extends Error {
   }
 }
 
+/** A review is open or starting on the Build. */
+export class LibraryBuildInUse extends Error {
+  constructor() {
+    super(
+      "This Build is in a review, so it can't be deleted. Try again once that review ends."
+    )
+    this.name = "LibraryBuildInUse"
+  }
+}
+
+/** A start's hold on its Build: deleting the Build is refused until release. */
+export interface LibraryLease {
+  readonly build: Build
+  release(): void
+}
+
 /** entry.json: no absolute path, so the folder can move. */
 interface StoredEntry {
   readonly schema: 1
@@ -75,7 +93,12 @@ export class BuildLibrary {
   readonly #directory: string
   readonly #runner: SubprocessRunner
   readonly #deviceHost: Pick<DeviceHost, "readAndroidBuild">
+  readonly #openSessionBuilds: () => Promise<ReadonlyArray<Build>>
   readonly #now: () => Date
+  /** One id per start under way; two starts on one Build hold it twice. */
+  readonly #leases: string[] = []
+  /** Delete and a start's check that its Build exists run one at a time. */
+  #lock: Promise<unknown> = Promise.resolve()
   #swept: Promise<void> | undefined
 
   constructor(
@@ -85,23 +108,32 @@ export class BuildLibrary {
       readonly runner: SubprocessRunner
       /** Reads an uploaded .apk. */
       readonly deviceHost: Pick<DeviceHost, "readAndroidBuild">
+      /** The Build of every Reviewer's open Review Session. */
+      readonly openSessionBuilds: () => Promise<ReadonlyArray<Build>>
       readonly now?: () => Date
     }
   ) {
     this.#directory = resolve(directory)
     this.#runner = options.runner
     this.#deviceHost = options.deviceHost
+    this.#openSessionBuilds = options.openSessionBuilds
     this.#now = options.now ?? (() => new Date())
   }
 
   /** Every Build in the Library, newest upload first. */
-  async list(): Promise<ReadonlyArray<LibraryEntry>> {
+  async list(): Promise<
+    ReadonlyArray<LibraryEntry & { readonly inUse: boolean }>
+  > {
     await this.#prepared()
-    const names = await readdir(this.#directory).catch(() => [])
+    const [names, inUse] = await Promise.all([
+      readdir(this.#directory).catch(() => []),
+      this.#inUse(),
+    ])
     const entries = await Promise.all(names.map((name) => this.get(name)))
     return entries
       .filter((entry) => entry !== undefined)
       .sort((lhs, rhs) => (lhs.uploadedAt < rhs.uploadedAt ? 1 : -1))
+      .map((entry) => ({ ...entry, inUse: inUse.has(entry.id) }))
   }
 
   /** The entry with this id, if the Library holds it. */
@@ -168,6 +200,38 @@ export class BuildLibrary {
     }
   }
 
+  /** Deletes a Build no review is open or starting on. */
+  async delete(id: string): Promise<void> {
+    await this.#locked(async () => {
+      const entry = await this.get(id)
+      if (entry === undefined) throw new LibraryBuildNotFound()
+      if ((await this.#inUse()).has(entry.id)) throw new LibraryBuildInUse()
+      const folder = join(this.#directory, entry.id)
+      // Its entry.json goes first, so a crash midway leaves a folder the
+      // next start sweeps.
+      await rm(join(folder, entryFile))
+      await rm(folder, { recursive: true, force: true })
+    })
+  }
+
+  /**
+   * The entry's Build for a start, which holds it in use from this check
+   * until the start releases it, once its session is saved or it failed.
+   */
+  lease(id: string): Promise<LibraryLease> {
+    return this.#locked(async () => {
+      const entry = await this.get(id)
+      if (entry === undefined) throw new LibraryBuildNotFound()
+      this.#leases.push(entry.id)
+      return {
+        build: entry.build,
+        release: () => {
+          this.#leases.splice(this.#leases.indexOf(entry.id), 1)
+        },
+      }
+    })
+  }
+
   /** The id of the entry `build` lies in; undefined outside the Library. */
   entryID(build: Build): string | undefined {
     const [id, ...rest] = relative(
@@ -179,6 +243,16 @@ export class BuildLibrary {
       : undefined
   }
 
+  async #inUse(): Promise<ReadonlySet<string>> {
+    const builds = await this.#openSessionBuilds()
+    return new Set([
+      ...this.#leases,
+      ...builds
+        .map((build) => this.entryID(build))
+        .filter((id) => id !== undefined),
+    ])
+  }
+
   async #readAPK(
     archivePath: string,
     path: string,
@@ -186,6 +260,12 @@ export class BuildLibrary {
   ): Promise<Build> {
     await rename(archivePath, path)
     return this.#deviceHost.readAndroidBuild({ path, name })
+  }
+
+  #locked<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.#lock.then(action)
+    this.#lock = result.catch(() => {})
+    return result
   }
 
   /** The sweep, once per server start, before anything else touches a folder. */
