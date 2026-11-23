@@ -477,7 +477,8 @@ export function useReview() {
         .catch(async (error: unknown) => {
           // The review another tab changed shows paused: its device and
           // schema may be another review's. Still the review this page
-          // shows, its pending edits are saved before it is read again.
+          // shows, its pending edits are saved before it is read again; when
+          // they can't be, the page keeps its copy, and the retry its edits.
           if (error instanceof APIError && error.code === "buildChanged") {
             setRun(undefined)
             setSchema(emptySchema)
@@ -486,8 +487,9 @@ export function useReview() {
               loaded?.session !== undefined &&
               loaded.session.startedAt === saver.session?.startedAt
             ) {
-              await saver.saveAll().catch(() => false)
-              await api.review().then(applyReview, () => {})
+              if (await saver.saveAll().catch(() => false)) {
+                await api.review().then(applyReview, () => {})
+              }
             } else if (loaded !== undefined) {
               applyReview(loaded)
             }
