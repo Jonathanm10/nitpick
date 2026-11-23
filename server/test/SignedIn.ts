@@ -11,12 +11,17 @@ import {
   type YouTrackUser,
 } from "@nitpick/core"
 import { createApp } from "../src/app.ts"
+import { BuildLibrary } from "../src/buildLibrary.ts"
 import type { DeviceHost } from "../src/device/DeviceHost.ts"
 import { DeviceClaims } from "../src/device/deviceClaims.ts"
 import type { DeviceStream } from "../src/device/deviceHub.ts"
 import { HistoryStore } from "../src/historyStore.ts"
 import type { YouTrackAccount } from "../src/reviewer.ts"
 import { Reviewers, signInCookieName } from "../src/reviewers.ts"
+import {
+  openSessionBuilds,
+  type OpenSessionBuilds,
+} from "../src/reviewerStore.ts"
 import { SignInStore } from "../src/signInStore.ts"
 import type { SubprocessRunner } from "../src/subprocess.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
@@ -42,6 +47,10 @@ export function signedInApp(options: {
   readonly webRoot?: string
   /** The host's claims; no cap by default. */
   readonly deviceClaims?: DeviceClaims
+  /** The Build Library's clock, which stamps each upload. */
+  readonly libraryNow?: () => Date
+  /** Stands between the Library and its reads of the open sessions. */
+  readonly openSessionBuilds?: LibraryOptions["openSessionBuilds"]
 }) {
   const {
     data,
@@ -60,15 +69,22 @@ export function signedInApp(options: {
       list: deviceHost.devices.list,
       shutDown: deviceHost.shutDown,
     })
+  const library = libraryIn(data, {
+    runner,
+    deviceHost,
+    now: options.libraryNow,
+    openSessionBuilds: options.openSessionBuilds,
+  })
   const reviewers = new Reviewers({
     directory: join(data, "reviewers"),
     instanceURL,
     transport,
     signIns,
-    dependencies: { deviceHost, runner, history, deviceClaims },
+    dependencies: { deviceHost, library, runner, history, deviceClaims },
   })
   const server = createApp({
     deviceHost,
+    library,
     reviewers,
     history,
     serverVersion: options.serverVersion ?? "0.0.0",
@@ -96,14 +112,50 @@ export function signedInApp(options: {
     server,
     /** The `Cookie` header of the signed-in browser. */
     cookie,
+    /** The app as another Reviewer's signed-in browser reaches it. */
+    signedInAs: (other: YouTrackUser) => {
+      let otherSignIn: Promise<string> | undefined
+      return withCookie(
+        server,
+        () =>
+          (otherSignIn ??= signIns
+            .create(other, `perm:${other.login}`)
+            .then(({ id }) => `${signInCookieName}=${id}`))
+      )
+    },
     reviewers,
     signIns,
     history,
+    library,
     reviewer: reviewers.reviewer(user.login),
     /** The signed-in Reviewer's directory. */
     directory: join(data, "reviewers", user.login),
     account,
   }
+}
+
+interface LibraryOptions {
+  readonly runner: SubprocessRunner
+  readonly deviceHost: DeviceHost
+  readonly now?: () => Date
+  /** Wraps the read of every open session's Build. */
+  readonly openSessionBuilds?: (
+    read: () => Promise<OpenSessionBuilds>
+  ) => Promise<OpenSessionBuilds>
+}
+
+/** The Build Library of a server over `data`, as main.ts makes it. */
+export function libraryIn(
+  data: string,
+  { runner, deviceHost, now, openSessionBuilds: wrap }: LibraryOptions
+): BuildLibrary {
+  const read = () => openSessionBuilds(join(data, "reviewers"))
+  return new BuildLibrary(join(data, "library"), {
+    runner,
+    deviceHost,
+    openSessionBuilds: () => (wrap === undefined ? read() : wrap(read)),
+    now,
+  })
 }
 
 /** `app.request`, with the sign-in cookie on every request. */

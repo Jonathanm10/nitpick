@@ -1,13 +1,9 @@
-// One Reviewer's side of the server: the Build they uploaded, their open
-// Review Session and Recent devices, and the one run at a time they may have
-// going. The operations follow Sources/Nitpick/AppModel.swift's ingest,
-// startReview, switchDevice, endReview, captureScreen, the Editor's edits and
-// fileAllFindings.
-import { createWriteStream } from "node:fs"
-import { readFile, rename, rm } from "node:fs/promises"
-import { join } from "node:path"
-import { Readable } from "node:stream"
-import { pipeline } from "node:stream/promises"
+// One Reviewer's side of the server: the Build they picked from the Build
+// Library, their open Review Session and Recent devices, and the one run at a
+// time they may have going. The operations follow
+// Sources/Nitpick/AppModel.swift's ingest, startReview, switchDevice,
+// endReview, captureScreen, the Editor's edits and fileAllFindings.
+import { readFile } from "node:fs/promises"
 import type { ReadableStream } from "node:stream/web"
 import {
   addDesignSnapshot,
@@ -38,6 +34,7 @@ import {
   type HistoryEntry,
   type ProjectSchema,
   type RecentDevices,
+  type ReferenceDate,
   type ReviewSession,
   type TrayItem,
   type YouTrackClient,
@@ -51,7 +48,13 @@ import type {
   HistoryImportResult,
   SessionPatch,
 } from "./api.ts"
-import { buildUploadName, readBuildFromArchive } from "./buildIngestion.ts"
+import {
+  LibraryBuildNotFound,
+  type BuildLibrary,
+  type LibraryEntry,
+  type LibraryLease,
+  type Uploader,
+} from "./buildLibrary.ts"
 import { checkDesignSnapshotImage } from "./designSnapshotImage.ts"
 import { designReference, patchedFinding } from "./findingPatch.ts"
 import type {
@@ -75,6 +78,17 @@ export class ReviewRefused extends Error {
   }
 }
 
+/**
+ * Start review from a page whose Build isn't the Reviewer's any more: one
+ * picked or uploaded in another tab, or deleted from the Library.
+ */
+export class BuildChanged extends ReviewRefused {
+  constructor(message: string) {
+    super(message)
+    this.name = "BuildChanged"
+  }
+}
+
 /** The Finding, or its file, isn't in the open session. */
 export class FindingNotFound extends Error {
   constructor() {
@@ -85,7 +99,9 @@ export class FindingNotFound extends Error {
 
 export interface ReviewerDependencies {
   readonly deviceHost: DeviceHost
-  /** Runs the extraction of uploaded Builds and History zips. */
+  /** Every uploaded Build, one Library for all. */
+  readonly library: BuildLibrary
+  /** Runs the extraction of History zips. */
   readonly runner: SubprocessRunner
   /** Every Reviewer's filed sessions, one store for all. */
   readonly history: HistoryStore
@@ -134,11 +150,16 @@ export class Reviewer {
    */
   #sessionWrites: Promise<unknown> = Promise.resolve()
   /**
-   * A Build uploaded since the last session ended. Held in memory: a server
-   * restart forgets it, as a relaunch of the Swift app did, while an open
-   * session keeps its own Build on disk.
+   * The Library id of the Build picked or uploaded since the last session
+   * ended. Held in memory: a server restart forgets it, as a relaunch of the
+   * Swift app did, while an open session keeps its own Build.
    */
-  #uploadedBuild: Build | undefined
+  #selection: string | undefined
+  /**
+   * Whether the Builds from before the Library are gone but the open
+   * session's: not yet at a server start, nor after a removal that failed.
+   */
+  #legacyBuildsRemoved = false
   /**
    * File all's run and its ending, in memory as AppModel held them: a
    * server restart forgets a failure (the rows say "Filing interrupted —
@@ -164,7 +185,34 @@ export class Reviewer {
   }> {
     const filing = this.#filing
     const session = await this.#store.openSession()
-    return { build: session?.build ?? this.#uploadedBuild, session, filing }
+    if (!this.#legacyBuildsRemoved) {
+      await this.#removeLegacyBuilds(session?.build)
+    }
+    return {
+      build: session?.build ?? (await this.#selectedBuild()),
+      session,
+      filing,
+    }
+  }
+
+  /**
+   * The picked Build, dropped once someone deleted it from the Library. An
+   * entry that can't be read is logged, shows no Build, and stays picked.
+   */
+  async #selectedBuild(): Promise<Build | undefined> {
+    const id = this.#selection
+    if (id === undefined) return undefined
+    let entry: LibraryEntry | undefined
+    try {
+      entry = await this.#dependencies.library.get(id)
+    } catch (error) {
+      console.error(`The Build Library's ${id} can't be read.`, error)
+      return undefined
+    }
+    if (entry === undefined && this.#selection === id) {
+      this.#selection = undefined
+    }
+    return entry?.build
   }
 
   async hostStatus(): Promise<HostStatus> {
@@ -180,59 +228,95 @@ export class Reviewer {
   }
 
   /**
-   * Ingests an uploaded zip or .apk. A Review Session reviews exactly one
-   * Build, so an accepted upload ends the open session, on disk too. A
-   * refused upload throws before anything changes, and leaves no files
-   * behind.
+   * Adds an uploaded zip or .apk to the Library and picks it. A refused
+   * upload throws before anything changes, and leaves no files behind; one
+   * deleted from the Library before it is picked leaves the open session.
    */
   ingest(
     upload: ReadableStream<Uint8Array> | null,
-    fileName: string
+    fileName: string,
+    uploader: Uploader
   ): Promise<Build> {
     return this.#perform(async () => {
-      const uploaded = buildUploadName(fileName)
-      const slot = await this.#store.newBuildSlot()
-      try {
-        await pipeline(
-          upload === null ? Readable.from([]) : Readable.fromWeb(upload),
-          createWriteStream(slot.archivePath)
-        )
-        const build =
-          uploaded.kind === "apk"
-            ? await this.#readAPK(slot, uploaded.stem, uploaded.name)
-            : await readBuildFromArchive(
-                this.#dependencies.runner,
-                { path: slot.archivePath, name: uploaded.name },
-                slot.buildDirectory
-              )
-        await this.#serialized(() => this.#store.clearOpenSession())
-        this.#dependencies.deviceClaims.release(this.#login)
-        this.#uploadedBuild = build
-        // The next Build dismisses a held filing result (ADR-0007).
-        this.#filing = { status: "idle" }
-        await this.#store.pruneBuilds(slot.id)
-        return build
-      } catch (error) {
-        await rm(slot.buildDirectory, { recursive: true, force: true })
-        throw error
-      } finally {
-        await rm(slot.archivePath, { force: true })
-      }
+      const library = this.#dependencies.library
+      const added = await library.add(upload, fileName, uploader)
+      const build = await library.withEntry(added.id, async (entry) => {
+        await this.#select(entry.id)
+        return entry.build
+      })
+      await this.#removeLegacyBuilds(undefined)
+      return build
     })
   }
 
   /**
-   * An .apk is its own Build: it moves into the slot's folder under its
-   * upload's name, which the page shows, and is read there.
+   * Picks a Build from the Library. Picking the Build already theirs, the
+   * open session's included, changes nothing; one deleted meanwhile is
+   * LibraryBuildNotFound, and the open session stays. `shown` is the open
+   * session the page shows: its `startedAt` and its unfiled Findings. A pick
+   * from a page left behind by another tab would end a review, or discard
+   * Findings, it never showed, so it is BuildChanged, and the review stays.
    */
-  async #readAPK(
-    slot: { readonly archivePath: string; readonly buildDirectory: string },
-    stem: string,
-    name: string
+  pick(
+    id: string,
+    shown: {
+      readonly session: ReferenceDate | undefined
+      readonly unfiled: ReadonlyArray<string>
+    }
   ): Promise<Build> {
-    const path = join(slot.buildDirectory, `${stem}.apk`)
-    await rename(slot.archivePath, path)
-    return this.#dependencies.deviceHost.readAndroidBuild({ path, name })
+    return this.#perform(async () => {
+      const library = this.#dependencies.library
+      const build = await library.withEntry(id, async (entry) => {
+        const open = await this.#store.openSession()
+        const current = open
+          ? await library.entryID(open.build)
+          : this.#selection
+        const unseen = open?.tray.some(
+          (item) =>
+            filedIssueOf(item) === undefined && !shown.unfiled.includes(item.id)
+        )
+        if (open?.startedAt !== shown.session || unseen) {
+          throw new BuildChanged(
+            "Your review changed since this page showed it, so the Build wasn't picked. Check your review now, then pick again."
+          )
+        }
+        if (current !== entry.id) await this.#select(entry.id)
+        return entry.build
+      })
+      await this.#removeLegacyBuilds(undefined)
+      return build
+    })
+  }
+
+  /**
+   * A Review Session reviews exactly one Build, so another one ends the open
+   * session, on disk too. Runs while the Library holds the Build, so a
+   * delete never lands between the check that it is there and the end.
+   */
+  async #select(id: string): Promise<void> {
+    await this.#serialized(() => this.#store.clearOpenSession())
+    this.#dependencies.deviceClaims.release(this.#login)
+    this.#selection = id
+    // The next Build dismisses a held filing result (ADR-0007).
+    this.#filing = { status: "idle" }
+  }
+
+  /**
+   * Deletes what is left of the Build slots from before the Library, but
+   * the one `keeping` runs. After a session's change, never part of it: a
+   * failure is logged, and the next load tries again.
+   */
+  async #removeLegacyBuilds(keeping: Build | undefined): Promise<void> {
+    try {
+      await this.#store.removeLegacyBuilds(keeping)
+      this.#legacyBuildsRemoved = true
+    } catch (error) {
+      this.#legacyBuildsRemoved = false
+      console.error(
+        "The Builds from before the Build Library couldn't be deleted; the next load tries again.",
+        error
+      )
+    }
   }
 
   /**
@@ -261,54 +345,98 @@ export class Reviewer {
     request: {
       readonly deviceUDID: string
       readonly projectID: string | undefined
+      /** The Build the page shows; undefined for one from before the Library. */
+      readonly buildID: string | undefined
     },
     { user, youTrack }: YouTrackAccount
   ): Promise<StartOutcome> {
     return this.#perform(async () => {
       const open = await this.#store.openSession()
-      const build = open?.build ?? this.#uploadedBuild
-      if (build === undefined) {
-        throw new ReviewRefused("Upload a Build before starting a review.")
+      const current =
+        open === undefined
+          ? this.#selection
+          : await this.#dependencies.library.entryID(open.build)
+      // A page left behind by another tab's pick would start a Build it
+      // doesn't show. A page from before this check sends no Build.
+      if (request.buildID !== current) {
+        throw request.buildID === undefined
+          ? new ReviewRefused(
+              "Your Build changed since this page showed it, so the review didn't start. Reload the page to see which Build is yours now."
+            )
+          : new BuildChanged(
+              "Your Build changed since this page showed it, so the review didn't start. Check which Build is yours now, then start again."
+            )
       }
-      // A missing Xcode or runtime shows as the host's reason before any boot.
-      const health = await this.#dependencies.deviceHost.checkHealth()
-      if (health.status === "notReady") {
-        return { status: "hostNotReady", problem: health.problem }
-      }
-      const picked = deviceFor(build, request.deviceUDID, health.devices)
-      const project =
-        open?.project ?? (await this.#project(request.projectID, youTrack))
-      const rollback = await this.#dependencies.deviceClaims.claim(user, picked)
-      const device = await this.#dependencies.deviceHost
-        .launchBuild(build, picked)
-        .catch(async (error: unknown) => {
-          await rollback()
-          throw error
-        })
-      const recentDevices = await this.#recordRecentDevice(device)
-      // Non-fatal: an empty schema hides the Editor's controls, and capture
-      // and filing proceed regardless (ADR-0008).
-      const schema = await loadProjectSchema(youTrack, project)
-      const session = open ?? newReviewSession({ build, project })
-      if (open === undefined) {
-        await this.#serialized(() => this.#store.saveOpenSession(session))
-        // A held result never shows beside a live session.
-        this.#filing = { status: "idle" }
-      }
-      return {
-        status: "started",
-        session,
-        device,
-        schema,
-        // The device as it now runs: booted, with an emulator's serial.
-        devices: health.devices.map((listed) =>
-          listed.udid === device.udid ? device : listed
-        ),
-        recentDevices,
-        androidProblem: health.androidProblem,
-        inspectProblem: health.inspectProblem,
+      // The open session keeps its Build in use; a new one holds its own.
+      const lease: LibraryLease =
+        open === undefined
+          ? await this.#lease(current)
+          : { build: open.build, release: () => {} }
+      try {
+        const build = lease.build
+        // A missing Xcode or runtime shows as the host's reason before any boot.
+        const health = await this.#dependencies.deviceHost.checkHealth()
+        if (health.status === "notReady") {
+          return { status: "hostNotReady", problem: health.problem }
+        }
+        const picked = deviceFor(build, request.deviceUDID, health.devices)
+        const project =
+          open?.project ?? (await this.#project(request.projectID, youTrack))
+        const rollback = await this.#dependencies.deviceClaims.claim(
+          user,
+          picked
+        )
+        const device = await this.#dependencies.deviceHost
+          .launchBuild(build, picked)
+          .catch(async (error: unknown) => {
+            await rollback()
+            throw error
+          })
+        const recentDevices = await this.#recordRecentDevice(device)
+        // Non-fatal: an empty schema hides the Editor's controls, and capture
+        // and filing proceed regardless (ADR-0008).
+        const schema = await loadProjectSchema(youTrack, project)
+        const session = open ?? newReviewSession({ build, project })
+        if (open === undefined) {
+          await this.#serialized(() => this.#store.saveOpenSession(session))
+          // A held result never shows beside a live session.
+          this.#filing = { status: "idle" }
+        }
+        return {
+          status: "started",
+          session,
+          device,
+          schema,
+          // The device as it now runs: booted, with an emulator's serial.
+          devices: health.devices.map((listed) =>
+            listed.udid === device.udid ? device : listed
+          ),
+          recentDevices,
+          androidProblem: health.androidProblem,
+          inspectProblem: health.inspectProblem,
+        }
+      } finally {
+        lease.release()
       }
     })
+  }
+
+  /** The picked Build, held in use until the start saves its session. */
+  async #lease(id: string | undefined): Promise<LibraryLease> {
+    if (id === undefined) {
+      throw new ReviewRefused(
+        "Pick or upload a Build before starting a review."
+      )
+    }
+    try {
+      return await this.#dependencies.library.lease(id)
+    } catch (error) {
+      if (!(error instanceof LibraryBuildNotFound)) throw error
+      this.#selection = undefined
+      throw new BuildChanged(
+        "That Build was deleted from the Build Library. Pick another one."
+      )
+    }
   }
 
   /**
@@ -345,20 +473,23 @@ export class Reviewer {
   }
 
   /**
-   * Ends the Review Session without filing. The Build stays loaded, and
-   * History is untouched.
+   * Ends the Review Session without filing. Its Build stays picked, unless
+   * it is from before the Library, and History is untouched.
    */
   end(): Promise<void> {
-    return this.#perform(() =>
-      this.#serialized(async () => {
+    return this.#perform(async () => {
+      await this.#serialized(async () => {
         const open = await this.#store.openSession()
-        if (open !== undefined) this.#uploadedBuild = open.build
+        if (open !== undefined) {
+          this.#selection = await this.#dependencies.library.entryID(open.build)
+        }
         await this.#store.clearOpenSession()
         this.#dependencies.deviceClaims.release(this.#login)
         // Or the next session would open on a stale "File n remaining".
         this.#filing = { status: "idle" }
       })
-    )
+      await this.#removeLegacyBuilds(undefined)
+    })
   }
 
   /**
@@ -478,7 +609,8 @@ export class Reviewer {
     await this.#dependencies.history.record(entry)
     await this.#serialized(() => this.#store.clearOpenSession())
     this.#dependencies.deviceClaims.release(this.#login)
-    this.#uploadedBuild = session.build
+    this.#selection = await this.#dependencies.library.entryID(session.build)
+    await this.#removeLegacyBuilds(undefined)
     return entry
   }
 

@@ -20,6 +20,10 @@ _Avoid_: mirror, stream, device (the device is what a source shows, not the sour
 A specific compiled instance of the app under review, identified by app ID (iOS bundle ID or Android package name), version, and build number.
 _Avoid_: artifact, binary
 
+**Build Library**:
+The Builds on the Device Host, which every signed-in Reviewer sees and starts a Review Session on. An upload adds a Build for everyone; it stays until a Reviewer deletes it, which nobody can while a Review Session is open or starting on it (ADR-0016).
+_Avoid_: uploads, Build list, catalogue
+
 **Review Session**:
 One sitting in which a Reviewer reviews a Build. Fixes the shared context once — Build and YouTrack project — and collects Findings until the Reviewer files them. Its Findings may span multiple Device Contexts.
 _Avoid_: batch, review round

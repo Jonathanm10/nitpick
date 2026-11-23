@@ -1,31 +1,39 @@
 // One Reviewer's files under the server's data directory: the open Review
 // Session as schema v1 JSON (Sources/NitpickCore/SessionPersistence.swift's
-// manifest) with its captures and Design Snapshots beside it, the Recent
-// devices, and the extracted Builds.
+// manifest) with its captures and Design Snapshots beside it, and the Recent
+// devices. Their Builds are in the Build Library (buildLibrary.ts).
 //
 //   <reviewer>/open-session/session.json
 //   <reviewer>/open-session/captures/<item id>.png
 //   <reviewer>/open-session/design-snapshots/<item id>/<data version>.<ext>
 //   <reviewer>/open-session/filing             while a File all runs
 //   <reviewer>/recent-devices.json
-//   <reviewer>/builds/<id>/…          one extracted upload each
-//   <reviewer>/uploads/<id>.zip       an upload until it is extracted
 //   <reviewer>/imports/<id>/…         a History import's zips while read
+//
+// Before the Library, each Reviewer kept their last upload in `builds/<id>/`,
+// and its zip in `uploads/` while it was extracted. A session opened then
+// still runs its Build from there, so that folder stays until the session
+// ends; the rest goes at the Reviewer's first load.
+import type { Dirent } from "node:fs"
 import {
   mkdir,
   readdir,
   readFile,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { dirname, join, relative, sep } from "node:path"
+import { fileURLToPath } from "node:url"
 import {
   decodeStoredSession,
+  decodeStoredSessionBuild,
   designSnapshotFileExtension,
   encodeStoredSession,
   newUUID,
   RecentDevices,
+  type Build,
   type DesignSnapshot,
   type ReviewSession,
 } from "@nitpick/core"
@@ -41,6 +49,12 @@ export class ReviewerStore {
   async openSession(): Promise<ReviewSession | undefined> {
     const json = await readIfPresent(this.#openSessionManifest)
     return json === undefined ? undefined : decodeStoredSession(json)
+  }
+
+  /** The open session's Build alone, or undefined when none is open. */
+  async openSessionBuild(): Promise<Build | undefined> {
+    const json = await readIfPresent(this.#openSessionManifest)
+    return json === undefined ? undefined : decodeStoredSessionBuild(json)
   }
 
   /**
@@ -122,13 +136,38 @@ export class ReviewerStore {
 
   /**
    * Ends the open session without filing, so it isn't there to resume.
-   * Removes the whole slot, captures included.
+   * Removes the whole slot, captures included. A Build from before the
+   * Library that the session ran goes with `removeLegacyBuilds`.
    */
   async clearOpenSession(): Promise<void> {
     await rm(join(this.directory, "open-session"), {
       recursive: true,
       force: true,
     })
+  }
+
+  /**
+   * Deletes what the Reviewer's own Build slot left from before the Build
+   * Library: `uploads/`, and each `builds/<id>/` but the one `keeping`
+   * lies in. A `keeping` this host doesn't have, as after a move to
+   * another home, may name a slot by a path that isn't its own, so nothing
+   * goes until its session ends.
+   */
+  async removeLegacyBuilds(keeping: Build | undefined): Promise<void> {
+    const builds = join(this.directory, "builds")
+    const keptPath = keeping && fileURLToPath(keeping.appBundleURL)
+    if (keptPath !== undefined && !(await exists(keptPath))) return
+    const kept = keptPath && relative(builds, keptPath).split(sep)[0]
+    await rm(join(this.directory, "uploads"), { recursive: true, force: true })
+    const ids = await readdir(builds).catch(() => [])
+    const stale = ids.filter((id) => id !== kept)
+    if (stale.length === ids.length) {
+      await rm(builds, { recursive: true, force: true })
+      return
+    }
+    await Promise.all(
+      stale.map((id) => rm(join(builds, id), { recursive: true, force: true }))
+    )
   }
 
   /** Unreadable or missing data is an empty Recent, as UserDefaults gave. */
@@ -157,38 +196,9 @@ export class ReviewerStore {
     )
   }
 
-  /** A new, empty directory for one upload's Build, and where its zip lands. */
-  async newBuildSlot(): Promise<{
-    readonly id: string
-    readonly archivePath: string
-    readonly buildDirectory: string
-  }> {
-    const id = newUUID()
-    const buildDirectory = join(this.#buildsDirectory, id)
-    await mkdir(buildDirectory, { recursive: true })
-    await mkdir(this.#uploadsDirectory, { recursive: true })
-    return {
-      id,
-      archivePath: join(this.#uploadsDirectory, `${id}.zip`),
-      buildDirectory,
-    }
-  }
-
   /** A directory for one History import's zips; it isn't created yet. */
   newImportDirectory(): string {
     return join(this.directory, "imports", newUUID())
-  }
-
-  /** Deletes every extracted Build except the one `keep` names. */
-  async pruneBuilds(keep: string): Promise<void> {
-    const ids = await readdir(this.#buildsDirectory).catch(() => [])
-    await Promise.all(
-      ids
-        .filter((id) => id !== keep)
-        .map((id) =>
-          rm(join(this.#buildsDirectory, id), { recursive: true, force: true })
-        )
-    )
   }
 
   get #openSessionManifest(): string {
@@ -210,13 +220,61 @@ export class ReviewerStore {
   get #recentDevicesFile(): string {
     return join(this.directory, "recent-devices.json")
   }
+}
 
-  get #buildsDirectory(): string {
-    return join(this.directory, "builds")
+/** Where every Reviewer's open session runs its Build from. */
+export interface OpenSessionBuilds {
+  /** Each open session's .app or .apk, read from its Build alone. */
+  readonly paths: ReadonlyArray<string>
+  /**
+   * False when a Reviewer's session couldn't be read, or names its Build by
+   * no file URL: it may run any Build.
+   */
+  readonly complete: boolean
+}
+
+/** The Build's path of each Reviewer's open session, for every Reviewer. */
+export async function openSessionBuilds(
+  reviewersDirectory: string
+): Promise<OpenSessionBuilds> {
+  let reviewers: Dirent[]
+  try {
+    reviewers = await readdir(reviewersDirectory, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { paths: [], complete: true }
+    }
+    console.error("The Reviewers' folder can't be read.", error)
+    return { paths: [], complete: false }
   }
+  let complete = true
+  const paths = await Promise.all(
+    reviewers
+      .filter((reviewer) => reviewer.isDirectory())
+      .map((reviewer) =>
+        new ReviewerStore(join(reviewersDirectory, reviewer.name))
+          .openSessionBuild()
+          .then((build) => build && fileURLToPath(build.appBundleURL))
+          .catch((error: unknown) => {
+            console.error(
+              `The open session of ${reviewer.name} can't be read, so no Build can be deleted until it can.`,
+              error
+            )
+            complete = false
+            return undefined
+          })
+      )
+  )
+  return { paths: paths.filter((path) => path !== undefined), complete }
+}
 
-  get #uploadsDirectory(): string {
-    return join(this.directory, "uploads")
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+    throw error
   }
 }
 

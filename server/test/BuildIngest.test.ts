@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
+import { build } from "plist"
 import { beforeEach, describe, expect, test, vi } from "vitest"
 import {
   BuildIngestError,
@@ -256,6 +257,38 @@ describe("Zipped Build ingestion", () => {
       ingestError({ kind: "unsupportedFileType", fileName: "..zip" })
     )
     expect(runner.executedCommands).toEqual([])
+  })
+
+  test("an extracted .app whose Info.plist is a link or a folder is refused, and its framework links are fine", async () => {
+    // A crafted archive can deliver Info.plist as a symlink to a file
+    // outside the bundle, which nitpick would read and show to everyone.
+    const outside = join(temp, "outside.plist")
+    writeFileSync(outside, build(simulatorInfoPlist()))
+    const linked = join(destination, "Linked.app")
+    const folder = join(destination, "Folder.app")
+    const framed = join(destination, "Framed.app")
+    runner.enqueue({
+      exitCode: 0,
+      effect: () => {
+        mkdirSync(linked, { recursive: true })
+        symlinkSync(outside, join(linked, "Info.plist"))
+        mkdirSync(join(folder, "Info.plist"), { recursive: true })
+        writeAppBundle(destination, "Framed.app", simulatorInfoPlist())
+        const framework = join(framed, "Frameworks", "Kit.framework")
+        mkdirSync(join(framework, "Versions", "A"), { recursive: true })
+        writeFileSync(join(framework, "Versions", "A", "Kit"), "")
+        symlinkSync("A", join(framework, "Versions", "Current"))
+        symlinkSync("Versions/Current/Kit", join(framework, "Kit"))
+      },
+    })
+
+    await expect(ingest()).rejects.toThrow(
+      ingestError({ kind: "infoPlistNotAFile", bundleName: "Folder.app" })
+    )
+    await expect(readAppBundle(linked)).rejects.toThrow(
+      "The Info.plist in “Linked.app” is a link or a folder, not a file, so its identity can't be read."
+    )
+    expect((await readAppBundle(framed)).identity).toEqual(reviewMe)
   })
 
   test("a symlinked .app pointing outside the extraction root is not ingested", async () => {

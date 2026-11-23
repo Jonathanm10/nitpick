@@ -12,6 +12,7 @@ import {
   FileUpIcon,
   HistoryIcon,
   KeyboardIcon,
+  LibraryIcon,
   LogOutIcon,
   Maximize2Icon,
   MessageSquareWarningIcon,
@@ -23,6 +24,7 @@ import {
   UploadIcon,
 } from "lucide-react"
 import { toast } from "sonner"
+import { BuildLibraryList } from "@/components/build-library-list"
 import {
   CommandPalette,
   type PaletteCommand,
@@ -50,6 +52,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Toaster } from "@/components/ui/sonner"
 import { Spinner } from "@/components/ui/spinner"
 import { api, APIError, onSignedOut } from "@/lib/api"
@@ -160,7 +172,7 @@ function ReviewApp({
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   /** Counts openings, so every Send feedback starts blank. */
   const [feedbackOpening, setFeedbackOpening] = useState<number>()
-  // State, not a ref: ⌘K's Choose Build… is built while rendering.
+  // State, not a ref: ⌘K's Upload Build… is built while rendering.
   const [buildInput, setBuildInput] = useState<HTMLInputElement | null>(null)
 
   function openHistory() {
@@ -171,9 +183,15 @@ function ReviewApp({
     setFeedbackOpening((count) => (count ?? 0) + 1)
   }
   const [isDragging, setIsDragging] = useState(false)
-  // A Build dropped while the open session holds unfiled Findings waits for
-  // the Reviewer to confirm what the upload would discard.
-  const [pendingBuild, setPendingBuild] = useState<File>()
+  // A new Build while the open session holds unfiled Findings waits for the
+  // Reviewer to confirm what it would discard: an upload, or a pick from the
+  // Build Library shown over the review. Closing keeps what came next, so
+  // the dialog keeps its words while it fades.
+  const [newBuild, setNewBuild] = useState<{
+    readonly open: boolean
+    readonly next: File | { readonly pick: string }
+  }>()
+  const [choosesBuild, setChoosesBuild] = useState(false)
   const [confirmsEnd, setConfirmsEnd] = useState(false)
   const unfiled = session === undefined ? 0 : unfiledFindingCount(session)
   const unfiledPhrase =
@@ -198,11 +216,45 @@ function ReviewApp({
     if (model.busy.current) {
       model.reportBusyDrop()
     } else if (unfiled > 0) {
-      setPendingBuild(file)
+      setNewBuild({ open: true, next: file })
     } else {
       void model.ingest(file)
     }
   }
+
+  /** ⌘K during a review: the Build Library over it, read afresh. */
+  function chooseFromLibrary() {
+    setChoosesBuild(true)
+    void model.refreshLibrary()
+  }
+
+  /**
+   * The Build under review leaves the review as it is; another one ends it,
+   * once the Reviewer confirms what that discards.
+   */
+  function pickFromLibrary(id: string) {
+    setChoosesBuild(false)
+    if (id === model.build?.id) return
+    if (unfiled > 0) setNewBuild({ open: true, next: { pick: id } })
+    else void model.pickBuild(id)
+  }
+
+  function closeNewBuild() {
+    setNewBuild((current) => current && { ...current, open: false })
+  }
+
+  function confirmNewBuild() {
+    const next = newBuild?.next
+    closeNewBuild()
+    if (next instanceof File) void model.ingest(next)
+    else if (next !== undefined) void model.pickBuild(next.pick)
+  }
+  const newBuildWords =
+    newBuildConfirmation[
+      newBuild === undefined || newBuild.next instanceof File
+        ? "upload"
+        : "library"
+    ]
 
   function dragOver(event: DragEvent) {
     if (!event.dataTransfer.types.includes("Files")) return
@@ -286,6 +338,7 @@ function ReviewApp({
     navigate,
     openHistory,
     chooseBuild: () => buildInput?.click(),
+    chooseFromLibrary,
     requestEndReview,
     openFeedback,
     openShortcuts: () => setShortcutsOpen(true),
@@ -366,6 +419,33 @@ function ReviewApp({
         commands={commands}
       />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <Dialog open={choosesBuild} onOpenChange={setChoosesBuild}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Choose a Build</DialogTitle>
+            <DialogDescription>
+              Another Build ends this review, and Home opens with it picked.
+            </DialogDescription>
+          </DialogHeader>
+          <BuildLibraryList
+            library={model.library}
+            picked={model.build?.id}
+            disabled={isBusy}
+            empty={
+              <p className="py-8 text-center text-[12.5px] text-text-2">
+                No Build is on the Device Host.
+              </p>
+            }
+            onPick={pickFromLibrary}
+            onRetry={() => void model.refreshLibrary()}
+          />
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" />}>
+              Cancel
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {feedbackOpening !== undefined && (
         <FeedbackDialog
           key={feedbackOpening}
@@ -394,30 +474,23 @@ function ReviewApp({
       />
 
       <AlertDialog
-        open={pendingBuild !== undefined}
+        open={newBuild?.open ?? false}
         onOpenChange={(open) => {
-          if (!open) setPendingBuild(undefined)
+          if (!open) closeNewBuild()
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Ingest the dropped Build?</AlertDialogTitle>
+            <AlertDialogTitle>{newBuildWords.title}</AlertDialogTitle>
             <AlertDialogDescription>
-              Ingesting a new Build ends this review — {unfiledPhrase} will be
+              {newBuildWords.ending} ends this review — {unfiledPhrase} will be
               discarded.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                const file = pendingBuild
-                setPendingBuild(undefined)
-                if (file !== undefined) void model.ingest(file)
-              }}
-            >
-              Discard and Ingest
+            <AlertDialogAction variant="destructive" onClick={confirmNewBuild}>
+              {newBuildWords.action}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -449,6 +522,20 @@ function ReviewApp({
   )
 }
 
+/** What the confirmation of a new Build over unfiled Findings says. */
+const newBuildConfirmation = {
+  upload: {
+    title: "Ingest the dropped Build?",
+    ending: "Ingesting a new Build",
+    action: "Discard and Ingest",
+  },
+  library: {
+    title: "Choose a Build from the Library?",
+    ending: "Choosing another Build",
+    action: "Discard and Choose",
+  },
+}
+
 /** The page under a dragged file: a drop anywhere loads the Build. */
 function DropOverlay({ unfiled }: { readonly unfiled: number | undefined }) {
   return (
@@ -458,7 +545,7 @@ function DropOverlay({ unfiled }: { readonly unfiled: number | undefined }) {
           <UploadIcon className="size-6" strokeWidth={1.75} />
         </span>
         <p className="text-[20px] font-semibold tracking-[-0.01em]">
-          Drop to load the Build
+          Drop to upload the Build
         </p>
         <p className="mt-1.5 text-[13px] text-text-2">
           A .zip with a simulator .app inside, or an Android .apk
@@ -483,6 +570,7 @@ function paletteCommands({
   navigate,
   openHistory,
   chooseBuild,
+  chooseFromLibrary,
   requestEndReview,
   openFeedback,
   openShortcuts,
@@ -495,6 +583,7 @@ function paletteCommands({
   readonly navigate: (route: string) => void
   readonly openHistory: () => void
   readonly chooseBuild: () => void
+  readonly chooseFromLibrary: () => void
   readonly requestEndReview: () => void
   readonly openFeedback: () => void
   readonly openShortcuts: () => void
@@ -644,11 +733,22 @@ function paletteCommands({
   commands.push({
     id: "choose-build",
     group: "Build",
-    label: session === undefined ? "Choose Build…" : "Load another Build…",
+    label: session === undefined ? "Upload Build…" : "Upload another Build…",
     icon: FileUpIcon,
     disabled: model.review.status !== "loaded" || model.isBusy,
     run: inReview(chooseBuild),
   })
+  // Home shows the Library; during a review, it shows over the review.
+  if (session !== undefined) {
+    commands.push({
+      id: "choose-from-library",
+      group: "Build",
+      label: "Choose Build from Library…",
+      icon: LibraryIcon,
+      disabled: model.isBusy,
+      run: inReview(chooseFromLibrary),
+    })
+  }
   const group = "nitpick"
   commands.push(
     showsHistory

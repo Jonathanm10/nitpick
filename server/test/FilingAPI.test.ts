@@ -28,8 +28,13 @@ import type {
 import { DeviceClaims } from "../src/device/deviceClaims.ts"
 import { HistoryStore } from "../src/historyStore.ts"
 import { ReviewerStore } from "../src/reviewerStore.ts"
-import { temporaryDirectory } from "./BuildFixtures.ts"
+import {
+  simulatorInfoPlist,
+  temporaryDirectory,
+  writeAppBundle,
+} from "./BuildFixtures.ts"
 import { FakeDeviceHost } from "./FakeDeviceHost.ts"
+import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 import { FakeYouTrack } from "./FakeYouTrack.ts"
 import { signedInApp } from "./SignedIn.ts"
 
@@ -49,28 +54,44 @@ function reviewerOn(
     deviceClaims,
   }: { readonly login?: string; readonly deviceClaims?: DeviceClaims } = {}
 ) {
+  const runner = new FakeSubprocessRunner()
   const signedIn = signedInApp({
     data: dataDirectory,
     deviceHost: new FakeDeviceHost([]),
+    runner,
     transport: fake.transport,
     instanceURL: fake.instanceURL,
     user: fake.users[`perm:${login}`],
     serverVersion: "0.0.0 (test)",
     deviceClaims,
   })
-  return { ...signedIn, store: new ReviewerStore(signedIn.directory) }
+  return { ...signedIn, runner, store: new ReviewerStore(signedIn.directory) }
 }
 
 type Harness = ReturnType<typeof reviewerOn>
 
-/** Puts an open session on disk, each Finding with the golden capture. */
+/**
+ * Puts an open session on disk, on a Build in the Library like ReviewMe,
+ * each Finding with the golden capture.
+ */
 async function stage(
-  { store }: Harness,
+  { store, runner, library }: Harness,
   findings: ReadonlyArray<Partial<Finding>>,
   startedAt = golden.session.startedAt.secondsSinceReferenceDate
 ): Promise<ReviewSession> {
+  runner.enqueue({
+    exitCode: 0,
+    effect: (command) => {
+      writeAppBundle(command.arguments[4], "ReviewMe.app", simulatorInfoPlist())
+    },
+  })
+  const { build } = await library.add(null, "ReviewMe.zip", {
+    login: "dev",
+    name: "Dev Eloper",
+  })
   const session: ReviewSession = {
     ...sessionFrom(golden.session),
+    build,
     startedAt,
     tray: findings.map((fields) => ({
       id: newUUID(),
@@ -181,6 +202,7 @@ describe("File all", () => {
     }
     expect(await review(h)).toEqual({
       build: {
+        id: expect.any(String),
         name: "ReviewMe",
         identity: session.build.identity,
         platform: "ios",
@@ -362,6 +384,7 @@ describe("File all", () => {
     expect(done.status).toBe(204)
     expect(await review(h)).toEqual({
       build: {
+        id: expect.any(String),
         name: "ReviewMe",
         identity: sessionFrom(golden.session).build.identity,
         platform: "ios",

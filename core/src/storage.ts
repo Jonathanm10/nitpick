@@ -77,6 +77,11 @@ export function decodeStoredSession(json: string): ReviewSession {
   }
 }
 
+/** The manifest's Build alone, which a manifest damaged elsewhere still gives. */
+export function decodeStoredSessionBuild(json: string): Build {
+  return build(readStoredFile(json).object("build"))
+}
+
 function storedTrayItem(item: TrayItem): SwiftJSONValue {
   const { finding } = item
   return {

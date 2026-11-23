@@ -4,7 +4,7 @@
 // the first .app breadth-first and reads the Build's identity from its
 // Info.plist. An Android Build is the .apk itself, read with aapt2 (issue 13).
 import type { Dirent } from "node:fs"
-import { readdir, readFile } from "node:fs/promises"
+import { lstat, readdir, readFile } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { buildPlatform, type Build } from "@nitpick/core"
@@ -21,6 +21,8 @@ export type BuildIngestFailure =
   | { readonly kind: "unsupportedFileType"; readonly fileName: string }
   | { readonly kind: "noAppBundleInArchive"; readonly archiveName: string }
   | { readonly kind: "missingInfoPlist"; readonly bundleName: string }
+  /** A link, which could lead out of the bundle, or a folder. */
+  | { readonly kind: "infoPlistNotAFile"; readonly bundleName: string }
   | { readonly kind: "malformedInfoPlist"; readonly bundleName: string }
   | {
       readonly kind: "missingIdentityKeys"
@@ -59,6 +61,8 @@ function message(failure: BuildIngestFailure): string {
       return `“${failure.archiveName}” contains no .app bundle.`
     case "missingInfoPlist":
       return `“${failure.bundleName}” has no Info.plist, so its identity can't be read. Is it a complete .app bundle?`
+    case "infoPlistNotAFile":
+      return `The Info.plist in “${failure.bundleName}” is a link or a folder, not a file, so its identity can't be read.`
     case "malformedInfoPlist":
       return `The Info.plist in “${failure.bundleName}” can't be read.`
     case "missingIdentityKeys":
@@ -170,14 +174,21 @@ const identityKeys = [
   "CFBundleVersion",
 ] as const
 
-/** Reads a Build's identity from `<bundle>/Info.plist`. */
+/**
+ * Reads a Build's identity from `<bundle>/Info.plist`, which must be a file
+ * of the bundle's own: links elsewhere in it, as frameworks have, are fine.
+ */
 export async function readAppBundle(bundlePath: string): Promise<Build> {
   const bundleName = basename(bundlePath)
-  let data: Buffer
+  const path = join(bundlePath, "Info.plist")
+  let data: Buffer | undefined
   try {
-    data = await readFile(join(bundlePath, "Info.plist"))
+    if ((await lstat(path)).isFile()) data = await readFile(path)
   } catch {
     throw new BuildIngestError({ kind: "missingInfoPlist", bundleName })
+  }
+  if (data === undefined) {
+    throw new BuildIngestError({ kind: "infoPlistNotAFile", bundleName })
   }
   const info = parseDictionary(data)
   if (info === undefined) {

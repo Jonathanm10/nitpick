@@ -9,6 +9,7 @@ import { toast } from "sonner"
 import {
   devicePlatform,
   discardFinding,
+  filedIssueOf,
   filingPhase,
   findingsNeedingSummary,
   historyTrace,
@@ -25,11 +26,13 @@ import {
   type YouTrackProject,
 } from "@nitpick/core"
 import type {
+  BuildSummary,
   FilingStatus,
   FindingPatch,
   HistoryResponse,
   HostResponse,
   LayoutResponse,
+  LibraryResponse,
   ReviewStateResponse,
   SessionSummary,
   SimulatorDevice,
@@ -78,6 +81,13 @@ export function useReview() {
   const [history, setHistory] = useState<Loadable<HistoryResponse>>({
     status: "loading",
   })
+  const [library, setLibrary] = useState<
+    Loadable<LibraryResponse & { readonly read: number }>
+  >({ status: "loading" })
+  /** How many Library reads the page has sent; each list keeps its number. */
+  const libraryReads = useRef(0)
+  /** The reads sent when the page last learned the Reviewer's Build. */
+  const [pickedAfterRead, setPickedAfterRead] = useState(0)
   const [isPerforming, setIsPerforming] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>()
   const [saveError, setSaveError] = useState<string>()
@@ -112,10 +122,7 @@ export function useReview() {
   /** The page's copy of the open session, for the saver too. */
   const setSession = useCallback(
     (next: SessionSummary | undefined) => {
-      if (next === undefined) {
-        saver.cancel()
-        setSchema(emptySchema)
-      }
+      if (next === undefined) setSchema(emptySchema)
       saver.track(next)
       setReview((current) =>
         current.status === "loaded" ? { ...current, session: next } : current
@@ -123,7 +130,21 @@ export function useReview() {
     },
     [saver]
   )
-  const buildPlatform = state?.build?.platform
+  /**
+   * The picked Build once the Library no longer holds it: someone deleted
+   * it. Only a list read after the page learned of the Build can tell.
+   */
+  const deletedPick =
+    session === undefined &&
+    state?.build !== undefined &&
+    library.status === "loaded" &&
+    library.read > pickedAfterRead &&
+    !library.builds.some((listed) => listed.id === state.build?.id)
+      ? state.build
+      : undefined
+  /** The Build a start runs: the open session's, else the one picked. */
+  const build = deletedPick === undefined ? state?.build : undefined
+  const buildPlatform = build?.platform
   const devices = devicesRunning(buildPlatform, host)
   // A device that can't run the Build, an emulator picked before an .app
   // came, gives way to the most recent one that can.
@@ -159,6 +180,31 @@ export function useReview() {
     [busy]
   )
 
+  /**
+   * The Build Library, read on Home and after each upload or delete. A read
+   * that fails keeps the list already shown, and one that answers after a
+   * later read never replaces its list.
+   */
+  const refreshLibrary = useCallback(() => {
+    const read = ++libraryReads.current
+    return api
+      .library()
+      .then((loaded) =>
+        setLibrary((current) =>
+          current.status === "loaded" && current.read > read
+            ? current
+            : { status: "loaded", ...loaded, read }
+        )
+      )
+      .catch((error: Error) =>
+        setLibrary((current) =>
+          current.status === "loaded"
+            ? current
+            : { status: "failed", error: error.message }
+        )
+      )
+  }, [])
+
   /** The Reviewer's History, re-read after each filing and on its page. */
   const refreshHistory = useCallback(
     () =>
@@ -193,15 +239,22 @@ export function useReview() {
     [applyHost]
   )
 
+  /** The Reviewer's Build and open session, as the server has them. */
+  const applyReview = useCallback(
+    (loaded: ReviewStateResponse) => {
+      saver.track(loaded.session)
+      setReview({ status: "loaded", ...loaded })
+      setPickedAfterRead(libraryReads.current)
+      if (loaded.session) setSelectedProjectID(loaded.session.project.id)
+    },
+    [saver]
+  )
+
   // The page load: the Build and open session, the host check, the projects.
   useEffect(() => {
     api
       .review()
-      .then((loaded) => {
-        saver.track(loaded.session)
-        setReview({ status: "loaded", ...loaded })
-        if (loaded.session) setSelectedProjectID(loaded.session.project.id)
-      })
+      .then(applyReview)
       .catch((error: Error) =>
         setReview({ status: "failed", error: error.message })
       )
@@ -219,7 +272,7 @@ export function useReview() {
         setProjects({ status: "failed", error: error.message })
       )
     void refreshHistory()
-  }, [applyHost, saver, refreshHistory])
+  }, [applyHost, applyReview, refreshHistory])
 
   // File all runs on the server, so the page reads its progress, a reload
   // included: each mark lands in the Tray, and the run's end shows the
@@ -237,7 +290,6 @@ export function useReview() {
           if (loaded.filing.status === "filed") {
             // The Review Session is over: the device run goes with it.
             setRun(undefined)
-            saver.cancel()
             setSchema(emptySchema)
           }
           saver.track(loaded.session)
@@ -296,7 +348,7 @@ export function useReview() {
   }, [run, applyHost, busy])
 
   const start = reviewStart({
-    build: state?.build,
+    build,
     isReviewing: run !== undefined,
     holdsFilingResult: filing.status === "filed",
     device: selectedDevice,
@@ -308,7 +360,10 @@ export function useReview() {
   /** Why Start review is disabled, for its tooltip. */
   function missingForStart(): string | undefined {
     if (start !== undefined || isBusy) return undefined
-    if (state?.build === undefined) return "Upload a Build to review."
+    if (deletedPick !== undefined) {
+      return "The Build you picked was deleted from the Build Library. Pick another one."
+    }
+    if (build === undefined) return "Pick or upload a Build to review."
     if (selectedDevice === undefined) return "Pick a device to review on."
     if (!selectedDevice.isRuntimeAvailable) {
       return "This device's runtime is missing on the Device Host. Pick another one."
@@ -322,14 +377,31 @@ export function useReview() {
   async function startReview() {
     if (start === undefined || selectedDevice === undefined) return
     await perform(async () => {
-      const outcome = await api.startReview({
-        deviceUDID: selectedDevice.udid,
-        projectID: start.project.id,
-      })
+      const outcome = await api
+        .startReview({
+          deviceUDID: selectedDevice.udid,
+          projectID: start.project.id,
+          buildID: start.build.id,
+        })
+        .catch(async (error: unknown) => {
+          // Another tab picked another Build, or someone deleted this one:
+          // the page shows the Reviewer's Build as it is now, and the next
+          // start is theirs to click.
+          if (error instanceof APIError && error.code === "buildChanged") {
+            await api.review().then(applyReview, () => {})
+            await refreshLibrary()
+          }
+          throw error
+        })
       if (outcome.status === "notReady") {
         setHost(outcome)
         return
       }
+      setReview((current) =>
+        current.status === "loaded"
+          ? { ...current, build: outcome.build }
+          : current
+      )
       applyHost(outcome.host)
       setSelectedDeviceUDID(outcome.device.udid)
       setRun({ device: outcome.device })
@@ -366,15 +438,82 @@ export function useReview() {
     })
   }
 
-  /** A bad upload changes nothing; a good one ends the open session. */
+  /** A Review Session reviews exactly one Build: another one ends it. */
+  function buildChanged(next: BuildSummary) {
+    setRun(undefined)
+    setSession(undefined)
+    // The next Build dismisses a held filing result too (ADR-0007).
+    setReview({ status: "loaded", build: next, filing: idle })
+    setPickedAfterRead(libraryReads.current)
+  }
+
+  /**
+   * A bad upload changes nothing; a good one lands in the Library for
+   * everyone and becomes the Reviewer's Build.
+   */
   async function ingest(file: File) {
     await perform(async () => {
-      const { build } = await api.uploadBuild(file)
-      setRun(undefined)
-      setSession(undefined)
-      // The next Build dismisses a held filing result too (ADR-0007).
-      setReview({ status: "loaded", build, filing: idle })
-      await refreshHost()
+      buildChanged((await api.uploadBuild(file)).build)
+      await Promise.all([refreshHost(), refreshLibrary()])
+    })
+  }
+
+  /**
+   * A Build deleted since the list was read says so, and leaves the list. A
+   * review opened in another tab since this page showed its own refuses the
+   * pick, and the page shows that review.
+   */
+  async function pickBuild(id: string) {
+    if (id === build?.id) return
+    await perform(async () => {
+      const shown = saver.session
+      const picked = await api
+        .pickBuild(id, {
+          session: shown?.startedAt,
+          unfiled: (shown?.tray ?? [])
+            .filter((item) => filedIssueOf(item) === undefined)
+            .map((item) => item.id),
+        })
+        .catch(async (error: unknown) => {
+          // The review another tab changed shows paused: its device and
+          // schema may be another review's. Still the review this page
+          // shows, its pending edits are saved before it is read again; when
+          // they can't be, the page keeps its copy, and the retry its edits.
+          if (error instanceof APIError && error.code === "buildChanged") {
+            setRun(undefined)
+            setSchema(emptySchema)
+            const loaded = await api.review().catch(() => undefined)
+            if (
+              loaded?.session !== undefined &&
+              loaded.session.startedAt === saver.session?.startedAt
+            ) {
+              if (await saver.saveAll().catch(() => false)) {
+                await api.review().then(applyReview, () => {})
+              }
+            } else if (loaded !== undefined) {
+              applyReview(loaded)
+            }
+          }
+          void refreshLibrary()
+          throw error
+        })
+      buildChanged(picked.build)
+    })
+  }
+
+  /** Deletes a Build for everyone; one in a review is refused with why. */
+  async function deleteBuild(id: string) {
+    await perform(async () => {
+      try {
+        await api.deleteBuild(id)
+        setReview((current) =>
+          current.status === "loaded" && current.build?.id === id
+            ? { ...current, build: undefined }
+            : current
+        )
+      } finally {
+        await refreshLibrary()
+      }
     })
   }
 
@@ -568,6 +707,11 @@ export function useReview() {
     projects,
     history,
     refreshHistory,
+    library,
+    refreshLibrary,
+    /** The Build a start runs, picked or the open session's. */
+    build,
+    deletedPick,
     /** The signed-in Reviewer's last session, for the home trace line. */
     trace: historyTrace(historyEntries),
     filing,
@@ -604,6 +748,8 @@ export function useReview() {
     startReview,
     selectDevice,
     ingest,
+    pickBuild,
+    deleteBuild,
     endReview,
     checkHostAgain,
     reportBusyDrop,

@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import { CommandIcon } from "lucide-react"
 import { BuildDropZone } from "@/components/build-drop-zone"
 import { DevicePicker } from "@/components/device-picker"
@@ -31,8 +32,22 @@ export function HomeScreen({
   readonly onOpenHistory: () => void
   readonly onOpenCommands: () => void
 }) {
-  const { review, host, projects, isBusy, errorMessage } = model
+  const { review, host, projects, isBusy, errorMessage, refreshLibrary } = model
   const state = review.status === "loaded" ? review : undefined
+  // No live push: the Library is read when Home shows and when it's back
+  // in front.
+  useEffect(() => {
+    void refreshLibrary()
+    const refreshVisible = () => {
+      if (document.visibilityState === "visible") void refreshLibrary()
+    }
+    window.addEventListener("focus", refreshVisible)
+    document.addEventListener("visibilitychange", refreshVisible)
+    return () => {
+      window.removeEventListener("focus", refreshVisible)
+      document.removeEventListener("visibilitychange", refreshVisible)
+    }
+  }, [refreshLibrary])
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-panel/60 px-5">
@@ -60,8 +75,8 @@ export function HomeScreen({
               Start a review
             </h1>
             <p className="mt-1 text-[13px] text-text-2">
-              Load a Build, pick a device and a YouTrack project. The device
-              runs on the Device Host and streams here.
+              Pick a Build, a device and a YouTrack project. The device runs on
+              the Device Host and streams here.
             </p>
           </div>
           {review.status === "failed" && (
@@ -71,10 +86,15 @@ export function HomeScreen({
           )}
           <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-4">
             <BuildDropZone
-              build={state?.build}
+              build={model.build}
+              library={model.library}
+              deletedPick={model.deletedPick}
               isDragging={isDragging}
               disabled={isBusy || state === undefined}
               onChoose={onChooseBuild}
+              onPick={(id) => void model.pickBuild(id)}
+              onDelete={(id) => void model.deleteBuild(id)}
+              onRetry={() => void refreshLibrary()}
             />
             <div className="flex flex-col gap-4">
               <section className="flex flex-col gap-3 rounded-[14px] p-4 studio-card">

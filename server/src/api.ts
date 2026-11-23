@@ -37,11 +37,13 @@ export interface ErrorResponse {
   readonly error: string
   /**
    * `deviceNotRunning`: a capture or Inspect found its device stopped on the
-   * host, so the page pauses the review. `signIn` (401): the request has no live
-   * sign-in, so the page shows sign-in with the error, which says why when
-   * the sign-in ended by itself.
+   * host, so the page pauses the review. `buildChanged` (409): Start review's
+   * Build isn't the Reviewer's any more, picked in another tab or deleted, so
+   * the page reads their Build and the Library again. `signIn` (401): the
+   * request has no live sign-in, so the page shows sign-in with the error,
+   * which says why when the sign-in ended by itself.
    */
-  readonly code?: "deviceNotRunning" | "signIn"
+  readonly code?: "deviceNotRunning" | "buildChanged" | "signIn"
 }
 
 /** `POST /api/sign-in` takes the Reviewer's YouTrack permanent token. */
@@ -69,6 +71,11 @@ export interface SignInMethodResponse {
 
 /** A Build as the page shows it: name plus identity, never a server path. */
 export interface BuildSummary {
+  /**
+   * Its entry in the Build Library. Only the Build of a session opened
+   * before the Library has none: it isn't in the Library.
+   */
+  readonly id?: string
   /** The .app's name without `.app`, or the .apk's without `.apk`. */
   readonly name: string
   readonly identity: BuildIdentity
@@ -226,21 +233,71 @@ export interface ProjectsResponse {
   readonly projects: ReadonlyArray<YouTrackProject>
 }
 
-/** `POST /api/build?name=<file name>`, with the zip or .apk as the request body. */
+/**
+ * A Build in the Build Library (ADR-0016), which every signed-in Reviewer
+ * sees, starts a review on and may delete.
+ */
+export interface LibraryBuild extends BuildSummary {
+  readonly id: string
+  readonly uploadedBy: { readonly login: string; readonly name: string }
+  /** ISO-8601. */
+  readonly uploadedAt: string
+  /** A Review Session is open or starting on it, so it can't be deleted. */
+  readonly inUse: boolean
+}
+
+/** `GET /api/library`: every Build on the Device Host, newest upload first. */
+export interface LibraryResponse {
+  readonly builds: ReadonlyArray<LibraryBuild>
+}
+
+/**
+ * The Reviewer's Build, with its Library id. `POST /api/build?name=<file
+ * name>`, with the zip or .apk as the request body, adds it to the Library
+ * for everyone and picks it. `PUT /api/build` picks a Library Build, and
+ * answers 404 once it was deleted. A Build that isn't the Reviewer's yet
+ * ends their open session.
+ */
 export interface BuildResponse {
   readonly build: BuildSummary
 }
+
+/** `PUT /api/build` */
+export interface PickBuildRequest {
+  readonly id: string
+  /**
+   * The `startedAt` of the open session the page shows; absent when it shows
+   * none. Another session open now, or an unfiled Finding not in
+   * `unfiled`, refuses the pick with `buildChanged` (409).
+   */
+  readonly session?: ReferenceDate
+  /** The ids of the unfiled Findings the page shows. */
+  readonly unfiled?: ReadonlyArray<string>
+}
+
+// `DELETE /api/library/:id` deletes a Build from the Library for everyone:
+// 204. A review open or starting on it answers 409, saying so, as does a
+// Reviewer's open session that can't be read; a Build no longer there, 404.
 
 /** `POST /api/session`: start a Review Session, or resume the open one. */
 export interface StartReviewRequest {
   readonly deviceUDID: string
   /** Ignored when a session is open: it resumes under its pinned project. */
   readonly projectID?: string
+  /**
+   * The Build the page shows, the open session's or the one picked; none
+   * for a session's Build from before the Library. A start whose Build
+   * isn't the Reviewer's any more, picked in another tab or deleted, is
+   * refused before any device is claimed.
+   */
+  readonly buildID?: string
 }
 
 export type StartReviewResponse =
   | {
       readonly status: "started"
+      /** The Build the review runs, for the page to show. */
+      readonly build: BuildSummary
       readonly session: SessionSummary
       /** The device the Build now runs on. */
       readonly device: SimulatorDevice

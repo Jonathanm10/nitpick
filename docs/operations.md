@@ -17,7 +17,7 @@ account that is logged in at the host's console.
 | The code: a checkout of this repo's `main` | `~/nitpick` |
 | Node: the newest release of the major version `.node-version` pins | `~/.nitpick/node` |
 | The server's config | `~/.config/nitpick/server.env` (mode 0600) |
-| The data: open Review Sessions, History, sign-ins | `NITPICK_DATA_DIR` in the config |
+| The data: open Review Sessions, the Build Library, History, sign-ins | `NITPICK_DATA_DIR` in the config |
 | Backups, one folder per day | `~/nitpick-backups/<YYYY-MM-DD>` |
 | Logs | `~/Library/Logs/nitpick/server.log` and `backup.log`, and `android.log` from the last Android setup |
 | For Android: the SDK, its emulator and system image | `~/Library/Android/sdk` |
@@ -165,7 +165,8 @@ example. Fill the config in ([The config](#the-config)), then run
 Reviewers get the new version when they reload the page. A deploy restarts
 the server, which takes a few seconds:
 
-- Sign-ins and open Review Sessions are kept on disk, so they stay.
+- Sign-ins, open Review Sessions and the Build Library are kept on disk, so
+  they stay. A Reviewer with no open session picks their Build again.
 - A File all that the restart interrupts resumes when the server starts again.
 - Booted devices keep running. The server forgets which Reviewer runs which
   device until each Reviewer resumes or starts again
@@ -266,6 +267,43 @@ What a reboot does to the people using nitpick:
 - **A page left open** during the reboot shows its review paused once the
   server answers again.
 
+## The Build Library
+
+Every Build a Reviewer uploads goes into the Build Library
+([ADR-0016](adr/0016-shared-build-library.md)), which every signed-in Reviewer
+sees on Home and starts reviews from.
+
+- **Where:** `NITPICK_DATA_DIR/library/<id>/`, one folder per Build: the
+  extracted `.app` or the `.apk` under `build/`, and `entry.json` with
+  its identity, who uploaded it and when. A folder without `entry.json` is an
+  upload that never finished. The server removes it after its next start.
+- **Deleting:** Builds stay until a Reviewer deletes one on Home, which the
+  developer does after a release. A Build someone is reviewing, or starting a
+  review on, can't be deleted, and the page says it is in a review. While a
+  Reviewer's `open-session/session.json` can't be read, that review may use
+  any Build: every Build shows as in a review, deleting is refused, and
+  `server.log` names the Reviewer.
+- **Deleting by hand,** for example when the disk is full and nobody is
+  around to delete on Home:
+  1. Stop the server.
+  2. Check that no open Review Session uses the Build:
+     `grep -l <id> <data>/reviewers/*/open-session/session.json`, with
+     `<data>` the config's `NITPICK_DATA_DIR`, names no file.
+  3. Delete `<data>/library/<id>`, then start the server.
+- **Disk:** each Build takes the disk of its extracted `.app` or its `.apk`,
+  and nothing deletes Builds by themselves. The nightly backup leaves the
+  Library out: a lost Build is uploaded again. The
+  [health check](#health-check) prints free disk; when it runs low, ask
+  Reviewers to delete old Builds.
+- **From before the Library:** the server kept each Reviewer's last upload in
+  `reviewers/<login>/builds/` and `uploads/`. At each Reviewer's first load
+  after the deploy that brought the Library, those folders go, except the
+  Build of a Review Session they still have open, which goes when that
+  session ends. A session whose Build isn't at the path it names, as after a
+  move to another account's home, keeps every slot until it ends. A
+  deletion that fails is logged in `server.log`, and the Reviewer's next
+  load tries again. Those Builds aren't added to the Library.
+
 ## The device cap
 
 `NITPICK_MAX_BOOTED_DEVICES` keeps the host's memory from running out. It
@@ -279,7 +317,7 @@ counts iOS simulators and Android emulators alike.
 - **One device, one Reviewer:** each device runs for one Reviewer at a time.
   Picking a device someone else is reviewing on names them.
 - **When a device stops being someone's:** a Reviewer's device stays theirs
-  until they end the review, file it, or upload a new Build. It also stops
+  until they end the review, file it, or upload or pick another Build. It also stops
   being theirs after 30 minutes without a request from them, for example a
   tab that was closed or left hidden.
 - **After a restart:** the server forgets which device is whose. A device
@@ -415,8 +453,12 @@ A macOS update reboots the host. Follow [Reboots](#reboots-and-the-497-day-bug).
 
 ## Backups and restore
 
-**The nightly backup** copies the whole data directory with `ditto` to
+**The nightly backup** copies the data directory with `ditto` to
 `~/nitpick-backups/<YYYY-MM-DD>`, and keeps the last 14.
+
+- It leaves the Build Library (`library/`) out. Its Builds can be uploaded
+  again, and 14 copies of each would fill the disk. A restore keeps the
+  Library that is on the host.
 
 - The copy goes into a hidden folder first, and gets its date only once it
   is complete.
@@ -452,7 +494,16 @@ Delete the folder it moved aside once you are satisfied.
 
 A restore loses everything since the backup: Findings captured, and
 sessions filed. Issues filed since then stay in YouTrack, but History no
-longer lists them.
+longer lists them. A Finding filed since the backup comes back unfiled, so
+have Reviewers check restored Findings against YouTrack before they file
+them. A File all under way at the backup resumes by itself when the server
+starts, before anyone can check, and can file such a Finding a second time:
+look for duplicates in YouTrack after the restore.
+
+A restored open review whose Build was deleted from the Library since the
+backup can't resume: Resume review needs that Build at its saved path, and
+uploading it again makes a new Library Build, whose pick ends the review.
+Have its Reviewer file the restored Findings first.
 
 ## Moving to the main host
 
@@ -468,12 +519,24 @@ The main host is the 16 GB mini with FileVault off, once its CI use ends.
 4. When nobody is reviewing, stop the old server and take a last backup on
    the old host:
    `launchctl bootout gui/$(id -u)/ch.liip.nitpick.server && ~/nitpick/scripts/deploy/host.sh backup`.
+   - If the new host keeps the data folder at another absolute path, as in
+     another account's home, every open review must be filed or ended
+     first: `ls <data>/reviewers/*/open-session/session.json` names no file.
+   - An open Review Session keeps its Build's absolute path, and Resume
+     review installs the Build from there. After such a move the Build isn't
+     there, so Resume review fails, and the Library keeps that Build in use
+     until the Reviewer files or ends the review.
 5. Copy that backup across, from your own machine:
    `ssh <old host> 'tar -C ~/nitpick-backups -cf - <YYYY-MM-DD>' | ssh <new host> 'mkdir -p ~/nitpick-backups && tar -C ~/nitpick-backups -xf -'`.
+   The backup has no Build Library, so copy it into the new host's data
+   folder too, which the restore keeps:
+   `ssh <old host> 'tar -C "<old data>" -cf - library' | ssh <new host> 'mkdir -p "<new data>" && tar -C "<new data>" -xf -'`,
+   quoting the data paths, which can hold spaces, as `Application Support` does.
 6. On the new host, restore it: `~/nitpick/scripts/deploy/host.sh restore <YYYY-MM-DD>`.
 7. Run the health check and a short review. Then send Reviewers the new
    URL.
-   - Their open Review Sessions and History came along.
+   - Their History came along, and so did their open Review Sessions if
+     the data folder kept its absolute path.
    - Browsers keep sign-in cookies per address, so each Reviewer signs in
      once at the new URL.
    - The new host needs its own certificate ([HTTPS](#https)), so each

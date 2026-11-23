@@ -94,8 +94,9 @@ function harness(
     now: options.now,
   })
   const transport = new FakeHTTPTransport()
+  const data = temporaryDirectory()
   const { app, directory } = signedInApp({
-    data: temporaryDirectory(),
+    data,
     deviceHost,
     runner,
     transport,
@@ -108,6 +109,7 @@ function harness(
     deviceClaims,
     transport,
     reviewerDirectory: directory,
+    libraryDirectory: join(data, "library"),
   }
 }
 
@@ -134,14 +136,16 @@ function upload({ app }: Harness, name = "ReviewMe.zip") {
   })
 }
 
-function startReview(
-  { app }: Harness,
-  body: unknown = { deviceUDID: iPhone.udid, projectID: "0-12" }
+/** Start review from a page that shows the Reviewer's Build, as they load it. */
+async function startReview(
+  h: Harness,
+  body: object = { deviceUDID: iPhone.udid, projectID: "0-12" }
 ) {
-  return app.request("/api/session", {
+  const { build } = await review(h)
+  return h.app.request("/api/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ buildID: build?.id, ...body }),
   })
 }
 
@@ -168,11 +172,12 @@ function storedSession({ reviewerDirectory }: Harness) {
     : undefined
 }
 
-function buildDirectories({ reviewerDirectory }: Harness) {
-  return readdirSync(join(reviewerDirectory, "builds"))
+/** The Build Library's entry folders. */
+function libraryEntries({ libraryDirectory }: Harness) {
+  return existsSync(libraryDirectory) ? readdirSync(libraryDirectory) : []
 }
 
-const reviewMe = {
+const reviewMeSummary = {
   name: "ReviewMe",
   identity: {
     bundleID: "ch.liip.reviewme",
@@ -181,6 +186,9 @@ const reviewMe = {
   },
   platform: "ios",
 }
+
+/** As uploaded, with its Library id. */
+const reviewMe = { ...reviewMeSummary, id: expect.any(String) }
 
 describe("Build upload", () => {
   let h: Harness
@@ -201,8 +209,11 @@ describe("Build upload", () => {
       filing: { status: "idle" },
     })
     // The zip is gone once extracted; its Build stays for the launch.
-    expect(readdirSync(join(h.reviewerDirectory, "uploads"))).toEqual([])
-    expect(buildDirectories(h)).toHaveLength(1)
+    const [entry] = libraryEntries(h)
+    expect(readdirSync(join(h.libraryDirectory, entry!)).sort()).toEqual([
+      "build",
+      "entry.json",
+    ])
   })
 
   test("a file that isn't a zip is refused before anything runs", async () => {
@@ -232,15 +243,15 @@ describe("Build upload", () => {
     })
     expect((await review(h)).build).toEqual(reviewMe)
     expect(storedSession(h)).toEqual(before)
-    expect(buildDirectories(h)).toHaveLength(1)
+    expect(libraryEntries(h)).toHaveLength(1)
   })
 
-  test("a good upload ends the open session and drops the old Build's files", async () => {
+  test("a good upload ends the open session, and the old Build stays in the Library", async () => {
     enqueueExtraction(h)
     await upload(h)
     enqueueProjectsAndSchema(h)
     await startReview(h)
-    const [oldBuild] = buildDirectories(h)
+    const [oldBuild] = libraryEntries(h)
     enqueueExtraction(
       h,
       "NextUp.app",
@@ -252,6 +263,7 @@ describe("Build upload", () => {
     expect(response.status).toBe(200)
     expect(await review(h)).toEqual({
       build: {
+        id: expect.any(String),
         name: "NextUp",
         identity: { ...reviewMe.identity, buildNumber: "422" },
         platform: "ios",
@@ -259,8 +271,8 @@ describe("Build upload", () => {
       filing: { status: "idle" },
     })
     expect(storedSession(h)).toBeUndefined()
-    expect(buildDirectories(h)).not.toContain(oldBuild)
-    expect(buildDirectories(h)).toHaveLength(1)
+    expect(libraryEntries(h)).toContain(oldBuild)
+    expect(libraryEntries(h)).toHaveLength(2)
   })
 
   test("work that starts while an upload runs is refused with the busy message", async () => {
@@ -310,6 +322,7 @@ describe("an Android Build", () => {
     const response = await upload(h, "SmokeDroid.apk")
 
     const smokeDroid = {
+      id: expect.any(String),
       name: "SmokeDroid",
       identity: h.deviceHost.androidIdentity,
       platform: "android",
@@ -321,19 +334,18 @@ describe("an Android Build", () => {
       filing: { status: "idle" },
     })
     const [read] = h.deviceHost.readAPKs
+    const [entry] = libraryEntries(h)
     expect(read?.name).toBe("SmokeDroid.apk")
     expect(read?.path).toBe(
-      join(
-        h.reviewerDirectory,
-        "builds",
-        buildDirectories(h)[0]!,
-        "SmokeDroid.apk"
-      )
+      join(h.libraryDirectory, entry!, "build", "SmokeDroid.apk")
     )
     expect(readFileSync(read!.path)).toEqual(
       Buffer.from([0x50, 0x4b, 0x03, 0x04])
     )
-    expect(readdirSync(join(h.reviewerDirectory, "uploads"))).toEqual([])
+    expect(readdirSync(join(h.libraryDirectory, entry!)).sort()).toEqual([
+      "build",
+      "entry.json",
+    ])
     expect(h.runner.executedCommands).toEqual([])
   })
 
@@ -350,7 +362,7 @@ describe("an Android Build", () => {
         "“Bad.apk” can't be read as an Android app. Is it a complete .apk?",
     })
     expect(await review(h)).toEqual({ filing: { status: "idle" } })
-    expect(buildDirectories(h)).toEqual([])
+    expect(libraryEntries(h)).toEqual([])
   })
 
   test("starts on an emulator, and a simulator is refused before anything launches", async () => {
@@ -888,7 +900,7 @@ describe("A session left open", () => {
     )
 
     expect(await review(h)).toEqual({
-      build: reviewMe,
+      build: reviewMeSummary,
       session: {
         project: session.project,
         startedAt: session.startedAt,

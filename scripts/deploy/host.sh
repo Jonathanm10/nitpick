@@ -472,10 +472,12 @@ newest_backup() {
 
 # --- backup and restore ------------------------------------------------------
 
-# A copy of the whole data directory, sign-in-key included: without it no
-# stored sign-in opens. Files are replaced whole, never rewritten in place,
-# so each copied file is complete. The partial copy is renamed only once
-# done, so a folder with a date is always a whole backup.
+# A copy of the data directory, sign-in-key included: without it no stored
+# sign-in opens. The Build Library stays out: its Builds can be uploaded
+# again, and 14 copies of each would fill the disk. Files are replaced
+# whole, never rewritten in place, so each copied file is complete. The
+# partial copy is renamed only once done, so a folder with a date is always
+# a whole backup.
 backup() {
 	load_config
 	data=$(value dataDirectory)
@@ -485,7 +487,13 @@ backup() {
 	day=$(date +%Y-%m-%d)
 	partial=$backups/.$day.partial
 	rm -rf "$partial"
-	ditto "$data" "$partial"
+	mkdir "$partial"
+	for item in "$data"/* "$data"/.[!.]*; do
+		[ -e "$item" ] || continue
+		name=${item##*/}
+		[ "$name" != library ] || continue
+		ditto "$item" "$partial/$name"
+	done
 	rm -rf "${backups:?}/$day"
 	mv "$partial" "$backups/$day"
 	set -- "$backups"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]
@@ -521,6 +529,10 @@ restore() {
 	aside=$data.before-restore-$(date +%Y%m%d-%H%M%S)
 	[ ! -e "$data" ] || mv "$data" "$aside"
 	ditto "$from" "$data"
+	# Backups leave the Build Library out, so the one there stays.
+	if [ ! -e "$data/library" ] && [ -d "$aside/library" ]; then
+		mv "$aside/library" "$data/library"
+	fi
 	restart "$server_label"
 	wait_until_serving
 	say "Restored $from. The data directory it replaced, if any, is at $aside."

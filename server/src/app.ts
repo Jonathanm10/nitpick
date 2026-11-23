@@ -12,6 +12,7 @@ import {
   type Build,
   type RecentDevices,
   type ReviewSession,
+  type YouTrackUser,
 } from "@nitpick/core"
 import { Hono, type Context } from "hono"
 import { bodyLimit } from "hono/body-limit"
@@ -33,6 +34,7 @@ import type {
   HistoryResponse,
   HostResponse,
   LayoutResponse,
+  LibraryResponse,
   ProjectsResponse,
   SignedInResponse,
   SignInMethodResponse,
@@ -47,6 +49,13 @@ import {
   labelSpritePNG,
 } from "./annotationFlattening.ts"
 import { BuildIngestError, buildName } from "./buildIngestion.ts"
+import {
+  LibraryBuildInUse,
+  LibraryBuildNotFound,
+  LibraryUsageUnknown,
+  type BuildLibrary,
+  type Uploader,
+} from "./buildLibrary.ts"
 import type {
   AndroidProblem,
   DeviceHost,
@@ -84,7 +93,7 @@ import {
   parseSessionPatch,
 } from "./findingPatch.ts"
 import type { HistoryStore } from "./historyStore.ts"
-import { FindingNotFound, ReviewRefused } from "./reviewer.ts"
+import { BuildChanged, FindingNotFound, ReviewRefused } from "./reviewer.ts"
 import {
   hubCallbackPath,
   hubSignInCookie,
@@ -100,6 +109,8 @@ import { HubRefused } from "./youTrackHub.ts"
 
 export interface AppOptions {
   readonly deviceHost: DeviceHost
+  /** Every uploaded Build, which every Reviewer sees. */
+  readonly library: BuildLibrary
   /** Who is signed in; each request acts for the Reviewer its cookie names. */
   readonly reviewers: Reviewers
   /** Every Reviewer's History, of which each reads their own. */
@@ -118,6 +129,7 @@ type SignedInEnvironment = {
 
 export function createApp({
   deviceHost,
+  library,
   reviewers,
   history,
   serverVersion,
@@ -255,6 +267,12 @@ export function createApp({
   /** The request's Reviewer, whom the gate above let through. */
   const signedInTo = (c: Context<SignedInEnvironment>) => c.get("signedIn")!
   const reviewerOf = (c: Context<SignedInEnvironment>) => signedInTo(c).reviewer
+  const buildSummary = async (build: Build): Promise<BuildSummary> => ({
+    id: await library.entryID(build),
+    name: buildName(build),
+    identity: build.identity,
+    platform: buildPlatform(build),
+  })
 
   app.get("/api/me", (c) =>
     c.json({ reviewer: signedInTo(c).user } satisfies SignedInResponse)
@@ -285,7 +303,7 @@ export function createApp({
   app.get("/api/review", async (c) => {
     const { build, session, filing } = await reviewerOf(c).state()
     return c.json({
-      build: build && buildSummary(build),
+      build: build && (await buildSummary(build)),
       session: session && sessionSummary(session),
       filing,
     } satisfies ReviewStateResponse)
@@ -353,28 +371,70 @@ export function createApp({
     } satisfies FeedbackEnvironmentResponse)
   )
 
+  app.get("/api/library", async (c) =>
+    c.json({
+      builds: await Promise.all(
+        (await library.list()).map(async (entry) => ({
+          ...(await buildSummary(entry.build)),
+          id: entry.id,
+          uploadedBy: entry.uploadedBy,
+          uploadedAt: entry.uploadedAt,
+          inUse: entry.inUse,
+        }))
+      ),
+    } satisfies LibraryResponse)
+  )
+
+  app.delete("/api/library/:id", async (c) => {
+    await library.delete(c.req.param("id"))
+    return c.body(null, 204)
+  })
+
   app.post("/api/build", async (c) => {
     const build = await reviewerOf(c).ingest(
       c.req.raw.body as ReadableStream<Uint8Array> | null,
-      c.req.query("name") ?? ""
+      c.req.query("name") ?? "",
+      uploader(signedInTo(c).user)
     )
-    return c.json({ build: buildSummary(build) } satisfies BuildResponse)
+    return c.json({
+      build: await buildSummary(build),
+    } satisfies BuildResponse)
+  })
+
+  app.put("/api/build", async (c) => {
+    const { id, session, unfiled = [] } = await jsonBody(c)
+    if (
+      typeof id !== "string" ||
+      (session !== undefined && typeof session !== "number") ||
+      !Array.isArray(unfiled) ||
+      !unfiled.every((finding) => typeof finding === "string")
+    ) {
+      throw malformedRequest()
+    }
+    const build = await reviewerOf(c).pick(id, { session, unfiled })
+    return c.json({
+      build: await buildSummary(build),
+    } satisfies BuildResponse)
   })
 
   app.post("/api/session", async (c) => {
     const body = await jsonBody(c)
-    const projectID = body.projectID
-    if (projectID !== undefined && typeof projectID !== "string") {
+    const { projectID, buildID } = body
+    if (
+      (projectID !== undefined && typeof projectID !== "string") ||
+      (buildID !== undefined && typeof buildID !== "string")
+    ) {
       throw malformedRequest()
     }
     const outcome = await reviewerOf(c).start(
-      { deviceUDID: deviceUDID(body), projectID },
+      { deviceUDID: deviceUDID(body), projectID, buildID },
       signedInTo(c)
     )
     return c.json(
       (outcome.status === "started"
         ? {
             status: "started",
+            build: await buildSummary(outcome.session.build),
             session: sessionSummary(outcome.session),
             device: outcome.device,
             schema: outcome.schema,
@@ -577,13 +637,9 @@ export function createApp({
       error instanceof Error && error.message !== ""
         ? error.message
         : "The nitpick server failed to answer."
+    const code = errorCode(error)
     return c.json(
-      {
-        error: message,
-        ...(error instanceof DeviceNotRunning && {
-          code: "deviceNotRunning" as const,
-        }),
-      } satisfies ErrorResponse,
+      { error: message, ...(code && { code }) } satisfies ErrorResponse,
       status
     )
   })
@@ -593,6 +649,13 @@ export function createApp({
   }
 
   return app
+}
+
+/** What the page does more than show the error, for the errors that ask it. */
+function errorCode(error: unknown): ErrorResponse["code"] {
+  if (error instanceof DeviceNotRunning) return "deviceNotRunning"
+  if (error instanceof BuildChanged) return "buildChanged"
+  return undefined
 }
 
 /** Refusals the Reviewer can act on keep their message; the rest are 500s. */
@@ -609,7 +672,12 @@ function errorStatus(error: unknown): ContentfulStatusCode {
     return 400
   }
   if (error instanceof SignInFailed) return error.status
-  if (error instanceof FindingNotFound) return 404
+  if (
+    error instanceof FindingNotFound ||
+    error instanceof LibraryBuildNotFound
+  ) {
+    return 404
+  }
   if (
     error instanceof ShellBusy ||
     error instanceof ReviewRefused ||
@@ -618,7 +686,9 @@ function errorStatus(error: unknown): ContentfulStatusCode {
     error instanceof AndroidUnavailable ||
     error instanceof NoLauncherActivity ||
     error instanceof DeviceInUse ||
-    error instanceof DeviceHostFull
+    error instanceof DeviceHostFull ||
+    error instanceof LibraryBuildInUse ||
+    error instanceof LibraryUsageUnknown
   ) {
     return 409
   }
@@ -682,12 +752,8 @@ function deviceUDID(body: Record<string, unknown>): string {
   return body.deviceUDID
 }
 
-function buildSummary(build: Build): BuildSummary {
-  return {
-    name: buildName(build),
-    identity: build.identity,
-    platform: buildPlatform(build),
-  }
+function uploader(user: YouTrackUser): Uploader {
+  return { login: user.login, name: user.fullName }
 }
 
 function sessionSummary(session: ReviewSession): SessionSummary {
