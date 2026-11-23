@@ -9,6 +9,11 @@
 //   <reviewer>/open-session/filing             while a File all runs
 //   <reviewer>/recent-devices.json
 //   <reviewer>/imports/<id>/…         a History import's zips while read
+//
+// Before the Library, each Reviewer kept their last upload in `builds/<id>/`,
+// and its zip in `uploads/` while it was extracted. A session opened then
+// still runs its Build from there, so that folder stays until the session
+// ends; the rest goes at the Reviewer's first load.
 import {
   mkdir,
   readdir,
@@ -17,7 +22,8 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { dirname, join, relative, sep } from "node:path"
+import { fileURLToPath } from "node:url"
 import {
   decodeStoredSession,
   designSnapshotFileExtension,
@@ -121,13 +127,37 @@ export class ReviewerStore {
 
   /**
    * Ends the open session without filing, so it isn't there to resume.
-   * Removes the whole slot, captures included.
+   * Removes the whole slot, captures included, and a Build from before the
+   * Library that the session ran.
    */
   async clearOpenSession(): Promise<void> {
     await rm(join(this.directory, "open-session"), {
       recursive: true,
       force: true,
     })
+    await this.removeLegacyBuilds(undefined)
+  }
+
+  /**
+   * Deletes what the Reviewer's own Build slot left from before the Build
+   * Library: `uploads/`, and each `builds/<id>/` but the one `keeping`
+   * lies in.
+   */
+  async removeLegacyBuilds(keeping: Build | undefined): Promise<void> {
+    const builds = join(this.directory, "builds")
+    const kept =
+      keeping &&
+      relative(builds, fileURLToPath(keeping.appBundleURL)).split(sep)[0]
+    await rm(join(this.directory, "uploads"), { recursive: true, force: true })
+    const ids = await readdir(builds).catch(() => [])
+    const stale = ids.filter((id) => id !== kept)
+    if (stale.length === ids.length) {
+      await rm(builds, { recursive: true, force: true })
+      return
+    }
+    await Promise.all(
+      stale.map((id) => rm(join(builds, id), { recursive: true, force: true }))
+    )
   }
 
   /** Unreadable or missing data is an empty Recent, as UserDefaults gave. */

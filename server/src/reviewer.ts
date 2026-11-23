@@ -142,6 +142,8 @@ export class Reviewer {
    * Swift app did, while an open session keeps its own Build.
    */
   #selection: string | undefined
+  /** Whether this server's first load removed the pre-Library Builds. */
+  #legacyBuildsRemoved = false
   /**
    * File all's run and its ending, in memory as AppModel held them: a
    * server restart forgets a failure (the rows say "Filing interrupted —
@@ -167,6 +169,10 @@ export class Reviewer {
   }> {
     const filing = this.#filing
     const session = await this.#store.openSession()
+    if (!this.#legacyBuildsRemoved) {
+      await this.#store.removeLegacyBuilds(session?.build)
+      this.#legacyBuildsRemoved = true
+    }
     return {
       build: session?.build ?? (await this.#selectedBuild()),
       session,

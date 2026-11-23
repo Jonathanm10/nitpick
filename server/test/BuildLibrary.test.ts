@@ -2,10 +2,21 @@
 // server, where an upload lands for everyone, a pick starts a review on a
 // Build someone else uploaded, and a Build in a review can't be deleted. The
 // Device Host and YouTrack are fakes; all users and Builds are fictional.
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs"
 import { join } from "node:path"
-import { fileURLToPath } from "node:url"
-import { decodeStoredSession, newUUID } from "@nitpick/core"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import {
+  decodeStoredSession,
+  encodeStoredSession,
+  newReviewSession,
+  newUUID,
+} from "@nitpick/core"
 import { describe, expect, test, vi } from "vitest"
 import type {
   BuildResponse,
@@ -387,6 +398,62 @@ describe("Across a restart", () => {
 
     expect((await library(after.vera)).map((build) => build.id)).toEqual([id])
     expect(readdirSync(after.libraryDirectory)).toEqual([id])
+  })
+})
+
+describe("A session opened before the Library", () => {
+  /**
+   * Vera's open session on the Build in her own old slot, beside an older
+   * slot and an upload's leftover zip.
+   */
+  function legacyServer() {
+    const h = server()
+    const directory = join(h.data, "reviewers", "vera")
+    const slot = join(directory, "builds", newUUID())
+    const stale = join(directory, "builds", newUUID())
+    const bundle = writeAppBundle(slot, "ReviewMe.app", simulatorInfoPlist())
+    writeAppBundle(stale, "Older.app", simulatorInfoPlist())
+    mkdirSync(join(directory, "uploads"), { recursive: true })
+    writeFileSync(join(directory, "uploads", `${newUUID()}.zip`), "PK")
+    const session = newReviewSession({
+      build: {
+        identity: reviewMe.identity,
+        appBundleURL: `${pathToFileURL(bundle).href}/`,
+      },
+      project: { id: "0-12", shortName: "RM", name: "ReviewMe" },
+    })
+    mkdirSync(join(directory, "open-session"), { recursive: true })
+    writeFileSync(
+      join(directory, "open-session", "session.json"),
+      encodeStoredSession(session)
+    )
+    return { ...h, directory, slot, stale, bundle }
+  }
+
+  test("resumes on its own Build, which isn't in the Library, and the rest of the old slots go at the first load", async () => {
+    const h = legacyServer()
+
+    const state = await review(h.vera)
+
+    expect(state.build).toEqual(reviewMe)
+    expect(state.session?.project.id).toBe("0-12")
+    expect(readdirSync(join(h.directory, "builds"))).toEqual([
+      h.slot.split("/").at(-1),
+    ])
+    expect(existsSync(join(h.directory, "uploads"))).toBe(false)
+    expect(await library(h.vera)).toEqual([])
+    expect((await start(h.vera, iPhone)).status).toBe(200)
+    expect(launchedFrom(h)).toEqual([`${h.bundle}/`])
+  })
+
+  test("once it ends, its slot is deleted and no Build is picked", async () => {
+    const h = legacyServer()
+    await review(h.vera)
+
+    expect((await end(h.vera)).status).toBe(204)
+
+    expect(existsSync(join(h.directory, "builds"))).toBe(false)
+    expect(await review(h.vera)).toEqual({ filing: { status: "idle" } })
   })
 })
 
