@@ -77,6 +77,17 @@ export class ReviewRefused extends Error {
   }
 }
 
+/**
+ * Start review from a page whose Build isn't the Reviewer's any more: one
+ * picked or uploaded in another tab, or deleted from the Library.
+ */
+export class BuildChanged extends ReviewRefused {
+  constructor(message: string) {
+    super(message)
+    this.name = "BuildChanged"
+  }
+}
+
 /** The Finding, or its file, isn't in the open session. */
 export class FindingNotFound extends Error {
   constructor() {
@@ -325,11 +336,15 @@ export class Reviewer {
           ? this.#selection
           : this.#dependencies.library.entryID(open.build)
       // A page left behind by another tab's pick would start a Build it
-      // doesn't show.
+      // doesn't show. A page from before this check sends no Build.
       if (request.buildID !== current) {
-        throw new ReviewRefused(
-          "Your Build changed since this page showed it, so the review didn't start. Reload the page to see which Build is yours now."
-        )
+        throw request.buildID === undefined
+          ? new ReviewRefused(
+              "Your Build changed since this page showed it, so the review didn't start. Reload the page to see which Build is yours now."
+            )
+          : new BuildChanged(
+              "Your Build changed since this page showed it, so the review didn't start. Check which Build is yours now, then start again."
+            )
       }
       // The open session keeps its Build in use; a new one holds its own.
       const lease: LibraryLease =
@@ -397,7 +412,7 @@ export class Reviewer {
     } catch (error) {
       if (!(error instanceof LibraryBuildNotFound)) throw error
       this.#selection = undefined
-      throw new ReviewRefused(
+      throw new BuildChanged(
         "That Build was deleted from the Build Library. Pick another one."
       )
     }

@@ -93,7 +93,7 @@ import {
   parseSessionPatch,
 } from "./findingPatch.ts"
 import type { HistoryStore } from "./historyStore.ts"
-import { FindingNotFound, ReviewRefused } from "./reviewer.ts"
+import { BuildChanged, FindingNotFound, ReviewRefused } from "./reviewer.ts"
 import {
   hubCallbackPath,
   hubSignInCookie,
@@ -624,13 +624,9 @@ export function createApp({
       error instanceof Error && error.message !== ""
         ? error.message
         : "The nitpick server failed to answer."
+    const code = errorCode(error)
     return c.json(
-      {
-        error: message,
-        ...(error instanceof DeviceNotRunning && {
-          code: "deviceNotRunning" as const,
-        }),
-      } satisfies ErrorResponse,
+      { error: message, ...(code && { code }) } satisfies ErrorResponse,
       status
     )
   })
@@ -640,6 +636,13 @@ export function createApp({
   }
 
   return app
+}
+
+/** What the page does more than show the error, for the errors that ask it. */
+function errorCode(error: unknown): ErrorResponse["code"] {
+  if (error instanceof DeviceNotRunning) return "deviceNotRunning"
+  if (error instanceof BuildChanged) return "buildChanged"
+  return undefined
 }
 
 /** Refusals the Reviewer can act on keep their message; the rest are 500s. */

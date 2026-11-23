@@ -381,6 +381,7 @@ describe("The Build Library", () => {
     expect(started.status).toBe(409)
     expect(await started.json()).toEqual({
       error: "That Build was deleted from the Build Library. Pick another one.",
+      code: "buildChanged",
     })
     expect(h.deviceHost.launches).toEqual([])
     expect(storedSession(h, "vera")).toBeUndefined()
@@ -622,7 +623,8 @@ describe("Start review", () => {
     expect(stale.status).toBe(409)
     expect(await stale.json()).toEqual({
       error:
-        "Your Build changed since this page showed it, so the review didn't start. Reload the page to see which Build is yours now.",
+        "Your Build changed since this page showed it, so the review didn't start. Check which Build is yours now, then start again.",
+      code: "buildChanged",
     })
     expect(h.deviceHost.launches).toEqual([])
     expect(storedSession(h, "vera")).toBeUndefined()
@@ -635,6 +637,21 @@ describe("Start review", () => {
       status: "started",
       build: { ...nextUp, id: theirs },
     })
+  })
+
+  test("from a page that sends no Build, as one loaded before the Library, is refused with a reload while a Library Build is the Reviewer's", async () => {
+    const h = server()
+    await uploaded(h, h.vera)
+
+    const refused = await start(h.vera, iPhone)
+
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toEqual({
+      error:
+        "Your Build changed since this page showed it, so the review didn't start. Reload the page to see which Build is yours now.",
+    })
+    expect(h.deviceHost.launches).toEqual([])
+    expect(storedSession(h, "vera")).toBeUndefined()
   })
 })
 
@@ -925,6 +942,7 @@ describe("A delete racing a start", () => {
     expect(started.status).toBe(409)
     expect(await started.json()).toEqual({
       error: "That Build was deleted from the Build Library. Pick another one.",
+      code: "buildChanged",
     })
     expect(h.deviceHost.launches).toEqual([])
     expect(storedSession(h, "vera")).toBeUndefined()

@@ -37,11 +37,13 @@ export interface ErrorResponse {
   readonly error: string
   /**
    * `deviceNotRunning`: a capture or Inspect found its device stopped on the
-   * host, so the page pauses the review. `signIn` (401): the request has no live
-   * sign-in, so the page shows sign-in with the error, which says why when
-   * the sign-in ended by itself.
+   * host, so the page pauses the review. `buildChanged` (409): Start review's
+   * Build isn't the Reviewer's any more, picked in another tab or deleted, so
+   * the page reads their Build and the Library again. `signIn` (401): the
+   * request has no live sign-in, so the page shows sign-in with the error,
+   * which says why when the sign-in ended by itself.
    */
-  readonly code?: "deviceNotRunning" | "signIn"
+  readonly code?: "deviceNotRunning" | "buildChanged" | "signIn"
 }
 
 /** `POST /api/sign-in` takes the Reviewer's YouTrack permanent token. */
