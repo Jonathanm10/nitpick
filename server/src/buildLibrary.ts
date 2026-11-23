@@ -32,7 +32,11 @@ import {
   readBuildFromArchive,
 } from "./buildIngestion.ts"
 import type { DeviceHost } from "./device/DeviceHost.ts"
-import { readIfPresent, writeAtomically } from "./reviewerStore.ts"
+import {
+  readIfPresent,
+  writeAtomically,
+  type OpenSessionBuilds,
+} from "./reviewerStore.ts"
 import type { SubprocessRunner } from "./subprocess.ts"
 
 /** Who uploaded a Build. */
@@ -69,6 +73,16 @@ export class LibraryBuildInUse extends Error {
   }
 }
 
+/** An open session couldn't be read, so it may run the Build. */
+export class LibraryUsageUnknown extends Error {
+  constructor() {
+    super(
+      "A review on the Device Host can't be read, so this Build may be in it and can't be deleted. Ask whoever runs the Device Host to look at server.log."
+    )
+    this.name = "LibraryUsageUnknown"
+  }
+}
+
 /** A start's hold on its Build: deleting the Build is refused until release. */
 export interface LibraryLease {
   readonly build: Build
@@ -93,7 +107,7 @@ export class BuildLibrary {
   readonly #directory: string
   readonly #runner: SubprocessRunner
   readonly #deviceHost: Pick<DeviceHost, "readAndroidBuild">
-  readonly #openSessionBuilds: () => Promise<ReadonlyArray<Build>>
+  readonly #openSessionBuilds: () => Promise<OpenSessionBuilds>
   readonly #now: () => Date
   /** One id per start under way; two starts on one Build hold it twice. */
   readonly #leases: string[] = []
@@ -109,7 +123,7 @@ export class BuildLibrary {
       /** Reads an uploaded .apk. */
       readonly deviceHost: Pick<DeviceHost, "readAndroidBuild">
       /** The Build of every Reviewer's open Review Session. */
-      readonly openSessionBuilds: () => Promise<ReadonlyArray<Build>>
+      readonly openSessionBuilds: () => Promise<OpenSessionBuilds>
       readonly now?: () => Date
     }
   ) {
@@ -125,15 +139,18 @@ export class BuildLibrary {
     ReadonlyArray<LibraryEntry & { readonly inUse: boolean }>
   > {
     await this.#prepared()
-    const [names, inUse] = await Promise.all([
+    const [names, usage] = await Promise.all([
       readdir(this.#directory).catch(() => []),
-      this.#inUse(),
+      this.#usage(),
     ])
     const entries = await Promise.all(names.map((name) => this.get(name)))
     return entries
       .filter((entry) => entry !== undefined)
       .sort((lhs, rhs) => (lhs.uploadedAt < rhs.uploadedAt ? 1 : -1))
-      .map((entry) => ({ ...entry, inUse: inUse.has(entry.id) }))
+      .map((entry) => ({
+        ...entry,
+        inUse: !usage.complete || usage.ids.has(entry.id),
+      }))
   }
 
   /** The entry with this id, if the Library holds it. */
@@ -200,12 +217,17 @@ export class BuildLibrary {
     }
   }
 
-  /** Deletes a Build no review is open or starting on. */
+  /**
+   * Deletes a Build no review is open or starting on, which needs every
+   * open session read.
+   */
   async delete(id: string): Promise<void> {
     await this.#locked(async () => {
       const entry = await this.get(id)
       if (entry === undefined) throw new LibraryBuildNotFound()
-      if ((await this.#inUse()).has(entry.id)) throw new LibraryBuildInUse()
+      const usage = await this.#usage()
+      if (usage.ids.has(entry.id)) throw new LibraryBuildInUse()
+      if (!usage.complete) throw new LibraryUsageUnknown()
       const folder = join(this.#directory, entry.id)
       // Its entry.json goes first, so a crash midway leaves a folder the
       // next start sweeps.
@@ -262,18 +284,28 @@ export class BuildLibrary {
     return at === -1 ? undefined : segments[at + 1]
   }
 
-  async #inUse(): Promise<ReadonlySet<string>> {
+  /**
+   * The entries in use, and whether that is all of them: when an open
+   * session couldn't be read, any entry may be its Build.
+   */
+  async #usage(): Promise<{
+    readonly ids: ReadonlySet<string>
+    readonly complete: boolean
+  }> {
     // The leases before the sessions: a start saves its session before it
     // lets go of its lease, so one that ends while the sessions are read
     // shows in one or the other.
     const leased = [...this.#leases]
-    const builds = await this.#openSessionBuilds()
-    return new Set([
-      ...leased,
-      ...builds
-        .map((build) => this.entryID(build))
-        .filter((id) => id !== undefined),
-    ])
+    const sessions = await this.#openSessionBuilds()
+    return {
+      ids: new Set([
+        ...leased,
+        ...sessions.builds
+          .map((build) => this.entryID(build))
+          .filter((id) => id !== undefined),
+      ]),
+      complete: sessions.complete,
+    }
   }
 
   async #readAPK(

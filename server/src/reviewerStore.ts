@@ -14,6 +14,7 @@
 // and its zip in `uploads/` while it was extracted. A session opened then
 // still runs its Build from there, so that folder stays until the session
 // ends; the rest goes at the Reviewer's first load.
+import type { Dirent } from "node:fs"
 import {
   mkdir,
   readdir,
@@ -27,6 +28,7 @@ import { dirname, join, relative, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   decodeStoredSession,
+  decodeStoredSessionBuild,
   designSnapshotFileExtension,
   encodeStoredSession,
   newUUID,
@@ -47,6 +49,12 @@ export class ReviewerStore {
   async openSession(): Promise<ReviewSession | undefined> {
     const json = await readIfPresent(this.#openSessionManifest)
     return json === undefined ? undefined : decodeStoredSession(json)
+  }
+
+  /** The open session's Build alone, or undefined when none is open. */
+  async openSessionBuild(): Promise<Build | undefined> {
+    const json = await readIfPresent(this.#openSessionManifest)
+    return json === undefined ? undefined : decodeStoredSessionBuild(json)
   }
 
   /**
@@ -214,23 +222,51 @@ export class ReviewerStore {
   }
 }
 
+/** What every Reviewer's open session runs, read from its Build alone. */
+export interface OpenSessionBuilds {
+  readonly builds: ReadonlyArray<Build>
+  /** False when a Reviewer's session couldn't be read: it may run any Build. */
+  readonly complete: boolean
+}
+
 /** The Build of each Reviewer's open session, for every Reviewer. */
 export async function openSessionBuilds(
   reviewersDirectory: string
-): Promise<Build[]> {
-  const reviewers = await readdir(reviewersDirectory, {
-    withFileTypes: true,
-  }).catch(() => [])
+): Promise<OpenSessionBuilds> {
+  let reviewers: Dirent[]
+  try {
+    reviewers = await readdir(reviewersDirectory, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { builds: [], complete: true }
+    }
+    console.error("The Reviewers' folder can't be read.", error)
+    return { builds: [], complete: false }
+  }
   const sessions = await Promise.all(
     reviewers
       .filter((reviewer) => reviewer.isDirectory())
       .map((reviewer) =>
-        new ReviewerStore(join(reviewersDirectory, reviewer.name)).openSession()
+        new ReviewerStore(join(reviewersDirectory, reviewer.name))
+          .openSessionBuild()
+          .then(
+            (build) => ({ build }),
+            (error: unknown) => {
+              console.error(
+                `The open session of ${reviewer.name} can't be read, so no Build can be deleted until it can.`,
+                error
+              )
+              return undefined
+            }
+          )
       )
   )
-  return sessions
-    .filter((session) => session !== undefined)
-    .map((session) => session.build)
+  return {
+    builds: sessions.flatMap((session) =>
+      session?.build === undefined ? [] : [session.build]
+    ),
+    complete: sessions.every((session) => session !== undefined),
+  }
 }
 
 async function exists(path: string): Promise<boolean> {

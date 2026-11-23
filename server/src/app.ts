@@ -52,6 +52,7 @@ import { BuildIngestError, buildName } from "./buildIngestion.ts"
 import {
   LibraryBuildInUse,
   LibraryBuildNotFound,
+  LibraryUsageUnknown,
   type BuildLibrary,
   type Uploader,
 } from "./buildLibrary.ts"
@@ -670,7 +671,8 @@ function errorStatus(error: unknown): ContentfulStatusCode {
     error instanceof NoLauncherActivity ||
     error instanceof DeviceInUse ||
     error instanceof DeviceHostFull ||
-    error instanceof LibraryBuildInUse
+    error instanceof LibraryBuildInUse ||
+    error instanceof LibraryUsageUnknown
   ) {
     return 409
   }

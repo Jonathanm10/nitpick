@@ -7,7 +7,6 @@ import { join } from "node:path"
 import {
   YouTrackClient,
   YouTrackCredentials,
-  type Build,
   type HTTPTransport,
   type YouTrackUser,
 } from "@nitpick/core"
@@ -19,7 +18,10 @@ import type { DeviceStream } from "../src/device/deviceHub.ts"
 import { HistoryStore } from "../src/historyStore.ts"
 import type { YouTrackAccount } from "../src/reviewer.ts"
 import { Reviewers, signInCookieName } from "../src/reviewers.ts"
-import { openSessionBuilds } from "../src/reviewerStore.ts"
+import {
+  openSessionBuilds,
+  type OpenSessionBuilds,
+} from "../src/reviewerStore.ts"
 import { SignInStore } from "../src/signInStore.ts"
 import type { SubprocessRunner } from "../src/subprocess.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
@@ -138,8 +140,8 @@ interface LibraryOptions {
   readonly now?: () => Date
   /** Wraps the read of every open session's Build. */
   readonly openSessionBuilds?: (
-    read: () => Promise<ReadonlyArray<Build>>
-  ) => Promise<ReadonlyArray<Build>>
+    read: () => Promise<OpenSessionBuilds>
+  ) => Promise<OpenSessionBuilds>
 }
 
 /** The Build Library of a server over `data`, as main.ts makes it. */

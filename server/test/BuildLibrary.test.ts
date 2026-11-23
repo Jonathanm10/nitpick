@@ -404,6 +404,77 @@ describe("The Build Library", () => {
     expect((await library(h.vera)).map((build) => build.inUse)).toEqual([true])
   })
 
+  test("a review whose session file is damaged past its Build keeps that Build from being deleted, and the rest list and delete", async () => {
+    const h = server()
+    const reviewing = await uploaded(h, h.vera)
+    const other = await uploaded(
+      h,
+      h.vera,
+      "NextUp",
+      simulatorInfoPlist({ buildNumber: "422" })
+    )
+    writeOpenSession(
+      h,
+      "noor",
+      `${pathToFileURL(join(h.libraryDirectory, reviewing, "build", "ReviewMe.app")).href}/`
+    )
+    const path = join(
+      h.data,
+      "reviewers",
+      "noor",
+      "open-session",
+      "session.json"
+    )
+    const stored = JSON.parse(readFileSync(path, "utf8"))
+    writeFileSync(path, JSON.stringify({ ...stored, tray: "damaged" }))
+
+    const listed = await library(h.vera)
+    const deletedOther = await remove(h.vera, other)
+    const refused = await remove(h.vera, reviewing)
+
+    expect(listed.map((build) => [build.id, build.inUse])).toEqual([
+      [other, false],
+      [reviewing, true],
+    ])
+    expect(deletedOther.status).toBe(204)
+    expect(refused.status).toBe(409)
+    expect(await refused.json()).toEqual({
+      error:
+        "This Build is in a review, so it can't be deleted. Try again once that review ends.",
+    })
+  })
+
+  test("a review whose session file can't be read leaves the Library listed, every Build in a review, and refuses every delete", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {})
+    const h = server()
+    const id = await uploaded(h, h.vera)
+    const directory = join(h.data, "reviewers", "noor", "open-session")
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(join(directory, "session.json"), "{")
+
+    try {
+      const listed = await h.vera.request("/api/library")
+      const refused = await remove(h.vera, id)
+
+      expect(listed.status).toBe(200)
+      expect(
+        ((await listed.json()) as LibraryResponse).builds.map((build) => [
+          build.id,
+          build.inUse,
+        ])
+      ).toEqual([[id, true]])
+      expect(refused.status).toBe(409)
+      expect(await refused.json()).toEqual({
+        error:
+          "A review on the Device Host can't be read, so this Build may be in it and can't be deleted. Ask whoever runs the Device Host to look at server.log.",
+      })
+      expect(readdirSync(h.libraryDirectory)).toEqual([id])
+      expect(errors).toHaveBeenCalled()
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
   test("a Build id that names no entry deletes nothing", async () => {
     const h = server()
     const id = await uploaded(h, h.vera)
