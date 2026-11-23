@@ -21,7 +21,7 @@ For AP, the one project nitpick serves, the developer zips a simulator Build int
 ## Consequences
 
 - **ADR-0002 holds.** nitpick still installs and launches the Build itself, and acquisition stays human: a developer still uploads the Build they share, once for everyone instead of once per PO.
-- **Disk grows until someone deletes.** Each Build takes the disk of its extracted `.app` or its `.apk`, and the nightly backup copies it again for each of the 14 days it keeps (`docs/operations.md`).
+- **Disk grows until someone deletes.** Each Build takes the disk of its extracted `.app` or its `.apk`. The nightly backup leaves the Library out, so a Build lost with the disk is uploaded again (`docs/operations.md`).
 - **Everyone sees everything.** Every signed-in Reviewer sees and may delete every Build. nitpick serves one project, reviewed by Liip POs; showing a Build only to its project or its uploader would need a project on each entry.
 - **An open session still names its Build by absolute path.** Library entries are relative, but `session.json` keeps the `file://` URL it started on, so an open session doesn't survive moving the data directory to another path.
 - **History is unchanged** (ADR-0014): it records the Build's identity, never its files.

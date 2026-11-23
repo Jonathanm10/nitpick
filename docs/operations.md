@@ -291,10 +291,10 @@ sees on Home and starts reviews from.
      `<data>` the config's `NITPICK_DATA_DIR`, names no file.
   3. Delete `<data>/library/<id>`, then start the server.
 - **Disk:** each Build takes the disk of its extracted `.app` or its `.apk`,
-  and nothing deletes Builds by themselves. The nightly backup copies the
-  whole data directory and keeps 14 days, so each Build in the Library takes
-  its size again in every backup. The [health check](#health-check) prints
-  free disk; when it runs low, ask Reviewers to delete old Builds.
+  and nothing deletes Builds by themselves. The nightly backup leaves the
+  Library out: a lost Build is uploaded again. The
+  [health check](#health-check) prints free disk; when it runs low, ask
+  Reviewers to delete old Builds.
 - **From before the Library:** the server kept each Reviewer's last upload in
   `reviewers/<login>/builds/` and `uploads/`. At each Reviewer's first load
   after the deploy that brought the Library, those folders go, except the
@@ -453,8 +453,12 @@ A macOS update reboots the host. Follow [Reboots](#reboots-and-the-497-day-bug).
 
 ## Backups and restore
 
-**The nightly backup** copies the whole data directory with `ditto` to
+**The nightly backup** copies the data directory with `ditto` to
 `~/nitpick-backups/<YYYY-MM-DD>`, and keeps the last 14.
+
+- It leaves the Build Library (`library/`) out. Its Builds can be uploaded
+  again, and 14 copies of each would fill the disk. A restore keeps the
+  Library that is on the host.
 
 - The copy goes into a hidden folder first, and gets its date only once it
   is complete.
@@ -515,6 +519,9 @@ The main host is the 16 GB mini with FileVault off, once its CI use ends.
      until the Reviewer files or ends the review.
 5. Copy that backup across, from your own machine:
    `ssh <old host> 'tar -C ~/nitpick-backups -cf - <YYYY-MM-DD>' | ssh <new host> 'mkdir -p ~/nitpick-backups && tar -C ~/nitpick-backups -xf -'`.
+   The backup has no Build Library, so copy it into the new host's data
+   folder too, which the restore keeps:
+   `ssh <old host> 'tar -C <old data> -cf - library' | ssh <new host> 'mkdir -p <new data> && tar -C <new data> -xf -'`.
 6. On the new host, restore it: `~/nitpick/scripts/deploy/host.sh restore <YYYY-MM-DD>`.
 7. Run the health check and a short review. Then send Reviewers the new
    URL.
