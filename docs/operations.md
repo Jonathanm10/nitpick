@@ -494,9 +494,11 @@ Delete the folder it moved aside once you are satisfied.
 
 A restore loses everything since the backup: Findings captured, and
 sessions filed. Issues filed since then stay in YouTrack, but History no
-longer lists them. A Finding filed since the backup comes back unfiled, and
-a File all under way at the backup resumes at the start, so have Reviewers
-check restored Findings against YouTrack before they file them.
+longer lists them. A Finding filed since the backup comes back unfiled, so
+have Reviewers check restored Findings against YouTrack before they file
+them. A File all under way at the backup resumes by itself when the server
+starts, before anyone can check, and can file such a Finding a second time:
+look for duplicates in YouTrack after the restore.
 
 A restored open review whose Build was deleted from the Library since the
 backup can't resume: Resume review needs that Build at its saved path, and
