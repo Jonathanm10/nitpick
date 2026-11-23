@@ -476,11 +476,21 @@ export function useReview() {
         })
         .catch(async (error: unknown) => {
           // The review another tab changed shows paused: its device and
-          // schema may be another review's.
+          // schema may be another review's. Still the review this page
+          // shows, its pending edits are saved before it is read again.
           if (error instanceof APIError && error.code === "buildChanged") {
             setRun(undefined)
             setSchema(emptySchema)
-            await api.review().then(applyReview, () => {})
+            const loaded = await api.review().catch(() => undefined)
+            if (
+              loaded?.session !== undefined &&
+              loaded.session.startedAt === saver.session?.startedAt
+            ) {
+              await saver.saveAll().catch(() => false)
+              await api.review().then(applyReview, () => {})
+            } else if (loaded !== undefined) {
+              applyReview(loaded)
+            }
           }
           void refreshLibrary()
           throw error

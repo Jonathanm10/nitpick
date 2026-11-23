@@ -499,7 +499,9 @@ longer lists them.
 A restored open review whose Build was deleted from the Library since the
 backup can't resume: Resume review needs that Build at its saved path, and
 uploading it again makes a new Library Build, whose pick ends the review.
-Have its Reviewer file the restored Findings first.
+Have its Reviewer file the restored Findings first, after checking them
+against YouTrack: a Finding filed since the backup comes back unfiled, and
+File all would file it again.
 
 ## Moving to the main host
 
