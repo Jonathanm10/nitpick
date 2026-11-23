@@ -75,7 +75,13 @@ function server(
   const fake = new FakeYouTrack()
   const runner = new FakeSubprocessRunner()
   const deviceHost = new FakeDeviceHost([iPhone, iPad])
-  const sessionReads = { held: 0, gate: undefined as Promise<void> | undefined }
+  const sessionReads = {
+    held: 0,
+    /** Holds each read of the open sessions before it reads them. */
+    before: undefined as Promise<void> | undefined,
+    /** Holds it once it has read them, before the Library sees what it read. */
+    after: undefined as Promise<void> | undefined,
+  }
   const signedIn = signedInApp({
     data,
     deviceHost,
@@ -85,11 +91,16 @@ function server(
     user: fake.users["perm:vera"],
     libraryNow: () => new Date((clock.now += 60_000)),
     openSessionBuilds: async (read) => {
-      if (sessionReads.gate !== undefined) {
+      if (sessionReads.before !== undefined) {
         sessionReads.held++
-        await sessionReads.gate
+        await sessionReads.before
       }
-      return read()
+      const builds = await read()
+      if (sessionReads.after !== undefined) {
+        sessionReads.held++
+        await sessionReads.after
+      }
+      return builds
     },
   })
   return {
@@ -183,6 +194,15 @@ function launchedFrom(h: Server) {
   return h.deviceHost.launches.map(({ build }) =>
     fileURLToPath(build.appBundleURL)
   )
+}
+
+/** A promise that settles once `open` is called. */
+function gate() {
+  let open = () => {}
+  const opened = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { opened, open }
 }
 
 /** Holds each launch until `release`, as a slow boot would. */
@@ -480,20 +500,44 @@ describe("A delete racing a start", () => {
     ).toBe(true)
   })
 
+  test("a start that saves its session while a delete reads the open sessions keeps its Build", async () => {
+    const h = server()
+    const id = await uploaded(h, h.vera)
+    const launches = holdLaunches(h)
+    const starting = start(h.vera, iPhone)
+    await vi.waitFor(() => expect(launches.held).toEqual([iPhone.udid]))
+    const read = gate()
+    h.sessionReads.after = read.opened
+    const deleting = remove(h.noor, id)
+    await vi.waitFor(() => expect(h.sessionReads.held).toBe(1))
+
+    // The delete found no session of Vera's: hers is saved only now, and
+    // her start lets go of the Build once it is.
+    launches.release()
+    const started = await starting
+    read.open()
+    const deleted = await deleting
+
+    expect(started.status).toBe(200)
+    expect(deleted.status).toBe(409)
+    expect(
+      existsSync(fileURLToPath(storedSession(h, "vera")!.build.appBundleURL))
+    ).toBe(true)
+    expect((await library(h.noor)).map((build) => build.id)).toEqual([id])
+  })
+
   test("the Library is held while a delete checks its Build: the start waits, then finds the Build gone", async () => {
     const h = server()
     const id = await uploaded(h, h.vera)
-    let release = () => {}
-    h.sessionReads.gate = new Promise((resolve) => {
-      release = resolve
-    })
+    const read = gate()
+    h.sessionReads.before = read.opened
     const deleting = remove(h.noor, id)
     await vi.waitFor(() => expect(h.sessionReads.held).toBe(1))
 
     const starting = start(h.vera, iPhone)
     await new Promise((resolve) => setTimeout(resolve, 20))
     const launchedMeanwhile = h.deviceHost.launches.length
-    release()
+    read.open()
 
     expect(launchedMeanwhile).toBe(0)
     expect((await deleting).status).toBe(204)

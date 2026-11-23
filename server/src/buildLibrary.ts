@@ -244,9 +244,13 @@ export class BuildLibrary {
   }
 
   async #inUse(): Promise<ReadonlySet<string>> {
+    // The leases before the sessions: a start saves its session before it
+    // lets go of its lease, so one that ends while the sessions are read
+    // shows in one or the other.
+    const leased = [...this.#leases]
     const builds = await this.#openSessionBuilds()
     return new Set([
-      ...this.#leases,
+      ...leased,
       ...builds
         .map((build) => this.entryID(build))
         .filter((id) => id !== undefined),
