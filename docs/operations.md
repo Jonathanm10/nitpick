@@ -496,6 +496,11 @@ A restore loses everything since the backup: Findings captured, and
 sessions filed. Issues filed since then stay in YouTrack, but History no
 longer lists them.
 
+A restored open review whose Build was deleted from the Library since the
+backup can't resume: Resume review needs that Build at its saved path, and
+uploading it again makes a new Library Build, whose pick ends the review.
+Have its Reviewer file the restored Findings first.
+
 ## Moving to the main host
 
 The main host is the 16 GB mini with FileVault off, once its CI use ends.
@@ -521,7 +526,8 @@ The main host is the 16 GB mini with FileVault off, once its CI use ends.
    `ssh <old host> 'tar -C ~/nitpick-backups -cf - <YYYY-MM-DD>' | ssh <new host> 'mkdir -p ~/nitpick-backups && tar -C ~/nitpick-backups -xf -'`.
    The backup has no Build Library, so copy it into the new host's data
    folder too, which the restore keeps:
-   `ssh <old host> 'tar -C <old data> -cf - library' | ssh <new host> 'mkdir -p <new data> && tar -C <new data> -xf -'`.
+   `ssh <old host> 'tar -C "<old data>" -cf - library' | ssh <new host> 'mkdir -p "<new data>" && tar -C "<new data>" -xf -'`,
+   quoting the data paths, which can hold spaces, as `Application Support` does.
 6. On the new host, restore it: `~/nitpick/scripts/deploy/host.sh restore <YYYY-MM-DD>`.
 7. Run the health check and a short review. Then send Reviewers the new
    URL.

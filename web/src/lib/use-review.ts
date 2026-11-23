@@ -9,6 +9,7 @@ import { toast } from "sonner"
 import {
   devicePlatform,
   discardFinding,
+  filedIssueOf,
   filingPhase,
   findingsNeedingSummary,
   historyTrace,
@@ -465,11 +466,20 @@ export function useReview() {
   async function pickBuild(id: string) {
     if (id === build?.id) return
     await perform(async () => {
-      const shown = saver.session?.startedAt
+      const shown = saver.session
       const picked = await api
-        .pickBuild(id, shown)
+        .pickBuild(id, {
+          session: shown?.startedAt,
+          unfiled: (shown?.tray ?? [])
+            .filter((item) => filedIssueOf(item) === undefined)
+            .map((item) => item.id),
+        })
         .catch(async (error: unknown) => {
+          // The review another tab changed shows paused: its device and
+          // schema may be another review's.
           if (error instanceof APIError && error.code === "buildChanged") {
+            setRun(undefined)
+            setSchema(emptySchema)
             await api.review().then(applyReview, () => {})
           }
           void refreshLibrary()

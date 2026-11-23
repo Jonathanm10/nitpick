@@ -267,10 +267,12 @@ export interface PickBuildRequest {
   readonly id: string
   /**
    * The `startedAt` of the open session the page shows; absent when it shows
-   * none. Another session open now refuses a pick that would end it, with
-   * `buildChanged` (409).
+   * none. Another session open now, or an unfiled Finding not in
+   * `unfiled`, refuses the pick with `buildChanged` (409).
    */
   readonly session?: ReferenceDate
+  /** The ids of the unfiled Findings the page shows. */
+  readonly unfiled?: ReadonlyArray<string>
 }
 
 // `DELETE /api/library/:id` deletes a Build from the Library for everyone:

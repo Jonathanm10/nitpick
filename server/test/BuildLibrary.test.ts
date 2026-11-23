@@ -180,19 +180,28 @@ async function library(as: Browser) {
 
 /**
  * Picks `id` from a page that shows the open session as it is now, or, with
- * `shown`, as it was then.
+ * `shown`, as it was then: its `startedAt` and unfiled Findings' ids.
  */
 async function pick(
   as: Browser,
   id: unknown,
-  { shown }: { readonly shown?: number | null } = {}
+  {
+    shown,
+  }: {
+    readonly shown?: { readonly session?: number; readonly unfiled?: string[] }
+  } = {}
 ) {
-  const session =
-    shown === undefined ? (await review(as)).session?.startedAt : shown
+  const now = (await review(as)).session
+  const body = shown ?? {
+    session: now?.startedAt,
+    unfiled: (now?.tray ?? [])
+      .filter((item) => item.filingProgress.state !== "filed")
+      .map((item) => item.id),
+  }
   return as.request("/api/build", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, session: session ?? undefined }),
+    body: JSON.stringify({ id, ...body }),
   })
 }
 
@@ -371,12 +380,18 @@ describe("The Build Library", () => {
     expect((await start(h.vera, iPhone, second)).status).toBe(200)
     const opened = storedSession(h, "vera")!
 
-    const fromHome = await pick(h.vera, first, { shown: null })
+    const fromHome = await pick(h.vera, first, { shown: {} })
     const fromAnEarlierReview = await pick(h.vera, first, {
-      shown: opened.startedAt - 1,
+      shown: { session: opened.startedAt - 1 },
     })
+    // The Build under review, from a page that doesn't show its review.
+    const sameFromHome = await pick(h.vera, second, { shown: {} })
 
-    expect([fromHome.status, fromAnEarlierReview.status]).toEqual([409, 409])
+    expect([
+      fromHome.status,
+      fromAnEarlierReview.status,
+      sameFromHome.status,
+    ]).toEqual([409, 409, 409])
     expect(await fromHome.json()).toEqual({
       error:
         "Your review changed since this page showed it, so the Build wasn't picked. Check your review now, then pick again.",
@@ -384,6 +399,33 @@ describe("The Build Library", () => {
     })
     expect(storedSession(h, "vera")).toEqual(opened)
     expect((await review(h.vera)).build?.id).toBe(second)
+  })
+
+  test("a pick from a page that shows the open review without a Finding another tab captured since is a 409 and keeps that Finding", async () => {
+    const h = server()
+    const first = await uploaded(h, h.vera)
+    const second = await uploaded(
+      h,
+      h.vera,
+      "NextUp",
+      simulatorInfoPlist({ buildNumber: "422" })
+    )
+    expect((await start(h.vera, iPhone, second)).status).toBe(200)
+    const { startedAt } = storedSession(h, "vera")!
+    const captured = await h.vera.request("/api/session/captures", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceUDID: iPhone.udid }),
+    })
+    expect(captured.status).toBe(200)
+
+    const stale = await pick(h.vera, first, {
+      shown: { session: startedAt, unfiled: [] },
+    })
+
+    expect(stale.status).toBe(409)
+    expect(storedSession(h, "vera")!.tray).toHaveLength(1)
+    expect((await pick(h.vera, first)).status).toBe(200)
   })
 
   test("a pick of a Build that isn't in the Library is a 404, and a malformed one a 400", async () => {

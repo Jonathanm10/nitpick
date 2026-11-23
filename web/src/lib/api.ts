@@ -104,10 +104,10 @@ export const api = {
       headers: { "Content-Type": "application/zip" },
       body: file,
     }),
-  pickBuild: (id: string, session: PickBuildRequest["session"]) =>
+  pickBuild: (id: string, shown: Omit<PickBuildRequest, "id">) =>
     call<BuildResponse>(
       "/api/build",
-      json("PUT", { id, session } satisfies PickBuildRequest)
+      json("PUT", { id, ...shown } satisfies PickBuildRequest)
     ),
   deleteBuild: (id: string) =>
     call<void>(`/api/library/${encodeURIComponent(id)}`, { method: "DELETE" }),
