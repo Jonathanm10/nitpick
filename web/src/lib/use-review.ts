@@ -241,16 +241,22 @@ export function useReview() {
     [applyHost]
   )
 
+  /** The Reviewer's Build and open session, as the server has them. */
+  const applyReview = useCallback(
+    (loaded: ReviewStateResponse) => {
+      saver.track(loaded.session)
+      setReview({ status: "loaded", ...loaded })
+      setPickedAfterRead(libraryReads.current)
+      if (loaded.session) setSelectedProjectID(loaded.session.project.id)
+    },
+    [saver]
+  )
+
   // The page load: the Build and open session, the host check, the projects.
   useEffect(() => {
     api
       .review()
-      .then((loaded) => {
-        saver.track(loaded.session)
-        setReview({ status: "loaded", ...loaded })
-        setPickedAfterRead(libraryReads.current)
-        if (loaded.session) setSelectedProjectID(loaded.session.project.id)
-      })
+      .then(applyReview)
       .catch((error: Error) =>
         setReview({ status: "failed", error: error.message })
       )
@@ -268,7 +274,7 @@ export function useReview() {
         setProjects({ status: "failed", error: error.message })
       )
     void refreshHistory()
-  }, [applyHost, saver, refreshHistory])
+  }, [applyHost, applyReview, refreshHistory])
 
   // File all runs on the server, so the page reads its progress, a reload
   // included: each mark lands in the Tray, and the run's end shows the
@@ -374,11 +380,22 @@ export function useReview() {
   async function startReview() {
     if (start === undefined || selectedDevice === undefined) return
     await perform(async () => {
-      const outcome = await api.startReview({
-        deviceUDID: selectedDevice.udid,
-        projectID: start.project.id,
-        buildID: start.build.id,
-      })
+      const outcome = await api
+        .startReview({
+          deviceUDID: selectedDevice.udid,
+          projectID: start.project.id,
+          buildID: start.build.id,
+        })
+        .catch(async (error: unknown) => {
+          // Another tab picked another Build, or someone deleted this one:
+          // the page shows the Reviewer's Build as it is now, and the next
+          // start is theirs to click.
+          if (error instanceof APIError && error.code === "buildChanged") {
+            await api.review().then(applyReview, () => {})
+            await refreshLibrary()
+          }
+          throw error
+        })
       if (outcome.status === "notReady") {
         setHost(outcome)
         return
