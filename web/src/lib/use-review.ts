@@ -121,10 +121,7 @@ export function useReview() {
   /** The page's copy of the open session, for the saver too. */
   const setSession = useCallback(
     (next: SessionSummary | undefined) => {
-      if (next === undefined) {
-        saver.cancel()
-        setSchema(emptySchema)
-      }
+      if (next === undefined) setSchema(emptySchema)
       saver.track(next)
       setReview((current) =>
         current.status === "loaded" ? { ...current, session: next } : current
@@ -292,7 +289,6 @@ export function useReview() {
           if (loaded.filing.status === "filed") {
             // The Review Session is over: the device run goes with it.
             setRun(undefined)
-            saver.cancel()
             setSchema(emptySchema)
           }
           saver.track(loaded.session)

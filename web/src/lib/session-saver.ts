@@ -50,7 +50,13 @@ export class SessionSaver {
     return this.#session
   }
 
+  /**
+   * Another session, or none, takes the edits pending and on their way with
+   * the last one: it ended, or another tab's review replaced it. A
+   * Reviewer's starts run one at a time, so no two sessions share a start.
+   */
   track(session: SessionSummary | undefined): void {
+    if (session?.startedAt !== this.#session?.startedAt) this.#cancel()
     this.#session = session
   }
 
@@ -79,14 +85,16 @@ export class SessionSaver {
     if (this.#dirty.size === 0) return Promise.resolve()
     const work = this.#dirty
     this.#dirty = new Map()
-    this.#saving = this.#send(work).finally(() => {
+    const saving = this.#send(work).finally(() => {
+      if (this.#saving !== saving) return
       this.#saving = undefined
       if (this.#saveAgain) {
         this.#saveAgain = false
         void this.flush()
       }
     })
-    return this.#saving
+    this.#saving = saving
+    return saving
   }
 
   /**
@@ -126,11 +134,13 @@ export class SessionSaver {
     this.#dirty = new Map()
   }
 
-  /** The session ended: drop everything pending, and the error with it. */
-  cancel(): void {
+  /** Drops every edit pending or on its way, and the error with them. */
+  #cancel(): void {
     clearTimeout(this.#timer)
     this.#timer = undefined
     this.#dirty = new Map()
+    this.#saving = undefined
+    this.#saveAgain = false
     this.#typingSave = new TypingSave()
     this.#report(undefined)
   }
@@ -158,9 +168,12 @@ export class SessionSaver {
   }
 
   async #send(work: Map<string, Set<string>>): Promise<void> {
+    // Saves for a session the saver no longer tracks go nowhere.
+    const startedAt = this.#session?.startedAt
+    const moot = () => this.#stopped || this.#session?.startedAt !== startedAt
     let failure: string | undefined
     for (const [key, fields] of work) {
-      if (this.#stopped) return
+      if (moot()) return
       // A Finding being discarded keeps its edits until the server confirms
       // the discard (`forget`), so a refused discard still saves them.
       if (
@@ -174,6 +187,7 @@ export class SessionSaver {
         await this.#save(key, fields)
         this.#settled++
       } catch (error) {
+        if (moot()) return
         // A Finding discarded meanwhile, or by another tab, takes its
         // edits with it.
         if (error instanceof APIError && error.status === 404) {
@@ -184,7 +198,7 @@ export class SessionSaver {
         this.#requeue(key, fields)
       }
     }
-    if (this.#stopped) return
+    if (moot()) return
     if (failure === undefined) {
       this.#typingSave = this.#typingSave.saved()
       this.#report(undefined)
