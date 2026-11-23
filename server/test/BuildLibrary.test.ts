@@ -570,6 +570,29 @@ describe("The Build Library", () => {
     }
   })
 
+  test("a picked Build whose entry.json can't be read shows no Build, and shows again once it can", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {})
+    const h = server()
+    const id = await uploaded(h, h.vera)
+    const entryFile = join(h.libraryDirectory, id, "entry.json")
+    const entry = readFileSync(entryFile, "utf8")
+    rmSync(entryFile)
+    mkdirSync(entryFile)
+
+    try {
+      const unreadable = await h.vera.request("/api/review")
+
+      expect(unreadable.status).toBe(200)
+      expect(await unreadable.json()).toEqual({ filing: { status: "idle" } })
+      expect(errors).toHaveBeenCalled()
+    } finally {
+      errors.mockRestore()
+    }
+    rmSync(entryFile, { recursive: true })
+    writeFileSync(entryFile, entry)
+    expect((await review(h.vera)).build).toEqual({ ...reviewMe, id })
+  })
+
   test("a Build id that names no entry deletes nothing", async () => {
     const h = server()
     const id = await uploaded(h, h.vera)

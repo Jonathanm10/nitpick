@@ -50,6 +50,7 @@ import type {
 import {
   LibraryBuildNotFound,
   type BuildLibrary,
+  type LibraryEntry,
   type LibraryLease,
   type Uploader,
 } from "./buildLibrary.ts"
@@ -182,11 +183,20 @@ export class Reviewer {
     }
   }
 
-  /** The picked Build, dropped once someone deleted it from the Library. */
+  /**
+   * The picked Build, dropped once someone deleted it from the Library. An
+   * entry that can't be read is logged, shows no Build, and stays picked.
+   */
   async #selectedBuild(): Promise<Build | undefined> {
     const id = this.#selection
     if (id === undefined) return undefined
-    const entry = await this.#dependencies.library.get(id)
+    let entry: LibraryEntry | undefined
+    try {
+      entry = await this.#dependencies.library.get(id)
+    } catch (error) {
+      console.error(`The Build Library's ${id} can't be read.`, error)
+      return undefined
+    }
     if (entry === undefined && this.#selection === id) {
       this.#selection = undefined
     }
