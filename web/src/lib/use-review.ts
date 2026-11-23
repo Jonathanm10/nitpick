@@ -457,14 +457,24 @@ export function useReview() {
     })
   }
 
-  /** A Build deleted since the list was read says so, and leaves the list. */
+  /**
+   * A Build deleted since the list was read says so, and leaves the list. A
+   * review opened in another tab since this page showed its own refuses the
+   * pick, and the page shows that review.
+   */
   async function pickBuild(id: string) {
     if (id === build?.id) return
     await perform(async () => {
-      const picked = await api.pickBuild(id).catch((error: unknown) => {
-        void refreshLibrary()
-        throw error
-      })
+      const shown = saver.session?.startedAt
+      const picked = await api
+        .pickBuild(id, shown)
+        .catch(async (error: unknown) => {
+          if (error instanceof APIError && error.code === "buildChanged") {
+            await api.review().then(applyReview, () => {})
+          }
+          void refreshLibrary()
+          throw error
+        })
       buildChanged(picked.build)
     })
   }

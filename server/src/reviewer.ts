@@ -34,6 +34,7 @@ import {
   type HistoryEntry,
   type ProjectSchema,
   type RecentDevices,
+  type ReferenceDate,
   type ReviewSession,
   type TrayItem,
   type YouTrackClient,
@@ -251,9 +252,12 @@ export class Reviewer {
   /**
    * Picks a Build from the Library. Picking the Build already theirs, the
    * open session's included, changes nothing; one deleted meanwhile is
-   * LibraryBuildNotFound, and the open session stays.
+   * LibraryBuildNotFound, and the open session stays. `shown` is the
+   * `startedAt` of the open session the page shows: a pick from a page left
+   * behind by another tab's review would end a review it never showed, so
+   * it is BuildChanged, and that review stays.
    */
-  pick(id: string): Promise<Build> {
+  pick(id: string, shown: ReferenceDate | undefined): Promise<Build> {
     return this.#perform(async () => {
       const library = this.#dependencies.library
       const build = await library.withEntry(id, async (entry) => {
@@ -261,7 +265,13 @@ export class Reviewer {
         const current = open
           ? await library.entryID(open.build)
           : this.#selection
-        if (current !== entry.id) await this.#select(entry.id)
+        if (current === entry.id) return entry.build
+        if (open?.startedAt !== shown) {
+          throw new BuildChanged(
+            "Your review changed since this page showed it, so the Build wasn't picked. Check your review now, then pick again."
+          )
+        }
+        await this.#select(entry.id)
         return entry.build
       })
       await this.#removeLegacyBuilds(undefined)

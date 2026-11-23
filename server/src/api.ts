@@ -265,6 +265,12 @@ export interface BuildResponse {
 /** `PUT /api/build` */
 export interface PickBuildRequest {
   readonly id: string
+  /**
+   * The `startedAt` of the open session the page shows; absent when it shows
+   * none. Another session open now refuses a pick that would end it, with
+   * `buildChanged` (409).
+   */
+  readonly session?: ReferenceDate
 }
 
 // `DELETE /api/library/:id` deletes a Build from the Library for everyone:

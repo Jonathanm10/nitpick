@@ -402,9 +402,14 @@ export function createApp({
   })
 
   app.put("/api/build", async (c) => {
-    const id = (await jsonBody(c)).id
-    if (typeof id !== "string") throw malformedRequest()
-    const build = await reviewerOf(c).pick(id)
+    const { id, session } = await jsonBody(c)
+    if (
+      typeof id !== "string" ||
+      (session !== undefined && typeof session !== "number")
+    ) {
+      throw malformedRequest()
+    }
+    const build = await reviewerOf(c).pick(id, session)
     return c.json({
       build: await buildSummary(build),
     } satisfies BuildResponse)
