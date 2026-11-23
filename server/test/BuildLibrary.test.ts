@@ -11,7 +11,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import {
   decodeStoredSession,
@@ -585,13 +585,19 @@ describe("Across a restart", () => {
     ])
   })
 
-  test("an upload the restart cut short is swept, and the finished ones stay", async () => {
+  test("an upload the restart cut short mid-extraction is swept, and a finished one still picks and starts", async () => {
     const before = server()
     const id = await uploaded(before, before.vera)
+    let half: string | undefined
     before.runner.enqueue({
       exitCode: 0,
       effect: async (command) => {
-        writeAppBundle(command.arguments[4], "Half.app", simulatorInfoPlist())
+        half = writeAppBundle(
+          command.arguments[4]!,
+          "Half.app",
+          simulatorInfoPlist()
+        )
+        // The server stops here: it does no more work, and cleans nothing up.
         await new Promise(() => {})
       },
     })
@@ -599,14 +605,20 @@ describe("Across a restart", () => {
       method: "POST",
       body: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
     })
-    await vi.waitFor(() =>
-      expect(readdirSync(before.libraryDirectory)).toHaveLength(2)
-    )
+    await vi.waitFor(() => expect(half).toBeDefined())
+    const partial = dirname(dirname(half!))
+    // The zip and half its extraction, and no entry.json.
+    expect(readdirSync(partial).sort()).toEqual(["build", "upload"])
 
     const after = server(before.data, before.clock)
 
     expect((await library(after.vera)).map((build) => build.id)).toEqual([id])
     expect(readdirSync(after.libraryDirectory)).toEqual([id])
+    expect((await pick(after.noor, id)).status).toBe(200)
+    expect((await start(after.noor, iPhone, id)).status).toBe(200)
+    expect(launchedFrom(after)).toEqual([
+      `${join(after.libraryDirectory, id, "build", "ReviewMe.app")}/`,
+    ])
   })
 })
 
