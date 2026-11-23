@@ -20,6 +20,7 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises"
 import { dirname, join, relative, sep } from "node:path"
@@ -140,13 +141,15 @@ export class ReviewerStore {
   /**
    * Deletes what the Reviewer's own Build slot left from before the Build
    * Library: `uploads/`, and each `builds/<id>/` but the one `keeping`
-   * lies in.
+   * lies in. A `keeping` this host doesn't have, as after a move to
+   * another home, may name a slot by a path that isn't its own, so nothing
+   * goes until its session ends.
    */
   async removeLegacyBuilds(keeping: Build | undefined): Promise<void> {
     const builds = join(this.directory, "builds")
-    const kept =
-      keeping &&
-      relative(builds, fileURLToPath(keeping.appBundleURL)).split(sep)[0]
+    const keptPath = keeping && fileURLToPath(keeping.appBundleURL)
+    if (keptPath !== undefined && !(await exists(keptPath))) return
+    const kept = keptPath && relative(builds, keptPath).split(sep)[0]
     await rm(join(this.directory, "uploads"), { recursive: true, force: true })
     const ids = await readdir(builds).catch(() => [])
     const stale = ids.filter((id) => id !== kept)
@@ -228,6 +231,16 @@ export async function openSessionBuilds(
   return sessions
     .filter((session) => session !== undefined)
     .map((session) => session.build)
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+    throw error
+  }
 }
 
 export async function readIfPresent(path: string): Promise<string | undefined> {

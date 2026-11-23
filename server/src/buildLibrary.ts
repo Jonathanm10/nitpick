@@ -12,7 +12,7 @@
 // and deleting it is refused then.
 import { createWriteStream } from "node:fs"
 import { mkdir, readdir, rename, rm } from "node:fs/promises"
-import { join, relative, resolve, sep } from "node:path"
+import { basename, join, relative, resolve, sep } from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { ReadableStream } from "node:stream/web"
@@ -245,15 +245,21 @@ export class BuildLibrary {
     })
   }
 
-  /** The id of the entry `build` lies in; undefined outside the Library. */
+  /**
+   * The id of the entry `build` lies in; undefined outside the Library. Read
+   * from the path's `library/<id>/`, so a session saved before the data
+   * moved to another home still names its entry.
+   */
   entryID(build: Build): string | undefined {
-    const [id, ...rest] = relative(
-      this.#directory,
-      fileURLToPath(build.appBundleURL)
-    ).split(sep)
-    return id !== undefined && parseUUID(id) === id && rest.length > 0
-      ? id
-      : undefined
+    const segments = fileURLToPath(build.appBundleURL).split(sep)
+    const folder = basename(this.#directory)
+    const at = segments.findIndex(
+      (segment, index) =>
+        segment === folder &&
+        index + 2 < segments.length &&
+        parseUUID(segments[index + 1]!) === segments[index + 1]
+    )
+    return at === -1 ? undefined : segments[at + 1]
   }
 
   async #inUse(): Promise<ReadonlySet<string>> {

@@ -197,6 +197,21 @@ function storedSession({ data }: Server, login: string) {
     : undefined
 }
 
+/** An open session of `login`'s on disk, on the Build at `appBundleURL`. */
+function writeOpenSession(
+  { data }: Server,
+  login: string,
+  appBundleURL: string
+) {
+  const directory = join(data, "reviewers", login, "open-session")
+  mkdirSync(directory, { recursive: true })
+  const session = newReviewSession({
+    build: { identity: reviewMe.identity, appBundleURL },
+    project: { id: "0-12", shortName: "RM", name: "ReviewMe" },
+  })
+  writeFileSync(join(directory, "session.json"), encodeStoredSession(session))
+}
+
 function launchedFrom(h: Server) {
   return h.deviceHost.launches.map(({ build }) =>
     fileURLToPath(build.appBundleURL)
@@ -374,6 +389,21 @@ describe("The Build Library", () => {
     })
   })
 
+  test("deleting is refused while a review is open on the Build where the Library was before a move to another home", async () => {
+    const h = server()
+    const id = await uploaded(h, h.vera)
+    writeOpenSession(
+      h,
+      "noor",
+      `file:///Users/previous/nitpick-data/library/${id}/build/ReviewMe.app/`
+    )
+
+    const refused = await remove(h.vera, id)
+
+    expect(refused.status).toBe(409)
+    expect((await library(h.vera)).map((build) => build.inUse)).toEqual([true])
+  })
+
   test("a Build id that names no entry deletes nothing", async () => {
     const h = server()
     const id = await uploaded(h, h.vera)
@@ -546,7 +576,7 @@ describe("A session opened before the Library", () => {
    * Vera's open session on the Build in her own old slot, beside an older
    * slot and an upload's leftover zip.
    */
-  function legacyServer() {
+  function legacyServer({ movedFrom = "/" } = {}) {
     const h = server()
     const directory = join(h.data, "reviewers", "vera")
     const slot = join(directory, "builds", newUUID())
@@ -555,17 +585,10 @@ describe("A session opened before the Library", () => {
     writeAppBundle(stale, "Older.app", simulatorInfoPlist())
     mkdirSync(join(directory, "uploads"), { recursive: true })
     writeFileSync(join(directory, "uploads", `${newUUID()}.zip`), "PK")
-    const session = newReviewSession({
-      build: {
-        identity: reviewMe.identity,
-        appBundleURL: `${pathToFileURL(bundle).href}/`,
-      },
-      project: { id: "0-12", shortName: "RM", name: "ReviewMe" },
-    })
-    mkdirSync(join(directory, "open-session"), { recursive: true })
-    writeFileSync(
-      join(directory, "open-session", "session.json"),
-      encodeStoredSession(session)
+    writeOpenSession(
+      h,
+      "vera",
+      `${pathToFileURL(join(movedFrom, bundle)).href}/`
     )
     return { ...h, directory, slot, stale, bundle }
   }
@@ -584,6 +607,18 @@ describe("A session opened before the Library", () => {
     expect(await library(h.vera)).toEqual([])
     expect((await start(h.vera, iPhone)).status).toBe(200)
     expect(launchedFrom(h)).toEqual([`${h.bundle}/`])
+  })
+
+  test("whose Build this host doesn't have, as after a move to another home, keeps every slot until it ends", async () => {
+    const h = legacyServer({ movedFrom: "/Users/previous" })
+
+    await review(h.vera)
+
+    expect(readdirSync(join(h.directory, "builds")).sort()).toEqual(
+      [h.slot, h.stale].map((slot) => slot.split("/").at(-1)).sort()
+    )
+    expect((await end(h.vera)).status).toBe(204)
+    expect(existsSync(join(h.directory, "builds"))).toBe(false)
   })
 
   test("a slot that can't be deleted at the end is logged and tried again at the next load, and the review still ends", async () => {
