@@ -215,13 +215,26 @@ export class BuildLibrary {
   }
 
   /**
+   * Runs `action` on the entry while no delete runs, so the entry is still
+   * there when it ends; LibraryBuildNotFound once it is gone.
+   */
+  withEntry<T>(
+    id: string,
+    action: (entry: LibraryEntry) => T | Promise<T>
+  ): Promise<T> {
+    return this.#locked(async () => {
+      const entry = await this.get(id)
+      if (entry === undefined) throw new LibraryBuildNotFound()
+      return action(entry)
+    })
+  }
+
+  /**
    * The entry's Build for a start, which holds it in use from this check
    * until the start releases it, once its session is saved or it failed.
    */
   lease(id: string): Promise<LibraryLease> {
-    return this.#locked(async () => {
-      const entry = await this.get(id)
-      if (entry === undefined) throw new LibraryBuildNotFound()
+    return this.withEntry(id, (entry) => {
       this.#leases.push(entry.id)
       return {
         build: entry.build,

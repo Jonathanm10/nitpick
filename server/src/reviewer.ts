@@ -205,7 +205,8 @@ export class Reviewer {
 
   /**
    * Adds an uploaded zip or .apk to the Library and picks it. A refused
-   * upload throws before anything changes, and leaves no files behind.
+   * upload throws before anything changes, and leaves no files behind; one
+   * deleted from the Library before it is picked leaves the open session.
    */
   ingest(
     upload: ReadableStream<Uint8Array> | null,
@@ -213,35 +214,36 @@ export class Reviewer {
     uploader: Uploader
   ): Promise<Build> {
     return this.#perform(async () => {
-      const entry = await this.#dependencies.library.add(
-        upload,
-        fileName,
-        uploader
-      )
-      await this.#select(entry.id)
-      return entry.build
+      const library = this.#dependencies.library
+      const added = await library.add(upload, fileName, uploader)
+      return library.withEntry(added.id, async (entry) => {
+        await this.#select(entry.id)
+        return entry.build
+      })
     })
   }
 
   /**
    * Picks a Build from the Library. Picking the Build already theirs, the
-   * open session's included, changes nothing.
+   * open session's included, changes nothing; one deleted meanwhile is
+   * LibraryBuildNotFound, and the open session stays.
    */
   pick(id: string): Promise<Build> {
-    return this.#perform(async () => {
+    return this.#perform(() => {
       const library = this.#dependencies.library
-      const entry = await library.get(id)
-      if (entry === undefined) throw new LibraryBuildNotFound()
-      const open = await this.#store.openSession()
-      const current = open ? library.entryID(open.build) : this.#selection
-      if (current !== entry.id) await this.#select(entry.id)
-      return entry.build
+      return library.withEntry(id, async (entry) => {
+        const open = await this.#store.openSession()
+        const current = open ? library.entryID(open.build) : this.#selection
+        if (current !== entry.id) await this.#select(entry.id)
+        return entry.build
+      })
     })
   }
 
   /**
    * A Review Session reviews exactly one Build, so another one ends the open
-   * session, on disk too.
+   * session, on disk too. Runs while the Library holds the Build, so a
+   * delete never lands between the check that it is there and the end.
    */
   async #select(id: string): Promise<void> {
     await this.#serialized(() => this.#store.clearOpenSession())

@@ -112,6 +112,7 @@ function server(
     vera: signedIn.app,
     noor: signedIn.signedInAs(fake.users["perm:noor"]!),
     libraryDirectory: join(data, "library"),
+    buildLibrary: signedIn.library,
   }
 }
 
@@ -418,6 +419,86 @@ describe("Across a restart", () => {
 
     expect((await library(after.vera)).map((build) => build.id)).toEqual([id])
     expect(readdirSync(after.libraryDirectory)).toEqual([id])
+  })
+})
+
+describe("A delete racing a pick or an upload", () => {
+  test("a pick of the Build being deleted is a 404, and the open review stays", async () => {
+    const h = server()
+    const reviewing = await uploaded(h, h.vera)
+    expect((await start(h.vera, iPhone)).status).toBe(200)
+    const opened = storedSession(h, "vera")
+    const doomed = await uploaded(h, h.noor, "NextUp")
+    const read = gate()
+    h.sessionReads.before = read.opened
+    const deleting = remove(h.noor, doomed)
+    await vi.waitFor(() => expect(h.sessionReads.held).toBe(1))
+
+    const picking = pick(h.vera, doomed)
+    await Promise.race([
+      picking,
+      new Promise((resolve) => setTimeout(resolve, 50)),
+    ])
+    read.open()
+
+    expect((await deleting).status).toBe(204)
+    const picked = await picking
+    expect(picked.status).toBe(404)
+    expect(await picked.json()).toEqual({
+      error: "That Build is no longer in the Build Library.",
+    })
+    expect(storedSession(h, "vera")).toEqual(opened)
+    expect((await review(h.vera)).build).toEqual({ ...reviewMe, id: reviewing })
+  })
+
+  test("an upload whose Build is deleted before it is picked is a 404, and the open review stays", async () => {
+    const h = server()
+    const reviewing = await uploaded(h, h.vera)
+    expect((await start(h.vera, iPhone)).status).toBe(200)
+    const opened = storedSession(h, "vera")
+    // A delete of the Build under review holds the Library while it reads
+    // the open sessions.
+    const read = gate()
+    h.sessionReads.before = read.opened
+    const refusing = remove(h.noor, reviewing)
+    await vi.waitFor(() => expect(h.sessionReads.held).toBe(1))
+    const extraction = gate()
+    let uploadedID: string | undefined
+    h.runner.enqueue({
+      exitCode: 0,
+      effect: async (command) => {
+        const contents = command.arguments[4]!
+        uploadedID = contents.split("/").at(-2)
+        await extraction.opened
+        writeAppBundle(contents, "NextUp.app", simulatorInfoPlist())
+      },
+    })
+    const uploading = h.vera.request("/api/build?name=NextUp.zip", {
+      method: "POST",
+      body: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+    })
+    await vi.waitFor(() => expect(uploadedID).toBeDefined())
+
+    // Noor's delete of the new Build waits its turn ahead of the upload's
+    // pick, which comes once the Build is in the Library.
+    const deletingUpload = h.buildLibrary.delete(uploadedID!)
+    extraction.open()
+    await vi.waitFor(() =>
+      expect(
+        existsSync(join(h.libraryDirectory, uploadedID!, "entry.json"))
+      ).toBe(true)
+    )
+    read.open()
+
+    expect((await refusing).status).toBe(409)
+    await deletingUpload
+    const upload = await uploading
+    expect(upload.status).toBe(404)
+    expect(storedSession(h, "vera")).toEqual(opened)
+    expect((await review(h.vera)).build).toEqual({ ...reviewMe, id: reviewing })
+    expect((await library(h.vera)).map((build) => build.id)).toEqual([
+      reviewing,
+    ])
   })
 })
 
