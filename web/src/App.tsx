@@ -12,6 +12,7 @@ import {
   FileUpIcon,
   HistoryIcon,
   KeyboardIcon,
+  LibraryIcon,
   LogOutIcon,
   Maximize2Icon,
   MessageSquareWarningIcon,
@@ -171,9 +172,14 @@ function ReviewApp({
     setFeedbackOpening((count) => (count ?? 0) + 1)
   }
   const [isDragging, setIsDragging] = useState(false)
-  // A Build dropped while the open session holds unfiled Findings waits for
-  // the Reviewer to confirm what the upload would discard.
-  const [pendingBuild, setPendingBuild] = useState<File>()
+  // A new Build while the open session holds unfiled Findings waits for the
+  // Reviewer to confirm what it would discard: an upload, or "library" for
+  // a pick from Home's Build Library. Closing keeps what came next, so the
+  // dialog keeps its words while it fades.
+  const [newBuild, setNewBuild] = useState<{
+    readonly open: boolean
+    readonly next: File | "library"
+  }>()
   const [confirmsEnd, setConfirmsEnd] = useState(false)
   const unfiled = session === undefined ? 0 : unfiledFindingCount(session)
   const unfiledPhrase =
@@ -198,11 +204,30 @@ function ReviewApp({
     if (model.busy.current) {
       model.reportBusyDrop()
     } else if (unfiled > 0) {
-      setPendingBuild(file)
+      setNewBuild({ open: true, next: file })
     } else {
       void model.ingest(file)
     }
   }
+
+  /** The Library is on Home, so choosing from it ends the open review. */
+  function chooseFromLibrary() {
+    if (unfiled > 0) setNewBuild({ open: true, next: "library" })
+    else void model.endReview()
+  }
+
+  function closeNewBuild() {
+    setNewBuild((current) => current && { ...current, open: false })
+  }
+
+  function confirmNewBuild() {
+    const next = newBuild?.next
+    closeNewBuild()
+    if (next === "library") void model.endReview()
+    else if (next !== undefined) void model.ingest(next)
+  }
+  const newBuildWords =
+    newBuildConfirmation[newBuild?.next === "library" ? "library" : "upload"]
 
   function dragOver(event: DragEvent) {
     if (!event.dataTransfer.types.includes("Files")) return
@@ -286,6 +311,7 @@ function ReviewApp({
     navigate,
     openHistory,
     chooseBuild: () => buildInput?.click(),
+    chooseFromLibrary,
     requestEndReview,
     openFeedback,
     openShortcuts: () => setShortcutsOpen(true),
@@ -394,30 +420,23 @@ function ReviewApp({
       />
 
       <AlertDialog
-        open={pendingBuild !== undefined}
+        open={newBuild?.open ?? false}
         onOpenChange={(open) => {
-          if (!open) setPendingBuild(undefined)
+          if (!open) closeNewBuild()
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Ingest the dropped Build?</AlertDialogTitle>
+            <AlertDialogTitle>{newBuildWords.title}</AlertDialogTitle>
             <AlertDialogDescription>
-              Ingesting a new Build ends this review — {unfiledPhrase} will be
+              {newBuildWords.ending} ends this review — {unfiledPhrase} will be
               discarded.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                const file = pendingBuild
-                setPendingBuild(undefined)
-                if (file !== undefined) void model.ingest(file)
-              }}
-            >
-              Discard and Ingest
+            <AlertDialogAction variant="destructive" onClick={confirmNewBuild}>
+              {newBuildWords.action}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -447,6 +466,20 @@ function ReviewApp({
       </AlertDialog>
     </div>
   )
+}
+
+/** What the confirmation of a new Build over unfiled Findings says. */
+const newBuildConfirmation = {
+  upload: {
+    title: "Ingest the dropped Build?",
+    ending: "Ingesting a new Build",
+    action: "Discard and Ingest",
+  },
+  library: {
+    title: "Choose a Build from the Library?",
+    ending: "Choosing another Build",
+    action: "Discard and Choose",
+  },
 }
 
 /** The page under a dragged file: a drop anywhere loads the Build. */
@@ -483,6 +516,7 @@ function paletteCommands({
   navigate,
   openHistory,
   chooseBuild,
+  chooseFromLibrary,
   requestEndReview,
   openFeedback,
   openShortcuts,
@@ -495,6 +529,7 @@ function paletteCommands({
   readonly navigate: (route: string) => void
   readonly openHistory: () => void
   readonly chooseBuild: () => void
+  readonly chooseFromLibrary: () => void
   readonly requestEndReview: () => void
   readonly openFeedback: () => void
   readonly openShortcuts: () => void
@@ -649,6 +684,17 @@ function paletteCommands({
     disabled: model.review.status !== "loaded" || model.isBusy,
     run: inReview(chooseBuild),
   })
+  // Home shows the Library; during a review, choosing from it ends the review.
+  if (session !== undefined) {
+    commands.push({
+      id: "choose-from-library",
+      group: "Build",
+      label: "Choose Build from Library…",
+      icon: LibraryIcon,
+      disabled: model.isBusy,
+      run: inReview(chooseFromLibrary),
+    })
+  }
   const group = "nitpick"
   commands.push(
     showsHistory
