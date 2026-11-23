@@ -288,7 +288,8 @@ export class BuildLibrary {
    * Inside the Library's folder, that is its folder's entry. A path outside
    * it, as a session saved before the data moved to another home has, lies
    * in the one entry of a `library/<id>/` in it whose bundle is the rest of
-   * the path; with none or several, it may lie in any entry it names.
+   * the path; with none or several, or an entry it names that can't be read,
+   * it may lie in any entry it names.
    */
   async #entriesAt(path: string): Promise<{
     readonly id?: string
@@ -309,14 +310,17 @@ export class BuildLibrary {
         ? [{ id, moved: join(this.#directory, ...segments.slice(index + 1)) }]
         : []
     })
+    // An entry that can't be read may be the one: then it lies in any.
     const matches = await Promise.all(
       named.map(async ({ id, moved }) => {
-        const entry = await this.get(id).catch(() => undefined)
-        return entry !== undefined && bundlePath(entry.build) === moved
+        const entry = await this.get(id).catch(() => null)
+        return entry === null
+          ? undefined
+          : entry !== undefined && bundlePath(entry.build) === moved
       })
     )
-    const matched = named.filter((_, index) => matches[index])
-    return matched.length === 1
+    const matched = named.filter((_, index) => matches[index] === true)
+    return matched.length === 1 && !matches.includes(undefined)
       ? { id: matched[0]!.id, ids: [matched[0]!.id] }
       : { ids: named.map(({ id }) => id) }
   }

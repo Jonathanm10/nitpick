@@ -31,6 +31,7 @@ import {
   temporaryDirectory,
   writeAppBundle,
 } from "./BuildFixtures.ts"
+import { BuildLibrary } from "../src/buildLibrary.ts"
 import { FakeDeviceHost } from "./FakeDeviceHost.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 import { FakeYouTrack } from "./FakeYouTrack.ts"
@@ -177,11 +178,21 @@ async function library(as: Browser) {
   return ((await response.json()) as LibraryResponse).builds
 }
 
-function pick(as: Browser, id: unknown) {
+/**
+ * Picks `id` from a page that shows the open session as it is now, or, with
+ * `shown`, as it was then.
+ */
+async function pick(
+  as: Browser,
+  id: unknown,
+  { shown }: { readonly shown?: number | null } = {}
+) {
+  const session =
+    shown === undefined ? (await review(as)).session?.startedAt : shown
   return as.request("/api/build", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({ id, session: session ?? undefined }),
   })
 }
 
@@ -348,6 +359,33 @@ describe("The Build Library", () => {
     expect((await start(h.noor, iPhone, first)).status).toBe(200)
   })
 
+  test("a pick from a page that doesn't show the open review, as another tab's that started it, is a 409 and leaves that review", async () => {
+    const h = server()
+    const first = await uploaded(h, h.vera)
+    const second = await uploaded(
+      h,
+      h.vera,
+      "NextUp",
+      simulatorInfoPlist({ buildNumber: "422" })
+    )
+    expect((await start(h.vera, iPhone, second)).status).toBe(200)
+    const opened = storedSession(h, "vera")!
+
+    const fromHome = await pick(h.vera, first, { shown: null })
+    const fromAnEarlierReview = await pick(h.vera, first, {
+      shown: opened.startedAt - 1,
+    })
+
+    expect([fromHome.status, fromAnEarlierReview.status]).toEqual([409, 409])
+    expect(await fromHome.json()).toEqual({
+      error:
+        "Your review changed since this page showed it, so the Build wasn't picked. Check your review now, then pick again.",
+      code: "buildChanged",
+    })
+    expect(storedSession(h, "vera")).toEqual(opened)
+    expect((await review(h.vera)).build?.id).toBe(second)
+  })
+
   test("a pick of a Build that isn't in the Library is a 404, and a malformed one a 400", async () => {
     const h = server()
 
@@ -478,6 +516,41 @@ describe("The Build Library", () => {
       true,
     ])
     expect((await review(h.noor)).build?.id).toBeUndefined()
+  })
+
+  test("a review's Build from before a move whose path could lie in two entries keeps both from being deleted when one of them can't be read again", async () => {
+    const h = server()
+    const inner = await uploaded(h, h.vera)
+    const outer = await uploadedWithin(h, join("library", inner, "build"))
+    writeOpenSession(
+      h,
+      "noor",
+      `file:///Users/previous/nitpick-data/library/${outer}/build/library/${inner}/build/ReviewMe.app/`
+    )
+    // The delete reads the entry; the check that it is in use, an EIO.
+    const get = BuildLibrary.prototype.get
+    let reads = 0
+    const failing = vi
+      .spyOn(BuildLibrary.prototype, "get")
+      .mockImplementation(function (this: BuildLibrary, id: string) {
+        if (id === outer && ++reads > 1) {
+          return Promise.reject(
+            Object.assign(new Error("EIO"), { code: "EIO" })
+          )
+        }
+        return get.call(this, id)
+      })
+    let refused: Response
+    try {
+      refused = await remove(h.vera, outer)
+    } finally {
+      failing.mockRestore()
+    }
+
+    expect(refused.status).toBe(409)
+    expect((await library(h.vera)).map((build) => build.id).sort()).toEqual(
+      [inner, outer].sort()
+    )
   })
 
   test("a review's Build from before a move whose path is no entry's bundle keeps every entry it names from being deleted", async () => {
