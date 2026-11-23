@@ -142,7 +142,10 @@ export class Reviewer {
    * Swift app did, while an open session keeps its own Build.
    */
   #selection: string | undefined
-  /** Whether this server's first load removed the pre-Library Builds. */
+  /**
+   * Whether the Builds from before the Library are gone but the open
+   * session's: not yet at a server start, nor after a removal that failed.
+   */
   #legacyBuildsRemoved = false
   /**
    * File all's run and its ending, in memory as AppModel held them: a
@@ -169,10 +172,8 @@ export class Reviewer {
   }> {
     const filing = this.#filing
     const session = await this.#store.openSession()
-    if (!this.#legacyBuildsRemoved) {
-      await this.#store.removeLegacyBuilds(session?.build)
-      this.#legacyBuildsRemoved = true
-    }
+    if (!this.#legacyBuildsRemoved)
+      await this.#removeLegacyBuilds(session?.build)
     return {
       build: session?.build ?? (await this.#selectedBuild()),
       session,
@@ -216,10 +217,12 @@ export class Reviewer {
     return this.#perform(async () => {
       const library = this.#dependencies.library
       const added = await library.add(upload, fileName, uploader)
-      return library.withEntry(added.id, async (entry) => {
+      const build = await library.withEntry(added.id, async (entry) => {
         await this.#select(entry.id)
         return entry.build
       })
+      await this.#removeLegacyBuilds(undefined)
+      return build
     })
   }
 
@@ -229,14 +232,16 @@ export class Reviewer {
    * LibraryBuildNotFound, and the open session stays.
    */
   pick(id: string): Promise<Build> {
-    return this.#perform(() => {
+    return this.#perform(async () => {
       const library = this.#dependencies.library
-      return library.withEntry(id, async (entry) => {
+      const build = await library.withEntry(id, async (entry) => {
         const open = await this.#store.openSession()
         const current = open ? library.entryID(open.build) : this.#selection
         if (current !== entry.id) await this.#select(entry.id)
         return entry.build
       })
+      await this.#removeLegacyBuilds(undefined)
+      return build
     })
   }
 
@@ -251,6 +256,24 @@ export class Reviewer {
     this.#selection = id
     // The next Build dismisses a held filing result (ADR-0007).
     this.#filing = { status: "idle" }
+  }
+
+  /**
+   * Deletes what is left of the Build slots from before the Library, but
+   * the one `keeping` runs. After a session's change, never part of it: a
+   * failure is logged, and the next load tries again.
+   */
+  async #removeLegacyBuilds(keeping: Build | undefined): Promise<void> {
+    try {
+      await this.#store.removeLegacyBuilds(keeping)
+      this.#legacyBuildsRemoved = true
+    } catch (error) {
+      this.#legacyBuildsRemoved = false
+      console.error(
+        "The Builds from before the Build Library couldn't be deleted; the next load tries again.",
+        error
+      )
+    }
   }
 
   /**
@@ -407,8 +430,8 @@ export class Reviewer {
    * it is from before the Library, and History is untouched.
    */
   end(): Promise<void> {
-    return this.#perform(() =>
-      this.#serialized(async () => {
+    return this.#perform(async () => {
+      await this.#serialized(async () => {
         const open = await this.#store.openSession()
         if (open !== undefined) {
           this.#selection = this.#dependencies.library.entryID(open.build)
@@ -418,7 +441,8 @@ export class Reviewer {
         // Or the next session would open on a stale "File n remaining".
         this.#filing = { status: "idle" }
       })
-    )
+      await this.#removeLegacyBuilds(undefined)
+    })
   }
 
   /**
@@ -539,6 +563,7 @@ export class Reviewer {
     await this.#serialized(() => this.#store.clearOpenSession())
     this.#dependencies.deviceClaims.release(this.#login)
     this.#selection = this.#dependencies.library.entryID(session.build)
+    await this.#removeLegacyBuilds(undefined)
     return entry
   }
 

@@ -3,6 +3,7 @@
 // Build someone else uploaded, and a Build in a review can't be deleted. The
 // Device Host and YouTrack are fakes; all users and Builds are fictional.
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -583,6 +584,30 @@ describe("A session opened before the Library", () => {
     expect(await library(h.vera)).toEqual([])
     expect((await start(h.vera, iPhone)).status).toBe(200)
     expect(launchedFrom(h)).toEqual([`${h.bundle}/`])
+  })
+
+  test("a slot that can't be deleted at the end is logged and tried again at the next load, and the review still ends", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {})
+    const h = legacyServer()
+    await review(h.vera)
+    expect((await start(h.vera, iPhone)).status).toBe(200)
+    const builds = join(h.directory, "builds")
+    chmodSync(builds, 0o555)
+    try {
+      const ended = await end(h.vera)
+
+      expect(ended.status).toBe(204)
+      expect(storedSession(h, "vera")).toBeUndefined()
+      expect(errors).toHaveBeenCalled()
+      // The device went with the review: Noor reviews on it.
+      const id = await uploaded(h, h.noor)
+      expect((await start(h.noor, iPhone, id)).status).toBe(200)
+    } finally {
+      chmodSync(builds, 0o755)
+      errors.mockRestore()
+    }
+    expect(await review(h.vera)).toEqual({ filing: { status: "idle" } })
+    expect(existsSync(builds)).toBe(false)
   })
 
   test("once it ends, its slot is deleted and no Build is picked", async () => {

@@ -127,15 +127,14 @@ export class ReviewerStore {
 
   /**
    * Ends the open session without filing, so it isn't there to resume.
-   * Removes the whole slot, captures included, and a Build from before the
-   * Library that the session ran.
+   * Removes the whole slot, captures included. A Build from before the
+   * Library that the session ran goes with `removeLegacyBuilds`.
    */
   async clearOpenSession(): Promise<void> {
     await rm(join(this.directory, "open-session"), {
       recursive: true,
       force: true,
     })
-    await this.removeLegacyBuilds(undefined)
   }
 
   /**
