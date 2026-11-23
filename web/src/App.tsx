@@ -160,7 +160,7 @@ function ReviewApp({
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   /** Counts openings, so every Send feedback starts blank. */
   const [feedbackOpening, setFeedbackOpening] = useState<number>()
-  // State, not a ref: ⌘K's Choose Build… is built while rendering.
+  // State, not a ref: ⌘K's Upload Build… is built while rendering.
   const [buildInput, setBuildInput] = useState<HTMLInputElement | null>(null)
 
   function openHistory() {
@@ -458,7 +458,7 @@ function DropOverlay({ unfiled }: { readonly unfiled: number | undefined }) {
           <UploadIcon className="size-6" strokeWidth={1.75} />
         </span>
         <p className="text-[20px] font-semibold tracking-[-0.01em]">
-          Drop to load the Build
+          Drop to upload the Build
         </p>
         <p className="mt-1.5 text-[13px] text-text-2">
           A .zip with a simulator .app inside, or an Android .apk
@@ -644,7 +644,7 @@ function paletteCommands({
   commands.push({
     id: "choose-build",
     group: "Build",
-    label: session === undefined ? "Choose Build…" : "Load another Build…",
+    label: session === undefined ? "Upload Build…" : "Upload another Build…",
     icon: FileUpIcon,
     disabled: model.review.status !== "loaded" || model.isBusy,
     run: inReview(chooseBuild),

@@ -25,11 +25,13 @@ import {
   type YouTrackProject,
 } from "@nitpick/core"
 import type {
+  BuildSummary,
   FilingStatus,
   FindingPatch,
   HistoryResponse,
   HostResponse,
   LayoutResponse,
+  LibraryResponse,
   ReviewStateResponse,
   SessionSummary,
   SimulatorDevice,
@@ -78,6 +80,9 @@ export function useReview() {
   const [history, setHistory] = useState<Loadable<HistoryResponse>>({
     status: "loading",
   })
+  const [library, setLibrary] = useState<Loadable<LibraryResponse>>({
+    status: "loading",
+  })
   const [isPerforming, setIsPerforming] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>()
   const [saveError, setSaveError] = useState<string>()
@@ -123,7 +128,17 @@ export function useReview() {
     },
     [saver]
   )
-  const buildPlatform = state?.build?.platform
+  /** The picked Build once the Library no longer holds it: someone deleted it. */
+  const deletedPick =
+    session === undefined &&
+    state?.build !== undefined &&
+    library.status === "loaded" &&
+    !library.builds.some((listed) => listed.id === state.build?.id)
+      ? state.build
+      : undefined
+  /** The Build a start runs: the open session's, else the one picked. */
+  const build = deletedPick === undefined ? state?.build : undefined
+  const buildPlatform = build?.platform
   const devices = devicesRunning(buildPlatform, host)
   // A device that can't run the Build, an emulator picked before an .app
   // came, gives way to the most recent one that can.
@@ -157,6 +172,25 @@ export function useReview() {
       }
     },
     [busy]
+  )
+
+  /**
+   * The Build Library, read on Home and after each upload or delete. A read
+   * that fails keeps the list already shown.
+   */
+  const refreshLibrary = useCallback(
+    () =>
+      api
+        .library()
+        .then((loaded) => setLibrary({ status: "loaded", ...loaded }))
+        .catch((error: Error) =>
+          setLibrary((current) =>
+            current.status === "loaded"
+              ? current
+              : { status: "failed", error: error.message }
+          )
+        ),
+    []
   )
 
   /** The Reviewer's History, re-read after each filing and on its page. */
@@ -296,7 +330,7 @@ export function useReview() {
   }, [run, applyHost, busy])
 
   const start = reviewStart({
-    build: state?.build,
+    build,
     isReviewing: run !== undefined,
     holdsFilingResult: filing.status === "filed",
     device: selectedDevice,
@@ -308,7 +342,10 @@ export function useReview() {
   /** Why Start review is disabled, for its tooltip. */
   function missingForStart(): string | undefined {
     if (start !== undefined || isBusy) return undefined
-    if (state?.build === undefined) return "Upload a Build to review."
+    if (deletedPick !== undefined) {
+      return "The Build you picked was deleted from the Build Library. Pick another one."
+    }
+    if (build === undefined) return "Pick or upload a Build to review."
     if (selectedDevice === undefined) return "Pick a device to review on."
     if (!selectedDevice.isRuntimeAvailable) {
       return "This device's runtime is missing on the Device Host. Pick another one."
@@ -366,15 +403,50 @@ export function useReview() {
     })
   }
 
-  /** A bad upload changes nothing; a good one ends the open session. */
+  /** A Review Session reviews exactly one Build: another one ends it. */
+  function buildChanged(next: BuildSummary) {
+    setRun(undefined)
+    setSession(undefined)
+    // The next Build dismisses a held filing result too (ADR-0007).
+    setReview({ status: "loaded", build: next, filing: idle })
+  }
+
+  /**
+   * A bad upload changes nothing; a good one lands in the Library for
+   * everyone and becomes the Reviewer's Build.
+   */
   async function ingest(file: File) {
     await perform(async () => {
-      const { build } = await api.uploadBuild(file)
-      setRun(undefined)
-      setSession(undefined)
-      // The next Build dismisses a held filing result too (ADR-0007).
-      setReview({ status: "loaded", build, filing: idle })
-      await refreshHost()
+      buildChanged((await api.uploadBuild(file)).build)
+      await Promise.all([refreshHost(), refreshLibrary()])
+    })
+  }
+
+  /** A Build deleted since the list was read says so, and leaves the list. */
+  async function pickBuild(id: string) {
+    if (id === build?.id) return
+    await perform(async () => {
+      const picked = await api.pickBuild(id).catch((error: unknown) => {
+        void refreshLibrary()
+        throw error
+      })
+      buildChanged(picked.build)
+    })
+  }
+
+  /** Deletes a Build for everyone; one in a review is refused with why. */
+  async function deleteBuild(id: string) {
+    await perform(async () => {
+      try {
+        await api.deleteBuild(id)
+        setReview((current) =>
+          current.status === "loaded" && current.build?.id === id
+            ? { ...current, build: undefined }
+            : current
+        )
+      } finally {
+        await refreshLibrary()
+      }
     })
   }
 
@@ -568,6 +640,11 @@ export function useReview() {
     projects,
     history,
     refreshHistory,
+    library,
+    refreshLibrary,
+    /** The Build a start runs, picked or the open session's. */
+    build,
+    deletedPick,
     /** The signed-in Reviewer's last session, for the home trace line. */
     trace: historyTrace(historyEntries),
     filing,
@@ -604,6 +681,8 @@ export function useReview() {
     startReview,
     selectDevice,
     ingest,
+    pickBuild,
+    deleteBuild,
     endReview,
     checkHostAgain,
     reportBusyDrop,

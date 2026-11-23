@@ -14,6 +14,8 @@ import type {
   HistoryResponse,
   HostResponse,
   LayoutResponse,
+  LibraryResponse,
+  PickBuildRequest,
   ProjectsResponse,
   ReviewStateResponse,
   SessionPatch,
@@ -95,12 +97,20 @@ export const api = {
   review: () => call<ReviewStateResponse>("/api/review"),
   host: () => call<HostResponse>("/api/host"),
   projects: () => call<ProjectsResponse>("/api/projects"),
+  library: () => call<LibraryResponse>("/api/library"),
   uploadBuild: (file: File) =>
     call<BuildResponse>(`/api/build?name=${encodeURIComponent(file.name)}`, {
       method: "POST",
       headers: { "Content-Type": "application/zip" },
       body: file,
     }),
+  pickBuild: (id: string) =>
+    call<BuildResponse>(
+      "/api/build",
+      json("PUT", { id } satisfies PickBuildRequest)
+    ),
+  deleteBuild: (id: string) =>
+    call<void>(`/api/library/${encodeURIComponent(id)}`, { method: "DELETE" }),
   startReview: (request: StartReviewRequest) =>
     call<StartReviewResponse>("/api/session", json("POST", request)),
   switchDevice: (deviceUDID: string) =>
