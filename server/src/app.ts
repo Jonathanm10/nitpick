@@ -12,6 +12,7 @@ import {
   type Build,
   type RecentDevices,
   type ReviewSession,
+  type YouTrackUser,
 } from "@nitpick/core"
 import { Hono, type Context } from "hono"
 import { bodyLimit } from "hono/body-limit"
@@ -33,6 +34,7 @@ import type {
   HistoryResponse,
   HostResponse,
   LayoutResponse,
+  LibraryResponse,
   ProjectsResponse,
   SignedInResponse,
   SignInMethodResponse,
@@ -47,6 +49,11 @@ import {
   labelSpritePNG,
 } from "./annotationFlattening.ts"
 import { BuildIngestError, buildName } from "./buildIngestion.ts"
+import {
+  LibraryBuildNotFound,
+  type BuildLibrary,
+  type Uploader,
+} from "./buildLibrary.ts"
 import type {
   AndroidProblem,
   DeviceHost,
@@ -100,6 +107,8 @@ import { HubRefused } from "./youTrackHub.ts"
 
 export interface AppOptions {
   readonly deviceHost: DeviceHost
+  /** Every uploaded Build, which every Reviewer sees. */
+  readonly library: BuildLibrary
   /** Who is signed in; each request acts for the Reviewer its cookie names. */
   readonly reviewers: Reviewers
   /** Every Reviewer's History, of which each reads their own. */
@@ -118,6 +127,7 @@ type SignedInEnvironment = {
 
 export function createApp({
   deviceHost,
+  library,
   reviewers,
   history,
   serverVersion,
@@ -255,6 +265,12 @@ export function createApp({
   /** The request's Reviewer, whom the gate above let through. */
   const signedInTo = (c: Context<SignedInEnvironment>) => c.get("signedIn")!
   const reviewerOf = (c: Context<SignedInEnvironment>) => signedInTo(c).reviewer
+  const buildSummary = (build: Build): BuildSummary => ({
+    id: library.entryID(build),
+    name: buildName(build),
+    identity: build.identity,
+    platform: buildPlatform(build),
+  })
 
   app.get("/api/me", (c) =>
     c.json({ reviewer: signedInTo(c).user } satisfies SignedInResponse)
@@ -353,11 +369,30 @@ export function createApp({
     } satisfies FeedbackEnvironmentResponse)
   )
 
+  app.get("/api/library", async (c) =>
+    c.json({
+      builds: (await library.list()).map((entry) => ({
+        ...buildSummary(entry.build),
+        id: entry.id,
+        uploadedBy: entry.uploadedBy,
+        uploadedAt: entry.uploadedAt,
+      })),
+    } satisfies LibraryResponse)
+  )
+
   app.post("/api/build", async (c) => {
     const build = await reviewerOf(c).ingest(
       c.req.raw.body as ReadableStream<Uint8Array> | null,
-      c.req.query("name") ?? ""
+      c.req.query("name") ?? "",
+      uploader(signedInTo(c).user)
     )
+    return c.json({ build: buildSummary(build) } satisfies BuildResponse)
+  })
+
+  app.put("/api/build", async (c) => {
+    const id = (await jsonBody(c)).id
+    if (typeof id !== "string") throw malformedRequest()
+    const build = await reviewerOf(c).pick(id)
     return c.json({ build: buildSummary(build) } satisfies BuildResponse)
   })
 
@@ -609,7 +644,12 @@ function errorStatus(error: unknown): ContentfulStatusCode {
     return 400
   }
   if (error instanceof SignInFailed) return error.status
-  if (error instanceof FindingNotFound) return 404
+  if (
+    error instanceof FindingNotFound ||
+    error instanceof LibraryBuildNotFound
+  ) {
+    return 404
+  }
   if (
     error instanceof ShellBusy ||
     error instanceof ReviewRefused ||
@@ -682,12 +722,8 @@ function deviceUDID(body: Record<string, unknown>): string {
   return body.deviceUDID
 }
 
-function buildSummary(build: Build): BuildSummary {
-  return {
-    name: buildName(build),
-    identity: build.identity,
-    platform: buildPlatform(build),
-  }
+function uploader(user: YouTrackUser): Uploader {
+  return { login: user.login, name: user.fullName }
 }
 
 function sessionSummary(session: ReviewSession): SessionSummary {

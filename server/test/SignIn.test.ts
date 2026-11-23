@@ -38,6 +38,7 @@ import { temporaryDirectory } from "./BuildFixtures.ts"
 import { FakeDeviceHost } from "./FakeDeviceHost.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 import { FakeYouTrack } from "./FakeYouTrack.ts"
+import { libraryIn } from "./SignedIn.ts"
 
 const capture = readFileSync(
   new URL("../../core/test/golden/images/capture.png", import.meta.url)
@@ -67,7 +68,9 @@ function server(
   const fake = options.fake ?? new FakeYouTrack()
   const signIns = new SignInStore(data, fake.instanceURL, { now: options.now })
   const history = new HistoryStore(join(data, "history"))
+  const runner = new FakeSubprocessRunner()
   const deviceHost = new FakeDeviceHost([iPhone])
+  const library = libraryIn(data, { runner, deviceHost })
   const reviewers = new Reviewers({
     directory: join(data, "reviewers"),
     instanceURL: fake.instanceURL,
@@ -75,7 +78,8 @@ function server(
     signIns,
     dependencies: {
       deviceHost,
-      runner: new FakeSubprocessRunner(),
+      library,
+      runner,
       history,
       deviceClaims: new DeviceClaims({
         limit: undefined,
@@ -86,6 +90,7 @@ function server(
   })
   const app = createApp({
     deviceHost,
+    library,
     reviewers,
     history,
     serverVersion: "0.0.0",
@@ -208,7 +213,9 @@ const registeredRoutes = [
   "GET /api/history",
   "POST /api/history/import",
   "GET /api/feedback/environment",
+  "GET /api/library",
   "POST /api/build",
+  "PUT /api/build",
   "POST /api/session",
   "PUT /api/session/device",
   "DELETE /api/session",

@@ -35,6 +35,7 @@ import { temporaryDirectory } from "./BuildFixtures.ts"
 import { FakeDeviceHost } from "./FakeDeviceHost.ts"
 import { FakeSubprocessRunner } from "./FakeSubprocessRunner.ts"
 import { FakeYouTrack } from "./FakeYouTrack.ts"
+import { libraryIn } from "./SignedIn.ts"
 
 const capture = readFileSync(
   new URL("../../core/test/golden/images/capture.png", import.meta.url)
@@ -72,7 +73,9 @@ function server(
         })
   const signIns = new SignInStore(data, fake.instanceURL, { now, hub })
   const history = new HistoryStore(join(data, "history"))
+  const runner = new FakeSubprocessRunner()
   const deviceHost = new FakeDeviceHost([])
+  const library = libraryIn(data, { runner, deviceHost })
   const reviewers = new Reviewers({
     directory: join(data, "reviewers"),
     instanceURL: fake.instanceURL,
@@ -81,7 +84,8 @@ function server(
     hub,
     dependencies: {
       deviceHost,
-      runner: new FakeSubprocessRunner(),
+      library,
+      runner,
       history,
       deviceClaims: new DeviceClaims({
         limit: undefined,
@@ -92,6 +96,7 @@ function server(
   })
   const app = createApp({
     deviceHost,
+    library,
     reviewers,
     history,
     serverVersion: "0.0.0",

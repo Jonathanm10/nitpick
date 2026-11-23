@@ -1,13 +1,9 @@
-// One Reviewer's side of the server: the Build they uploaded, their open
-// Review Session and Recent devices, and the one run at a time they may have
-// going. The operations follow Sources/Nitpick/AppModel.swift's ingest,
-// startReview, switchDevice, endReview, captureScreen, the Editor's edits and
-// fileAllFindings.
-import { createWriteStream } from "node:fs"
-import { readFile, rename, rm } from "node:fs/promises"
-import { join } from "node:path"
-import { Readable } from "node:stream"
-import { pipeline } from "node:stream/promises"
+// One Reviewer's side of the server: the Build they picked from the Build
+// Library, their open Review Session and Recent devices, and the one run at a
+// time they may have going. The operations follow
+// Sources/Nitpick/AppModel.swift's ingest, startReview, switchDevice,
+// endReview, captureScreen, the Editor's edits and fileAllFindings.
+import { readFile } from "node:fs/promises"
 import type { ReadableStream } from "node:stream/web"
 import {
   addDesignSnapshot,
@@ -51,7 +47,11 @@ import type {
   HistoryImportResult,
   SessionPatch,
 } from "./api.ts"
-import { buildUploadName, readBuildFromArchive } from "./buildIngestion.ts"
+import {
+  LibraryBuildNotFound,
+  type BuildLibrary,
+  type Uploader,
+} from "./buildLibrary.ts"
 import { checkDesignSnapshotImage } from "./designSnapshotImage.ts"
 import { designReference, patchedFinding } from "./findingPatch.ts"
 import type {
@@ -85,7 +85,9 @@ export class FindingNotFound extends Error {
 
 export interface ReviewerDependencies {
   readonly deviceHost: DeviceHost
-  /** Runs the extraction of uploaded Builds and History zips. */
+  /** Every uploaded Build, one Library for all. */
+  readonly library: BuildLibrary
+  /** Runs the extraction of History zips. */
   readonly runner: SubprocessRunner
   /** Every Reviewer's filed sessions, one store for all. */
   readonly history: HistoryStore
@@ -134,11 +136,11 @@ export class Reviewer {
    */
   #sessionWrites: Promise<unknown> = Promise.resolve()
   /**
-   * A Build uploaded since the last session ended. Held in memory: a server
-   * restart forgets it, as a relaunch of the Swift app did, while an open
-   * session keeps its own Build on disk.
+   * The Library id of the Build picked or uploaded since the last session
+   * ended. Held in memory: a server restart forgets it, as a relaunch of the
+   * Swift app did, while an open session keeps its own Build.
    */
-  #uploadedBuild: Build | undefined
+  #selection: string | undefined
   /**
    * File all's run and its ending, in memory as AppModel held them: a
    * server restart forgets a failure (the rows say "Filing interrupted —
@@ -164,7 +166,22 @@ export class Reviewer {
   }> {
     const filing = this.#filing
     const session = await this.#store.openSession()
-    return { build: session?.build ?? this.#uploadedBuild, session, filing }
+    return {
+      build: session?.build ?? (await this.#selectedBuild()),
+      session,
+      filing,
+    }
+  }
+
+  /** The picked Build, dropped once someone deleted it from the Library. */
+  async #selectedBuild(): Promise<Build | undefined> {
+    const id = this.#selection
+    if (id === undefined) return undefined
+    const entry = await this.#dependencies.library.get(id)
+    if (entry === undefined && this.#selection === id) {
+      this.#selection = undefined
+    }
+    return entry?.build
   }
 
   async hostStatus(): Promise<HostStatus> {
@@ -180,59 +197,51 @@ export class Reviewer {
   }
 
   /**
-   * Ingests an uploaded zip or .apk. A Review Session reviews exactly one
-   * Build, so an accepted upload ends the open session, on disk too. A
-   * refused upload throws before anything changes, and leaves no files
-   * behind.
+   * Adds an uploaded zip or .apk to the Library and picks it. A refused
+   * upload throws before anything changes, and leaves no files behind.
    */
   ingest(
     upload: ReadableStream<Uint8Array> | null,
-    fileName: string
+    fileName: string,
+    uploader: Uploader
   ): Promise<Build> {
     return this.#perform(async () => {
-      const uploaded = buildUploadName(fileName)
-      const slot = await this.#store.newBuildSlot()
-      try {
-        await pipeline(
-          upload === null ? Readable.from([]) : Readable.fromWeb(upload),
-          createWriteStream(slot.archivePath)
-        )
-        const build =
-          uploaded.kind === "apk"
-            ? await this.#readAPK(slot, uploaded.stem, uploaded.name)
-            : await readBuildFromArchive(
-                this.#dependencies.runner,
-                { path: slot.archivePath, name: uploaded.name },
-                slot.buildDirectory
-              )
-        await this.#serialized(() => this.#store.clearOpenSession())
-        this.#dependencies.deviceClaims.release(this.#login)
-        this.#uploadedBuild = build
-        // The next Build dismisses a held filing result (ADR-0007).
-        this.#filing = { status: "idle" }
-        await this.#store.pruneBuilds(slot.id)
-        return build
-      } catch (error) {
-        await rm(slot.buildDirectory, { recursive: true, force: true })
-        throw error
-      } finally {
-        await rm(slot.archivePath, { force: true })
-      }
+      const entry = await this.#dependencies.library.add(
+        upload,
+        fileName,
+        uploader
+      )
+      await this.#select(entry.id)
+      return entry.build
     })
   }
 
   /**
-   * An .apk is its own Build: it moves into the slot's folder under its
-   * upload's name, which the page shows, and is read there.
+   * Picks a Build from the Library. Picking the Build already theirs, the
+   * open session's included, changes nothing.
    */
-  async #readAPK(
-    slot: { readonly archivePath: string; readonly buildDirectory: string },
-    stem: string,
-    name: string
-  ): Promise<Build> {
-    const path = join(slot.buildDirectory, `${stem}.apk`)
-    await rename(slot.archivePath, path)
-    return this.#dependencies.deviceHost.readAndroidBuild({ path, name })
+  pick(id: string): Promise<Build> {
+    return this.#perform(async () => {
+      const library = this.#dependencies.library
+      const entry = await library.get(id)
+      if (entry === undefined) throw new LibraryBuildNotFound()
+      const open = await this.#store.openSession()
+      const current = open ? library.entryID(open.build) : this.#selection
+      if (current !== entry.id) await this.#select(entry.id)
+      return entry.build
+    })
+  }
+
+  /**
+   * A Review Session reviews exactly one Build, so another one ends the open
+   * session, on disk too.
+   */
+  async #select(id: string): Promise<void> {
+    await this.#serialized(() => this.#store.clearOpenSession())
+    this.#dependencies.deviceClaims.release(this.#login)
+    this.#selection = id
+    // The next Build dismisses a held filing result (ADR-0007).
+    this.#filing = { status: "idle" }
   }
 
   /**
@@ -266,9 +275,11 @@ export class Reviewer {
   ): Promise<StartOutcome> {
     return this.#perform(async () => {
       const open = await this.#store.openSession()
-      const build = open?.build ?? this.#uploadedBuild
+      const build = open?.build ?? (await this.#selectedBuild())
       if (build === undefined) {
-        throw new ReviewRefused("Upload a Build before starting a review.")
+        throw new ReviewRefused(
+          "Pick or upload a Build before starting a review."
+        )
       }
       // A missing Xcode or runtime shows as the host's reason before any boot.
       const health = await this.#dependencies.deviceHost.checkHealth()
@@ -345,14 +356,16 @@ export class Reviewer {
   }
 
   /**
-   * Ends the Review Session without filing. The Build stays loaded, and
-   * History is untouched.
+   * Ends the Review Session without filing. Its Build stays picked, unless
+   * it is from before the Library, and History is untouched.
    */
   end(): Promise<void> {
     return this.#perform(() =>
       this.#serialized(async () => {
         const open = await this.#store.openSession()
-        if (open !== undefined) this.#uploadedBuild = open.build
+        if (open !== undefined) {
+          this.#selection = this.#dependencies.library.entryID(open.build)
+        }
         await this.#store.clearOpenSession()
         this.#dependencies.deviceClaims.release(this.#login)
         // Or the next session would open on a stale "File n remaining".
@@ -478,7 +491,7 @@ export class Reviewer {
     await this.#dependencies.history.record(entry)
     await this.#serialized(() => this.#store.clearOpenSession())
     this.#dependencies.deviceClaims.release(this.#login)
-    this.#uploadedBuild = session.build
+    this.#selection = this.#dependencies.library.entryID(session.build)
     return entry
   }
 

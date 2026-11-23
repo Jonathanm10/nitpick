@@ -11,6 +11,7 @@ import {
   type YouTrackUser,
 } from "@nitpick/core"
 import { createApp } from "../src/app.ts"
+import { BuildLibrary } from "../src/buildLibrary.ts"
 import type { DeviceHost } from "../src/device/DeviceHost.ts"
 import { DeviceClaims } from "../src/device/deviceClaims.ts"
 import type { DeviceStream } from "../src/device/deviceHub.ts"
@@ -42,6 +43,8 @@ export function signedInApp(options: {
   readonly webRoot?: string
   /** The host's claims; no cap by default. */
   readonly deviceClaims?: DeviceClaims
+  /** The Build Library's clock, which stamps each upload. */
+  readonly libraryNow?: () => Date
 }) {
   const {
     data,
@@ -60,15 +63,21 @@ export function signedInApp(options: {
       list: deviceHost.devices.list,
       shutDown: deviceHost.shutDown,
     })
+  const library = libraryIn(data, {
+    runner,
+    deviceHost,
+    now: options.libraryNow,
+  })
   const reviewers = new Reviewers({
     directory: join(data, "reviewers"),
     instanceURL,
     transport,
     signIns,
-    dependencies: { deviceHost, runner, history, deviceClaims },
+    dependencies: { deviceHost, library, runner, history, deviceClaims },
   })
   const server = createApp({
     deviceHost,
+    library,
     reviewers,
     history,
     serverVersion: options.serverVersion ?? "0.0.0",
@@ -96,14 +105,40 @@ export function signedInApp(options: {
     server,
     /** The `Cookie` header of the signed-in browser. */
     cookie,
+    /** The app as another Reviewer's signed-in browser reaches it. */
+    signedInAs: (other: YouTrackUser) => {
+      let otherSignIn: Promise<string> | undefined
+      return withCookie(
+        server,
+        () =>
+          (otherSignIn ??= signIns
+            .create(other, `perm:${other.login}`)
+            .then(({ id }) => `${signInCookieName}=${id}`))
+      )
+    },
     reviewers,
     signIns,
     history,
+    library,
     reviewer: reviewers.reviewer(user.login),
     /** The signed-in Reviewer's directory. */
     directory: join(data, "reviewers", user.login),
     account,
   }
+}
+
+interface LibraryOptions {
+  readonly runner: SubprocessRunner
+  readonly deviceHost: DeviceHost
+  readonly now?: () => Date
+}
+
+/** The Build Library of a server over `data`, as main.ts makes it. */
+export function libraryIn(
+  data: string,
+  { runner, deviceHost, now }: LibraryOptions
+): BuildLibrary {
+  return new BuildLibrary(join(data, "library"), { runner, deviceHost, now })
 }
 
 /** `app.request`, with the sign-in cookie on every request. */

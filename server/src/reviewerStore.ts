@@ -1,15 +1,13 @@
 // One Reviewer's files under the server's data directory: the open Review
 // Session as schema v1 JSON (Sources/NitpickCore/SessionPersistence.swift's
-// manifest) with its captures and Design Snapshots beside it, the Recent
-// devices, and the extracted Builds.
+// manifest) with its captures and Design Snapshots beside it, and the Recent
+// devices. Their Builds are in the Build Library (buildLibrary.ts).
 //
 //   <reviewer>/open-session/session.json
 //   <reviewer>/open-session/captures/<item id>.png
 //   <reviewer>/open-session/design-snapshots/<item id>/<data version>.<ext>
 //   <reviewer>/open-session/filing             while a File all runs
 //   <reviewer>/recent-devices.json
-//   <reviewer>/builds/<id>/…          one extracted upload each
-//   <reviewer>/uploads/<id>.zip       an upload until it is extracted
 //   <reviewer>/imports/<id>/…         a History import's zips while read
 import {
   mkdir,
@@ -157,38 +155,9 @@ export class ReviewerStore {
     )
   }
 
-  /** A new, empty directory for one upload's Build, and where its zip lands. */
-  async newBuildSlot(): Promise<{
-    readonly id: string
-    readonly archivePath: string
-    readonly buildDirectory: string
-  }> {
-    const id = newUUID()
-    const buildDirectory = join(this.#buildsDirectory, id)
-    await mkdir(buildDirectory, { recursive: true })
-    await mkdir(this.#uploadsDirectory, { recursive: true })
-    return {
-      id,
-      archivePath: join(this.#uploadsDirectory, `${id}.zip`),
-      buildDirectory,
-    }
-  }
-
   /** A directory for one History import's zips; it isn't created yet. */
   newImportDirectory(): string {
     return join(this.directory, "imports", newUUID())
-  }
-
-  /** Deletes every extracted Build except the one `keep` names. */
-  async pruneBuilds(keep: string): Promise<void> {
-    const ids = await readdir(this.#buildsDirectory).catch(() => [])
-    await Promise.all(
-      ids
-        .filter((id) => id !== keep)
-        .map((id) =>
-          rm(join(this.#buildsDirectory, id), { recursive: true, force: true })
-        )
-    )
   }
 
   get #openSessionManifest(): string {
@@ -209,14 +178,6 @@ export class ReviewerStore {
 
   get #recentDevicesFile(): string {
     return join(this.directory, "recent-devices.json")
-  }
-
-  get #buildsDirectory(): string {
-    return join(this.directory, "builds")
-  }
-
-  get #uploadsDirectory(): string {
-    return join(this.directory, "uploads")
   }
 }
 

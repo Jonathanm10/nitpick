@@ -69,6 +69,11 @@ export interface SignInMethodResponse {
 
 /** A Build as the page shows it: name plus identity, never a server path. */
 export interface BuildSummary {
+  /**
+   * Its entry in the Build Library. Only the Build of a session opened
+   * before the Library has none: it isn't in the Library.
+   */
+  readonly id?: string
   /** The .app's name without `.app`, or the .apk's without `.apk`. */
   readonly name: string
   readonly identity: BuildIdentity
@@ -226,9 +231,36 @@ export interface ProjectsResponse {
   readonly projects: ReadonlyArray<YouTrackProject>
 }
 
-/** `POST /api/build?name=<file name>`, with the zip or .apk as the request body. */
+/**
+ * A Build in the Build Library (ADR-0016), which every signed-in Reviewer
+ * sees and starts a review on.
+ */
+export interface LibraryBuild extends BuildSummary {
+  readonly id: string
+  readonly uploadedBy: { readonly login: string; readonly name: string }
+  /** ISO-8601. */
+  readonly uploadedAt: string
+}
+
+/** `GET /api/library`: every Build on the Device Host, newest upload first. */
+export interface LibraryResponse {
+  readonly builds: ReadonlyArray<LibraryBuild>
+}
+
+/**
+ * The Reviewer's Build, with its Library id. `POST /api/build?name=<file
+ * name>`, with the zip or .apk as the request body, adds it to the Library
+ * for everyone and picks it. `PUT /api/build` picks a Library Build, and
+ * answers 404 for one that isn't there. A Build that isn't the Reviewer's yet
+ * ends their open session.
+ */
 export interface BuildResponse {
   readonly build: BuildSummary
+}
+
+/** `PUT /api/build` */
+export interface PickBuildRequest {
+  readonly id: string
 }
 
 /** `POST /api/session`: start a Review Session, or resume the open one. */
