@@ -390,13 +390,29 @@ describe("The Build Library", () => {
     })
   })
 
+  test("deleting is refused while a review is open on the Build, when the data folder lies in another library/<id>/", async () => {
+    const h = server(join(temporaryDirectory(), "library", newUUID(), "data"))
+    const id = await uploaded(h, h.vera)
+    expect((await start(h.vera, iPhone, id)).status).toBe(200)
+
+    const refused = await remove(h.noor, id)
+
+    expect(refused.status).toBe(409)
+    expect((await library(h.noor)).map((build) => build.inUse)).toEqual([true])
+    expect((await review(h.vera)).build).toEqual({ ...reviewMe, id })
+    expect(
+      existsSync(fileURLToPath(storedSession(h, "vera")!.build.appBundleURL))
+    ).toBe(true)
+  })
+
   test("deleting is refused while a review is open on the Build where the Library was before a move to another home", async () => {
     const h = server()
     const id = await uploaded(h, h.vera)
+    // The old data folder lay in another library/<id>/ too.
     writeOpenSession(
       h,
       "noor",
-      `file:///Users/previous/nitpick-data/library/${id}/build/ReviewMe.app/`
+      `file:///Users/previous/library/${newUUID()}/nitpick-data/library/${id}/build/ReviewMe.app/`
     )
 
     const refused = await remove(h.vera, id)

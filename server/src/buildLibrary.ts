@@ -276,20 +276,25 @@ export class BuildLibrary {
   }
 
   /**
-   * The id of the entry `build` lies in; undefined outside the Library. Read
-   * from the path's `library/<id>/`, so a session saved before the data
-   * moved to another home still names its entry.
+   * The id of the entry `build` lies in; undefined outside the Library. A
+   * path outside the Library's folder, as a session saved before the data
+   * moved to another home has, names its entry by its last `library/<id>/`.
    */
   entryID(build: Build): string | undefined {
-    const segments = fileURLToPath(build.appBundleURL).split(sep)
+    const path = fileURLToPath(build.appBundleURL)
+    const inside = relative(this.#directory, path).split(sep)
+    if (inside[0] !== "..") {
+      return inside.length > 1 && parseUUID(inside[0]!) === inside[0]
+        ? inside[0]
+        : undefined
+    }
+    const segments = path.split(sep)
     const folder = basename(this.#directory)
-    const at = segments.findIndex(
-      (segment, index) =>
-        segment === folder &&
-        index + 2 < segments.length &&
-        parseUUID(segments[index + 1]!) === segments[index + 1]
-    )
-    return at === -1 ? undefined : segments[at + 1]
+    for (let index = segments.length - 3; index >= 0; index--) {
+      const id = segments[index + 1]!
+      if (segments[index] === folder && parseUUID(id) === id) return id
+    }
+    return undefined
   }
 
   /**
