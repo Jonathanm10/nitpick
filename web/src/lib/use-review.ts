@@ -80,9 +80,13 @@ export function useReview() {
   const [history, setHistory] = useState<Loadable<HistoryResponse>>({
     status: "loading",
   })
-  const [library, setLibrary] = useState<Loadable<LibraryResponse>>({
-    status: "loading",
-  })
+  const [library, setLibrary] = useState<
+    Loadable<LibraryResponse & { readonly read: number }>
+  >({ status: "loading" })
+  /** How many Library reads the page has sent; each list keeps its number. */
+  const libraryReads = useRef(0)
+  /** The reads sent when the page last learned the Reviewer's Build. */
+  const [pickedAfterRead, setPickedAfterRead] = useState(0)
   const [isPerforming, setIsPerforming] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>()
   const [saveError, setSaveError] = useState<string>()
@@ -128,11 +132,15 @@ export function useReview() {
     },
     [saver]
   )
-  /** The picked Build once the Library no longer holds it: someone deleted it. */
+  /**
+   * The picked Build once the Library no longer holds it: someone deleted
+   * it. Only a list read after the page learned of the Build can tell.
+   */
   const deletedPick =
     session === undefined &&
     state?.build !== undefined &&
     library.status === "loaded" &&
+    library.read > pickedAfterRead &&
     !library.builds.some((listed) => listed.id === state.build?.id)
       ? state.build
       : undefined
@@ -176,22 +184,28 @@ export function useReview() {
 
   /**
    * The Build Library, read on Home and after each upload or delete. A read
-   * that fails keeps the list already shown.
+   * that fails keeps the list already shown, and one that answers after a
+   * later read never replaces its list.
    */
-  const refreshLibrary = useCallback(
-    () =>
-      api
-        .library()
-        .then((loaded) => setLibrary({ status: "loaded", ...loaded }))
-        .catch((error: Error) =>
-          setLibrary((current) =>
-            current.status === "loaded"
-              ? current
-              : { status: "failed", error: error.message }
-          )
-        ),
-    []
-  )
+  const refreshLibrary = useCallback(() => {
+    const read = ++libraryReads.current
+    return api
+      .library()
+      .then((loaded) =>
+        setLibrary((current) =>
+          current.status === "loaded" && current.read > read
+            ? current
+            : { status: "loaded", ...loaded, read }
+        )
+      )
+      .catch((error: Error) =>
+        setLibrary((current) =>
+          current.status === "loaded"
+            ? current
+            : { status: "failed", error: error.message }
+        )
+      )
+  }, [])
 
   /** The Reviewer's History, re-read after each filing and on its page. */
   const refreshHistory = useCallback(
@@ -234,6 +248,7 @@ export function useReview() {
       .then((loaded) => {
         saver.track(loaded.session)
         setReview({ status: "loaded", ...loaded })
+        setPickedAfterRead(libraryReads.current)
         if (loaded.session) setSelectedProjectID(loaded.session.project.id)
       })
       .catch((error: Error) =>
@@ -415,6 +430,7 @@ export function useReview() {
     setSession(undefined)
     // The next Build dismisses a held filing result too (ADR-0007).
     setReview({ status: "loaded", build: next, filing: idle })
+    setPickedAfterRead(libraryReads.current)
   }
 
   /**
