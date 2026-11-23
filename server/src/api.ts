@@ -266,8 +266,8 @@ export interface PickBuildRequest {
 }
 
 // `DELETE /api/library/:id` deletes a Build from the Library for everyone:
-// 204. A review open or starting on it answers 409, saying so; a Build no
-// longer there, 404.
+// 204. A review open or starting on it answers 409, saying so, as does a
+// Reviewer's open session that can't be read; a Build no longer there, 404.
 
 /** `POST /api/session`: start a Review Session, or resume the open one. */
 export interface StartReviewRequest {

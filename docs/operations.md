@@ -279,7 +279,10 @@ sees on Home and starts reviews from.
   upload that never finished. The server removes it after its next start.
 - **Deleting:** Builds stay until a Reviewer deletes one on Home, which the
   developer does after a release. A Build someone is reviewing, or starting a
-  review on, can't be deleted, and the page says it is in a review.
+  review on, can't be deleted, and the page says it is in a review. While a
+  Reviewer's `open-session/session.json` can't be read, that review may use
+  any Build: every Build shows as in a review, deleting is refused, and
+  `server.log` names the Reviewer.
 - **Deleting by hand,** for example when the disk is full and nobody is
   around to delete on Home:
   1. Stop the server.
@@ -296,7 +299,10 @@ sees on Home and starts reviews from.
   `reviewers/<login>/builds/` and `uploads/`. At each Reviewer's first load
   after the deploy that brought the Library, those folders go, except the
   Build of a Review Session they still have open, which goes when that
-  session ends. Those Builds aren't added to the Library.
+  session ends. A session whose Build isn't at the path it names, as after a
+  move to another account's home, keeps every slot until it ends. A
+  deletion that fails is logged in `server.log`, and the Reviewer's next
+  load tries again. Those Builds aren't added to the Library.
 
 ## The device cap
 
