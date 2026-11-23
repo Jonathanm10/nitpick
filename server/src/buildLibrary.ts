@@ -276,28 +276,49 @@ export class BuildLibrary {
   }
 
   /**
-   * The id of the entry `build` lies in; undefined outside the Library. A
-   * path outside the Library's folder, as a session saved before the data
-   * moved to another home has, names its entry by its last `library/<id>/`.
+   * The id of the entry `build` lies in; undefined outside the Library, or
+   * when its path could lie in several entries.
    */
-  entryID(build: Build): string | undefined {
-    return this.#entryIDAt(fileURLToPath(build.appBundleURL))
+  async entryID(build: Build): Promise<string | undefined> {
+    return (await this.#entriesAt(fileURLToPath(build.appBundleURL))).id
   }
 
-  #entryIDAt(path: string): string | undefined {
+  /**
+   * The entry a Build at `path` lies in, and every entry it may lie in.
+   * Inside the Library's folder, that is its folder's entry. A path outside
+   * it, as a session saved before the data moved to another home has, lies
+   * in the one entry of a `library/<id>/` in it whose bundle is the rest of
+   * the path; with none or several, it may lie in any entry it names.
+   */
+  async #entriesAt(path: string): Promise<{
+    readonly id?: string
+    readonly ids: ReadonlyArray<string>
+  }> {
     const inside = relative(this.#directory, path).split(sep)
     if (inside[0] !== "..") {
-      return inside.length > 1 && parseUUID(inside[0]!) === inside[0]
-        ? inside[0]
-        : undefined
+      const id = inside[0]!
+      return inside.length > 1 && parseUUID(id) === id
+        ? { id, ids: [id] }
+        : { ids: [] }
     }
-    const segments = path.split(sep)
+    const segments = resolve(path).split(sep)
     const folder = basename(this.#directory)
-    for (let index = segments.length - 3; index >= 0; index--) {
-      const id = segments[index + 1]!
-      if (segments[index] === folder && parseUUID(id) === id) return id
-    }
-    return undefined
+    const named = segments.flatMap((segment, index) => {
+      const id = segments[index + 1]
+      return segment === folder && id !== undefined && parseUUID(id) === id
+        ? [{ id, moved: join(this.#directory, ...segments.slice(index + 1)) }]
+        : []
+    })
+    const matches = await Promise.all(
+      named.map(async ({ id, moved }) => {
+        const entry = await this.get(id).catch(() => undefined)
+        return entry !== undefined && bundlePath(entry.build) === moved
+      })
+    )
+    const matched = named.filter((_, index) => matches[index])
+    return matched.length === 1
+      ? { id: matched[0]!.id, ids: [matched[0]!.id] }
+      : { ids: named.map(({ id }) => id) }
   }
 
   /**
@@ -313,13 +334,11 @@ export class BuildLibrary {
     // shows in one or the other.
     const leased = [...this.#leases]
     const sessions = await this.#openSessionBuilds()
+    const named = await Promise.all(
+      sessions.paths.map((path) => this.#entriesAt(path))
+    )
     return {
-      ids: new Set([
-        ...leased,
-        ...sessions.paths
-          .map((path) => this.#entryIDAt(path))
-          .filter((id) => id !== undefined),
-      ]),
+      ids: new Set([...leased, ...named.flatMap(({ ids }) => ids)]),
       complete: sessions.complete,
     }
   }

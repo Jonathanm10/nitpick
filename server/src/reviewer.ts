@@ -258,7 +258,9 @@ export class Reviewer {
       const library = this.#dependencies.library
       const build = await library.withEntry(id, async (entry) => {
         const open = await this.#store.openSession()
-        const current = open ? library.entryID(open.build) : this.#selection
+        const current = open
+          ? await library.entryID(open.build)
+          : this.#selection
         if (current !== entry.id) await this.#select(entry.id)
         return entry.build
       })
@@ -334,7 +336,7 @@ export class Reviewer {
       const current =
         open === undefined
           ? this.#selection
-          : this.#dependencies.library.entryID(open.build)
+          : await this.#dependencies.library.entryID(open.build)
       // A page left behind by another tab's pick would start a Build it
       // doesn't show. A page from before this check sends no Build.
       if (request.buildID !== current) {
@@ -460,7 +462,7 @@ export class Reviewer {
       await this.#serialized(async () => {
         const open = await this.#store.openSession()
         if (open !== undefined) {
-          this.#selection = this.#dependencies.library.entryID(open.build)
+          this.#selection = await this.#dependencies.library.entryID(open.build)
         }
         await this.#store.clearOpenSession()
         this.#dependencies.deviceClaims.release(this.#login)
@@ -588,7 +590,7 @@ export class Reviewer {
     await this.#dependencies.history.record(entry)
     await this.#serialized(() => this.#store.clearOpenSession())
     this.#dependencies.deviceClaims.release(this.#login)
-    this.#selection = this.#dependencies.library.entryID(session.build)
+    this.#selection = await this.#dependencies.library.entryID(session.build)
     await this.#removeLegacyBuilds(undefined)
     return entry
   }

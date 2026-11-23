@@ -152,6 +152,26 @@ async function uploaded(
   return ((await response.json()) as BuildResponse).build.id!
 }
 
+/** Vera's upload of a zip that holds ReviewMe.app in `folder`; its id. */
+async function uploadedWithin(h: Server, folder: string): Promise<string> {
+  h.runner.enqueue({
+    exitCode: 0,
+    effect: (command) => {
+      writeAppBundle(
+        join(command.arguments[4], folder),
+        "ReviewMe.app",
+        simulatorInfoPlist()
+      )
+    },
+  })
+  const response = await h.vera.request("/api/build?name=ReviewMe.zip", {
+    method: "POST",
+    body: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+  })
+  expect(response.status).toBe(200)
+  return ((await response.json()) as BuildResponse).build.id!
+}
+
 async function library(as: Browser) {
   const response = await as.request("/api/library")
   return ((await response.json()) as LibraryResponse).builds
@@ -420,6 +440,59 @@ describe("The Build Library", () => {
 
     expect(refused.status).toBe(409)
     expect((await library(h.vera)).map((build) => build.inUse)).toEqual([true])
+  })
+
+  test("a review's Build from before a move to another home, whose .app lies under a library/<id>/ of its zip's own, keeps its entry from being deleted", async () => {
+    const h = server()
+    const nested = join("library", newUUID(), "build")
+    const id = await uploadedWithin(h, nested)
+    writeOpenSession(
+      h,
+      "noor",
+      `file:///Users/previous/nitpick-data/library/${id}/build/${nested}/ReviewMe.app/`
+    )
+
+    const refused = await remove(h.vera, id)
+
+    expect(refused.status).toBe(409)
+    expect((await library(h.vera)).map((build) => build.inUse)).toEqual([true])
+    expect((await review(h.noor)).build?.id).toBe(id)
+  })
+
+  test("a review's Build from before a move whose path could lie in two entries keeps both from being deleted", async () => {
+    const h = server()
+    const inner = await uploaded(h, h.vera)
+    const outer = await uploadedWithin(h, join("library", inner, "build"))
+    writeOpenSession(
+      h,
+      "noor",
+      `file:///Users/previous/nitpick-data/library/${outer}/build/library/${inner}/build/ReviewMe.app/`
+    )
+
+    const refusedOuter = await remove(h.vera, outer)
+    const refusedInner = await remove(h.vera, inner)
+
+    expect([refusedOuter.status, refusedInner.status]).toEqual([409, 409])
+    expect((await library(h.vera)).map((build) => build.inUse)).toEqual([
+      true,
+      true,
+    ])
+    expect((await review(h.noor)).build?.id).toBeUndefined()
+  })
+
+  test("a review's Build from before a move whose path is no entry's bundle keeps every entry it names from being deleted", async () => {
+    const h = server()
+    const id = await uploaded(h, h.vera)
+    writeOpenSession(
+      h,
+      "noor",
+      `file:///Users/previous/nitpick-data/library/${id}/build/Renamed.app/`
+    )
+
+    const refused = await remove(h.vera, id)
+
+    expect(refused.status).toBe(409)
+    expect((await review(h.noor)).build?.id).toBeUndefined()
   })
 
   test("a review whose session file is damaged past its Build keeps that Build from being deleted, and the rest list and delete", async () => {

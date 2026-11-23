@@ -267,8 +267,8 @@ export function createApp({
   /** The request's Reviewer, whom the gate above let through. */
   const signedInTo = (c: Context<SignedInEnvironment>) => c.get("signedIn")!
   const reviewerOf = (c: Context<SignedInEnvironment>) => signedInTo(c).reviewer
-  const buildSummary = (build: Build): BuildSummary => ({
-    id: library.entryID(build),
+  const buildSummary = async (build: Build): Promise<BuildSummary> => ({
+    id: await library.entryID(build),
     name: buildName(build),
     identity: build.identity,
     platform: buildPlatform(build),
@@ -303,7 +303,7 @@ export function createApp({
   app.get("/api/review", async (c) => {
     const { build, session, filing } = await reviewerOf(c).state()
     return c.json({
-      build: build && buildSummary(build),
+      build: build && (await buildSummary(build)),
       session: session && sessionSummary(session),
       filing,
     } satisfies ReviewStateResponse)
@@ -373,13 +373,15 @@ export function createApp({
 
   app.get("/api/library", async (c) =>
     c.json({
-      builds: (await library.list()).map((entry) => ({
-        ...buildSummary(entry.build),
-        id: entry.id,
-        uploadedBy: entry.uploadedBy,
-        uploadedAt: entry.uploadedAt,
-        inUse: entry.inUse,
-      })),
+      builds: await Promise.all(
+        (await library.list()).map(async (entry) => ({
+          ...(await buildSummary(entry.build)),
+          id: entry.id,
+          uploadedBy: entry.uploadedBy,
+          uploadedAt: entry.uploadedAt,
+          inUse: entry.inUse,
+        }))
+      ),
     } satisfies LibraryResponse)
   )
 
@@ -394,14 +396,18 @@ export function createApp({
       c.req.query("name") ?? "",
       uploader(signedInTo(c).user)
     )
-    return c.json({ build: buildSummary(build) } satisfies BuildResponse)
+    return c.json({
+      build: await buildSummary(build),
+    } satisfies BuildResponse)
   })
 
   app.put("/api/build", async (c) => {
     const id = (await jsonBody(c)).id
     if (typeof id !== "string") throw malformedRequest()
     const build = await reviewerOf(c).pick(id)
-    return c.json({ build: buildSummary(build) } satisfies BuildResponse)
+    return c.json({
+      build: await buildSummary(build),
+    } satisfies BuildResponse)
   })
 
   app.post("/api/session", async (c) => {
@@ -421,7 +427,7 @@ export function createApp({
       (outcome.status === "started"
         ? {
             status: "started",
-            build: buildSummary(outcome.session.build),
+            build: await buildSummary(outcome.session.build),
             session: sessionSummary(outcome.session),
             device: outcome.device,
             schema: outcome.schema,
