@@ -144,7 +144,11 @@ describe("Server config", () => {
     )
     expect(
       loadConfig(
-        { ...lan, NITPICK_TLS_CERT: "/tls/server.crt", NITPICK_TLS_KEY: "/tls/server.key" },
+        {
+          ...lan,
+          NITPICK_TLS_CERT: "/tls/server.crt",
+          NITPICK_TLS_KEY: "/tls/server.key",
+        },
         noFile
       ).uploadToken
     ).toBe(token)
