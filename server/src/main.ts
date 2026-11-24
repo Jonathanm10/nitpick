@@ -118,6 +118,7 @@ const app = createApp({
   serverVersion: await readServerVersion(nodeSubprocessRunner),
   webRoot: hasWebBuild ? webRoot : undefined,
   deviceStream: deviceHub,
+  uploadToken: config.uploadToken,
 })
 
 const server = serve(

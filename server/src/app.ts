@@ -18,6 +18,7 @@ import { Hono, type Context } from "hono"
 import { bodyLimit } from "hono/body-limit"
 import { HTTPException } from "hono/http-exception"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
+import { createHash, timingSafeEqual } from "node:crypto"
 import type { ReadableStream } from "node:stream/web"
 import type {
   BuildResponse,
@@ -121,6 +122,11 @@ export interface AppOptions {
   readonly webRoot?: string
   /** The hub that streams the devices; omitted where nothing streams. */
   readonly deviceStream?: DeviceStream
+  /**
+   * The token a release puts its Build into the Library with (ADR-0017);
+   * omitted where releases don't upload.
+   */
+  readonly uploadToken?: string
 }
 
 type SignedInEnvironment = {
@@ -135,8 +141,15 @@ export function createApp({
   serverVersion,
   webRoot,
   deviceStream,
+  uploadToken,
 }: AppOptions): Hono<SignedInEnvironment> {
   const app = new Hono<SignedInEnvironment>()
+  const buildSummary = async (build: Build): Promise<BuildSummary> => ({
+    id: await library.entryID(build),
+    name: buildName(build),
+    identity: build.identity,
+    platform: buildPlatform(build),
+  })
 
   // The only way to the hub: allowlisted, signed in, each route with the
   // one method the viewer uses. It checks the sign-in itself, after the
@@ -153,6 +166,41 @@ export function createApp({
       deviceStream
     )
     return "status" in route ? refusal(route) : proxyHubHTTP(c.req.raw, route)
+  })
+
+  // A release puts its Build into the Library with the upload token, not a
+  // sign-in (ADR-0017), so it comes before both gates and reads no cookie.
+  // The Build is nobody's pick.
+  const uploadTokenDigest =
+    uploadToken === undefined ? undefined : sha256(uploadToken)
+  app.post("/api/library", async (c) => {
+    if (uploadTokenDigest === undefined) {
+      return c.json(
+        {
+          error:
+            "This Device Host takes no Builds from a release: its server has no NITPICK_UPLOAD_TOKEN.",
+        } satisfies ErrorResponse,
+        404
+      )
+    }
+    if (!bearerMatches(c.req.header("authorization"), uploadTokenDigest)) {
+      return c.json(
+        {
+          error:
+            "The upload token is missing or wrong. Ask whoever runs the Device Host for it.",
+        } satisfies ErrorResponse,
+        401
+      )
+    }
+    const entry = await library.add(
+      c.req.raw.body as ReadableStream<Uint8Array> | null,
+      c.req.query("name") ?? "",
+      releaseUploader(c.req.header("x-nitpick-uploader"))
+    )
+    return c.json(
+      { build: await buildSummary(entry.build) } satisfies BuildResponse,
+      201
+    )
   })
 
   // The sign-in cookie is SameSite=Lax, which a page on another origin of
@@ -267,12 +315,6 @@ export function createApp({
   /** The request's Reviewer, whom the gate above let through. */
   const signedInTo = (c: Context<SignedInEnvironment>) => c.get("signedIn")!
   const reviewerOf = (c: Context<SignedInEnvironment>) => signedInTo(c).reviewer
-  const buildSummary = async (build: Build): Promise<BuildSummary> => ({
-    id: await library.entryID(build),
-    name: buildName(build),
-    identity: build.identity,
-    platform: buildPlatform(build),
-  })
 
   app.get("/api/me", (c) =>
     c.json({ reviewer: signedInTo(c).user } satisfies SignedInResponse)
@@ -754,6 +796,45 @@ function deviceUDID(body: Record<string, unknown>): string {
 
 function uploader(user: YouTrackUser): Uploader {
   return { login: user.login, name: user.fullName }
+}
+
+function sha256(value: string): Buffer {
+  return createHash("sha256").update(value).digest()
+}
+
+/** Whether `Authorization` is `Bearer <token>`, compared in constant time. */
+function bearerMatches(
+  authorization: string | undefined,
+  tokenDigest: Buffer
+): boolean {
+  const presented = /^Bearer (.+)$/i.exec(authorization ?? "")?.[1]
+  return (
+    presented !== undefined && timingSafeEqual(sha256(presented), tokenDigest)
+  )
+}
+
+/**
+ * A release's uploader: the name it sends, at most 100 characters, or
+ * "Release". Its login is empty, which no YouTrack account's is, so it is
+ * never taken for a Reviewer.
+ */
+function releaseUploader(header: string | undefined): Uploader {
+  const name = [...utf8(header ?? "").trim()].slice(0, 100).join("")
+  return { login: "", name: name === "" ? "Release" : name }
+}
+
+/**
+ * A header's bytes read as UTF-8: Node hands them over one character per
+ * byte. Bytes that aren't UTF-8 stay as they came.
+ */
+function utf8(header: string): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+      Buffer.from(header, "latin1")
+    )
+  } catch {
+    return header
+  }
 }
 
 function sessionSummary(session: ReviewSession): SessionSummary {

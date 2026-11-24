@@ -51,6 +51,8 @@ export function signedInApp(options: {
   readonly libraryNow?: () => Date
   /** Stands between the Library and its reads of the open sessions. */
   readonly openSessionBuilds?: LibraryOptions["openSessionBuilds"]
+  /** The token a release uploads with; none turns those uploads off. */
+  readonly uploadToken?: string
 }) {
   const {
     data,
@@ -90,6 +92,7 @@ export function signedInApp(options: {
     serverVersion: options.serverVersion ?? "0.0.0",
     webRoot: options.webRoot,
     deviceStream: options.deviceStream,
+    uploadToken: options.uploadToken,
   })
   const token = `perm:${user.login}`
   // On the first request, so a test that sends none writes no sign-in.
