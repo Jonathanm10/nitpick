@@ -80,7 +80,7 @@ export function loadConfig(
     maxBootedDevices: parseDeviceCap(value("NITPICK_MAX_BOOTED_DEVICES")),
     tlsCertificateFile,
     tlsKeyFile,
-    uploadToken: parseUploadToken(value("NITPICK_UPLOAD_TOKEN")),
+    uploadToken: uploadToken(value, tlsCertificateFile !== undefined),
   }
 }
 
@@ -140,13 +140,25 @@ function parseDeviceCap(value: string | undefined): number | undefined {
   return cap
 }
 
-function parseUploadToken(value: string | undefined): string | undefined {
-  if (value !== undefined && value.length < 32) {
+function uploadToken(
+  value: (key: string) => string | undefined,
+  servesHTTPS: boolean
+): string | undefined {
+  const token = value("NITPICK_UPLOAD_TOKEN")
+  if (token === undefined) return undefined
+  if (token.length < 32) {
     throw new Error(
       "NITPICK_UPLOAD_TOKEN must be at least 32 characters long. Make one with `openssl rand -hex 32`."
     )
   }
-  return value
+  // The token travels in every upload, so off loopback only HTTPS carries it.
+  const host = value("NITPICK_HOST") ?? "127.0.0.1"
+  if (!servesHTTPS && host !== "127.0.0.1" && host !== "::1") {
+    throw new Error(
+      "NITPICK_UPLOAD_TOKEN needs HTTPS when the server listens beyond loopback: set NITPICK_TLS_CERT and NITPICK_TLS_KEY."
+    )
+  }
+  return token
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

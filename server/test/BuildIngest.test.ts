@@ -15,7 +15,6 @@ import {
   readBuildFromArchive,
   buildUploadName,
 } from "../src/buildIngestion.ts"
-import { SubprocessFailure } from "../src/subprocess.ts"
 import {
   simulatorInfoPlist,
   temporaryDirectory,
@@ -225,10 +224,13 @@ describe("Zipped Build ingestion", () => {
     )
   })
 
-  test("an extraction failure surfaces the command and its stderr", async () => {
+  test("an extraction failure is a refusal that names the zip, not the host's paths", async () => {
     runner.enqueue({ exitCode: 1, standardError: "tar: Path contains '..'" })
+    vi.spyOn(console, "error").mockImplementation(() => {})
 
-    await expect(ingest()).rejects.toThrow(SubprocessFailure)
+    await expect(ingest()).rejects.toThrow(
+      ingestError({ kind: "unreadableArchive", archiveName: "build.zip" })
+    )
   })
 
   test("a hidden-file zip extracts into its own contained directory", async () => {

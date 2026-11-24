@@ -330,8 +330,9 @@ A release sends this request. Run it from a releaser's machine to check the
 setup:
 
 ```sh
-curl --fail-with-body -X POST \
-	-H "Authorization: Bearer $NITPICK_UPLOAD_TOKEN" \
+printf 'Authorization: Bearer %s\n' "$NITPICK_UPLOAD_TOKEN" |
+curl -q --fail-with-body -X POST \
+	-H @- \
 	-H "X-Nitpick-Uploader: <releaser's name>" \
 	-H "Content-Type: application/octet-stream" \
 	--data-binary @<Build>.zip \
