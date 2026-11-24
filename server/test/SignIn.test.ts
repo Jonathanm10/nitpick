@@ -213,6 +213,7 @@ const registeredRoutes = [
   "GET /api/history",
   "POST /api/history/import",
   "GET /api/feedback/environment",
+  "POST /api/library",
   "GET /api/library",
   "DELETE /api/library/:id",
   "POST /api/build",
@@ -236,10 +237,16 @@ const registeredRoutes = [
   "POST /api/device-stream",
 ]
 
-/** The routes that sign in and out, which need no sign-in themselves. */
-const signInRoutes = new Set(
-  registeredRoutes.filter((route) => /^\w+ \/api\/sign-(in|out)\b/.test(route))
-)
+/**
+ * The routes that need no sign-in: those that sign in and out, and a
+ * release's upload, which takes the upload token instead (ADR-0017).
+ */
+const routesWithoutSignIn = new Set([
+  ...registeredRoutes.filter((route) =>
+    /^\w+ \/api\/sign-(in|out)\b/.test(route)
+  ),
+  "POST /api/library",
+])
 
 /** A request a route answers: its parameters filled in, a real stream path. */
 function sampleRequest(route: string): { method: string; path: string } {
@@ -279,7 +286,7 @@ describe("the auth matrix", () => {
     expect(registered).toEqual(new Set(registeredRoutes))
 
     for (const route of registeredRoutes) {
-      if (signInRoutes.has(route)) continue
+      if (routesWithoutSignIn.has(route)) continue
       const { method, path } = sampleRequest(route)
       for (const [name, headers] of Object.entries(credentials)) {
         const response = await h.app.request(path, { method, headers })

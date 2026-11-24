@@ -19,6 +19,8 @@ import {
 export type BuildIngestFailure =
   /** The uploaded file is not a zip. */
   | { readonly kind: "unsupportedFileType"; readonly fileName: string }
+  /** tar couldn't extract it: not a zip, cut short, or an unsafe entry. */
+  | { readonly kind: "unreadableArchive"; readonly archiveName: string }
   | { readonly kind: "noAppBundleInArchive"; readonly archiveName: string }
   | { readonly kind: "missingInfoPlist"; readonly bundleName: string }
   /** A link, which could lead out of the bundle, or a folder. */
@@ -57,6 +59,8 @@ function message(failure: BuildIngestFailure): string {
   switch (failure.kind) {
     case "unsupportedFileType":
       return `“${failure.fileName}” is not a Build. Drop or choose a zip containing a simulator .app, or an Android .apk.`
+    case "unreadableArchive":
+      return `“${failure.archiveName}” can't be opened as a zip. Is it complete?`
     case "noAppBundleInArchive":
       return `“${failure.archiveName}” contains no .app bundle.`
     case "missingInfoPlist":
@@ -124,11 +128,18 @@ export async function readBuildFromArchive(
   }
   const result = await runner.run(extract)
   if (result.exitCode !== 0) {
-    throw new SubprocessFailure(
-      extract,
-      result.exitCode,
-      result.standardError.toString("utf8")
+    // The command and its paths are for the host's log, not the uploader.
+    console.error(
+      new SubprocessFailure(
+        extract,
+        result.exitCode,
+        result.standardError.toString("utf8")
+      )
     )
+    throw new BuildIngestError({
+      kind: "unreadableArchive",
+      archiveName: archive.name,
+    })
   }
   const appBundle = await firstAppBundle(destination)
   if (appBundle === undefined) {

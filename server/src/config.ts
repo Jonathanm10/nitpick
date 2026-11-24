@@ -33,6 +33,11 @@ export interface ServerConfig {
    */
   readonly tlsCertificateFile: string | undefined
   readonly tlsKeyFile: string | undefined
+  /**
+   * The token a release puts its Build into the Build Library with
+   * (ADR-0017); undefined turns those uploads off.
+   */
+  readonly uploadToken: string | undefined
 }
 
 export const defaultPort = 4870
@@ -75,6 +80,7 @@ export function loadConfig(
     maxBootedDevices: parseDeviceCap(value("NITPICK_MAX_BOOTED_DEVICES")),
     tlsCertificateFile,
     tlsKeyFile,
+    uploadToken: uploadToken(value, tlsCertificateFile !== undefined),
   }
 }
 
@@ -132,6 +138,27 @@ function parseDeviceCap(value: string | undefined): number | undefined {
     )
   }
   return cap
+}
+
+function uploadToken(
+  value: (key: string) => string | undefined,
+  servesHTTPS: boolean
+): string | undefined {
+  const token = value("NITPICK_UPLOAD_TOKEN")
+  if (token === undefined) return undefined
+  if (token.length < 32) {
+    throw new Error(
+      "NITPICK_UPLOAD_TOKEN must be at least 32 characters long. Make one with `openssl rand -hex 32`."
+    )
+  }
+  // The token travels in every upload, so off loopback only HTTPS carries it.
+  const host = value("NITPICK_HOST") ?? "127.0.0.1"
+  if (!servesHTTPS && host !== "127.0.0.1" && host !== "::1") {
+    throw new Error(
+      "NITPICK_UPLOAD_TOKEN needs HTTPS when the server listens beyond loopback: set NITPICK_TLS_CERT and NITPICK_TLS_KEY."
+    )
+  }
+  return token
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

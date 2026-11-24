@@ -1,6 +1,7 @@
 // The HTTP contract between server/ and web/. Types only, so web/ can import
-// it without pulling in Node code. Every route but sign-in and sign-out asks
-// for a live sign-in and answers 401 with `signIn` without one.
+// it without pulling in Node code. Every route but sign-in, sign-out and a
+// release's upload asks for a live sign-in and answers 401 with `signIn`
+// without one.
 import type {
   Annotation,
   BuildIdentity,
@@ -274,6 +275,13 @@ export interface PickBuildRequest {
   /** The ids of the unfiled Findings the page shows. */
   readonly unfiled?: ReadonlyArray<string>
 }
+
+// `POST /api/library?name=<file name>` is a release's upload (ADR-0017). It
+// takes no sign-in but `Authorization: Bearer <NITPICK_UPLOAD_TOKEN>`, and
+// the releaser's name in `X-Nitpick-Uploader`, "Release" without one. The
+// body and its refusals are those of `POST /api/build`. It answers 201 with
+// a BuildResponse, the Build in the Library and picked by nobody; 401 for a
+// missing or wrong token; 404 on a host with no token set.
 
 // `DELETE /api/library/:id` deletes a Build from the Library for everyone:
 // 204. A review open or starting on it answers 409, saying so, as does a

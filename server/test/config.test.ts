@@ -121,6 +121,39 @@ describe("Server config", () => {
     }
   })
 
+  test("a release's upload token is at least 32 characters, and unset turns those uploads off", () => {
+    const token = "0123456789abcdef0123456789abcdef"
+
+    expect(
+      loadConfig({ NITPICK_UPLOAD_TOKEN: token }, noFile).uploadToken
+    ).toBe(token)
+    expect(loadConfig({}, noFile).uploadToken).toBeUndefined()
+    expect(() =>
+      loadConfig({ NITPICK_UPLOAD_TOKEN: token.slice(1) }, noFile)
+    ).toThrow(
+      "NITPICK_UPLOAD_TOKEN must be at least 32 characters long. Make one with `openssl rand -hex 32`."
+    )
+  })
+
+  test("the upload token needs HTTPS once the server listens beyond loopback", () => {
+    const token = "b".repeat(32)
+    const lan = { NITPICK_UPLOAD_TOKEN: token, NITPICK_HOST: "0.0.0.0" }
+
+    expect(() => loadConfig(lan, noFile)).toThrow(
+      "NITPICK_UPLOAD_TOKEN needs HTTPS when the server listens beyond loopback: set NITPICK_TLS_CERT and NITPICK_TLS_KEY."
+    )
+    expect(
+      loadConfig(
+        {
+          ...lan,
+          NITPICK_TLS_CERT: "/tls/server.crt",
+          NITPICK_TLS_KEY: "/tls/server.key",
+        },
+        noFile
+      ).uploadToken
+    ).toBe(token)
+  })
+
   test.each(["NITPICK_YOUTRACK_TOKEN", "NITPICK_ACCESS_TOKEN"])(
     "the retired %s is refused, so no token sits in the config for nothing",
     (key) => {
