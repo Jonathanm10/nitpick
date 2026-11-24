@@ -121,6 +121,20 @@ describe("Server config", () => {
     }
   })
 
+  test("a release's upload token is at least 32 characters, and unset turns those uploads off", () => {
+    const token = "0123456789abcdef0123456789abcdef"
+
+    expect(
+      loadConfig({ NITPICK_UPLOAD_TOKEN: token }, noFile).uploadToken
+    ).toBe(token)
+    expect(loadConfig({}, noFile).uploadToken).toBeUndefined()
+    expect(() =>
+      loadConfig({ NITPICK_UPLOAD_TOKEN: token.slice(1) }, noFile)
+    ).toThrow(
+      "NITPICK_UPLOAD_TOKEN must be at least 32 characters long. Make one with `openssl rand -hex 32`."
+    )
+  })
+
   test.each(["NITPICK_YOUTRACK_TOKEN", "NITPICK_ACCESS_TOKEN"])(
     "the retired %s is refused, so no token sits in the config for nothing",
     (key) => {

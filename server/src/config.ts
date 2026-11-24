@@ -33,6 +33,11 @@ export interface ServerConfig {
    */
   readonly tlsCertificateFile: string | undefined
   readonly tlsKeyFile: string | undefined
+  /**
+   * The token a release puts its Build into the Build Library with
+   * (ADR-0017); undefined turns those uploads off.
+   */
+  readonly uploadToken: string | undefined
 }
 
 export const defaultPort = 4870
@@ -75,6 +80,7 @@ export function loadConfig(
     maxBootedDevices: parseDeviceCap(value("NITPICK_MAX_BOOTED_DEVICES")),
     tlsCertificateFile,
     tlsKeyFile,
+    uploadToken: parseUploadToken(value("NITPICK_UPLOAD_TOKEN")),
   }
 }
 
@@ -132,6 +138,15 @@ function parseDeviceCap(value: string | undefined): number | undefined {
     )
   }
   return cap
+}
+
+function parseUploadToken(value: string | undefined): string | undefined {
+  if (value !== undefined && value.length < 32) {
+    throw new Error(
+      "NITPICK_UPLOAD_TOKEN must be at least 32 characters long. Make one with `openssl rand -hex 32`."
+    )
+  }
+  return value
 }
 
 function nonEmpty(value: string | undefined): string | undefined {
