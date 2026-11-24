@@ -54,13 +54,14 @@ server at it with `NITPICK_CONFIG_FILE`.
 | `NITPICK_YOUTRACK_CLIENT_SECRET` | Its client secret, for a confidential client. Leave it empty for a public client. |
 | `NITPICK_MAX_BOOTED_DEVICES` | At most this many devices booted at once: 1 on an 8 GB host, 2 on a 16 GB one. See [The device cap](#the-device-cap). |
 | `NITPICK_TLS_CERT`, `NITPICK_TLS_KEY` | The absolute paths of the certificate and private key the server serves HTTPS with. Set both, or neither for plain HTTP. See [HTTPS](#https). |
+| `NITPICK_UPLOAD_TOKEN` | The token a developer's release uploads its Build with, at least 32 characters. Unset, releases can't upload. See [Publishing from a release](#publishing-from-a-release). |
 
 The config holds no Reviewer's token. Each Reviewer signs in as
 themselves, through YouTrack's login or with their own permanent token. The
 server keeps that sign-in's tokens encrypted in the data directory, under its
-`sign-in-key`. The client secret is the config's only secret. The server
-refuses to start while the retired `NITPICK_YOUTRACK_TOKEN` or
-`NITPICK_ACCESS_TOKEN` is set.
+`sign-in-key`. The client secret and the upload token are the config's only
+secrets. The server refuses to start while the retired
+`NITPICK_YOUTRACK_TOKEN` or `NITPICK_ACCESS_TOKEN` is set.
 
 ### Sign-in through YouTrack
 
@@ -269,7 +270,7 @@ What a reboot does to the people using nitpick:
 
 ## The Build Library
 
-Every Build a Reviewer uploads goes into the Build Library
+Every Build a Reviewer or a release uploads goes into the Build Library
 ([ADR-0016](adr/0016-shared-build-library.md)), which every signed-in Reviewer
 sees on Home and starts reviews from.
 
@@ -303,6 +304,48 @@ sees on Home and starts reviews from.
   move to another account's home, keeps every slot until it ends. A
   deletion that fails is logged in `server.log`, and the Reviewer's next
   load tries again. Those Builds aren't added to the Library.
+
+### Publishing from a release
+
+A developer's release can upload its simulator Build into the Library
+itself, so no PO drags the zip onto Home
+([ADR-0017](adr/0017-release-uploads-with-a-token.md)). The release sends the
+zip over HTTPS with the upload token, from the office network or the VPN.
+The Build shows for every Reviewer, with the releaser's name as its
+uploader, and is nobody's pick.
+
+To turn it on:
+
+1. Make a token on the host: `openssl rand -hex 32`.
+2. Add it to `~/.config/nitpick/server.env` as `NITPICK_UPLOAD_TOKEN=<token>`.
+3. Restart the server: `launchctl kickstart -k gui/$(id -u)/ch.liip.nitpick.server`.
+4. Give the token to the releasers out of band, for example in a shared
+   password manager entry. Never put it in a repo, a ticket or a chat.
+
+To rotate the token, make a new one, replace the old one in `server.env`,
+restart, and give the new one to the releasers. The old token stops working
+at the restart. To turn uploads off, delete the line and restart.
+
+A release sends this request. Run it from a releaser's machine to check the
+setup:
+
+```sh
+curl --fail-with-body -X POST \
+	-H "Authorization: Bearer $NITPICK_UPLOAD_TOKEN" \
+	-H "X-Nitpick-Uploader: <releaser's name>" \
+	-H "Content-Type: application/octet-stream" \
+	--data-binary @<Build>.zip \
+	"<address Reviewers open>/api/library?name=<Build>.zip"
+```
+
+- **201:** the Build is in the Library. Without `X-Nitpick-Uploader`, its
+  uploader is "Release".
+- **401:** the token is missing or wrong.
+- **404:** the server has no `NITPICK_UPLOAD_TOKEN`.
+- **400:** the zip is refused, with the same reason a Reviewer's upload gets.
+
+Each upload adds a Build, so a release run twice lists its Build twice.
+Delete the extra one on Home.
 
 ## The device cap
 
